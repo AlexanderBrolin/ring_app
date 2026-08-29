@@ -219,6 +219,39 @@ namespace Ring.Simulation.Tests
             // projectile line and the two sums move: 151 -> 152. The round is
             // counted ONCE, like the mob and unlike PlayerState/MatchStats:
             // the pass below bumps w.Projectiles[0] and nothing else.
+            //
+            // app-88jb Т24: HistorySlot -- the body's row in the rewind ring
+            // (spec §3.6, SimStates.cs' own field docs) -- joins BOTH
+            // MobState and PlayerState, folded into HashMob beside SpawnZone
+            // and into HashPlayer last. Re-derived one more time from fresh
+            // typeof(X).GetFields() readings of ALL NINE structs, and this
+            // time the recount did NOT come back agreeing with the receipt:
+            //
+            // ⚠ THE 152 ABOVE WAS ALREADY WRONG BY TWO. PlayerState carries
+            // 35 fields, not 34: app-88jb Т22 added SlideSpeedPenalty (the
+            // collision tax on a slide, owner decision Р443, SimStates.cs) and
+            // never touched this receipt, so its history simply stops at Т19.
+            // The player line carries the "x 2 players" multiplier, so one
+            // unrecorded field cost two bumps: the true count BEFORE this task
+            // was 154. Said out loud rather than quietly folded into the new
+            // number, because a reader who trusts 152 inherits the same error
+            // a fourth time -- and because the receipt exists precisely to be
+            // recounted, not to be believed.
+            //
+            // From that corrected base, this task moves two lines:
+            //   MobState    12 -> 13, counted ONCE       (+1)
+            //   PlayerState 35 -> 36, counted x 2 players (+2)
+            // Every other count came back unchanged (MatchStats 10,
+            // WaveState 7 x 3 zones, WorldStats 5, ProjectileState 14,
+            // PickupState 5, MatchState 2, ContainerState 5), so:
+            //   36 x 2 = 72, 10 x 2 = 20, 7 x 3 = 21,
+            //   5 + 13 + 14 + 5 + 2 + 5 = 44          -> 154 -> 157.
+            //
+            // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST. The two
+            // new fields turned it red through the reflective sweep below, and
+            // only the two folds (HashMob/HashPlayer) turn it green again;
+            // editing these numbers would have changed nothing executable in
+            // either direction.
             // ⚠ THE RECEIPT IS NOT WHAT MAKES THIS TEST PASS OR FAIL, and Т7
             // is where that was measured rather than assumed (coordinator
             // errata 12): the two new fields turned this test red through the

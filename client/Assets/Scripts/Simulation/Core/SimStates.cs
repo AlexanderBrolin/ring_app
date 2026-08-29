@@ -169,6 +169,41 @@ namespace Ring.Simulation.Core
         /// The spring itself (Impact.SpringStep) is the same arithmetic on
         /// both sides; it is the OWNERSHIP that differs.
         public float Tilt, TiltVel;
+
+        /// app-88jb Т24 (spec §3.6, decisions Р406/Н6): this collector's row
+        /// in PositionHistory. Collectors are rewound on exactly the same
+        /// terms as mobs (Н6/Р358) -- a round fired at a dodging player is
+        /// the case the whole mechanism exists for -- so the address has to
+        /// live in the state the victim is looked up through, same as
+        /// MobState.HistorySlot.
+        ///
+        /// THE SLOT IS ISSUED ONCE, IN THE WORLD'S CONSTRUCTOR, AND NEVER
+        /// RETURNED. That is not the mob rule with an exception bolted onto
+        /// it: a mob's slot comes back because mobs really do leave `_mobs`
+        /// (the swap MobState.HistorySlot describes), while `_players` is a
+        /// fixed array indexed by connection slot for the whole match and is
+        /// never compacted -- KillPlayer clears Alive, it does not remove the
+        /// body. Releasing it would only ever hand the same number straight
+        /// back to the same collector, and a slot that could be reissued to
+        /// somebody else would let a rewound shot read a row written by
+        /// whoever held it before.
+        ///
+        /// IT DOES GO ON THE WIRE, and saying so is the point -- the mob
+        /// field's "not on the wire" does NOT carry over here. Nothing puts
+        /// it there deliberately: `SnapshotBlocks.PlayerRecord` is a
+        /// hand-written five-field record and does not carry it, but
+        /// `ReconcileData` carries THE WHOLE PlayerState back to its own
+        /// owner (that type's own doc: "the whole state, not a delta"), so
+        /// FishNet's generated serializer writes this int too, and
+        /// ReconcileCodecTests walks the struct by reflection precisely so a
+        /// new field is carried the moment it is declared. That costs four
+        /// bytes per reconcile and breaks nothing: the client never reads the
+        /// value, and prediction must never write it -- it is Server-owned
+        /// for PredictionParityTests.RoleByField (CRITICAL RULE 3), the same
+        /// classification Tilt has above.
+        ///
+        /// Part of StateHash from step 3a, for MobState.HistorySlot's reasons.
+        public int HistorySlot;
     }
 
     /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third
@@ -238,6 +273,34 @@ namespace Ring.Simulation.Core
         /// this field.
         /// A dev-key spawn is filed under Zone.Outer wherever it lands.
         public Zone SpawnZone;
+
+        /// app-88jb Т24 (spec §3.6, decision Р406): the address of this
+        /// body's row in PositionHistory -- rented at spawn, returned at
+        /// death. It sits beside SpawnZone because it is the same KIND of
+        /// field: server bookkeeping about the body's identity rather than
+        /// about its motion, and like SpawnZone it is neither derived nor
+        /// drawn.
+        ///
+        /// AN ARRAY INDEX CANNOT BE THIS ADDRESS, which is the whole reason
+        /// the field exists (findings A-C2/B/C-C2/D-C2). A mob is removed by
+        /// swapping the tail into its place -- `_mobs[index] = _mobs[--_mobCount]`,
+        /// SimulationWorld.cs:1867 -- so across the six ticks of the rewind
+        /// window one index can have been three different mobs, and a shot
+        /// rewound against the index would ask where the WRONG body stood.
+        /// The slot rides INSIDE the struct through that very swap, which is
+        /// also why it is stored here rather than in a side table: a hash
+        /// table keyed by Id was rejected (Р406) because one table cannot
+        /// serve seven rows whose populations differ, and it would have been
+        /// the first hash structure in Simulation, which has chosen linear
+        /// scans five times in writing.
+        ///
+        /// NOT ON THE WIRE, precedent SpawnZone above: MobRecord is exactly
+        /// 9 bytes and carries neither field, and rewinding is a server
+        /// question in the first place (CRITICAL RULE 5). It DOES enter
+        /// StateHash -- from step 3a of this task, on SpawnZone's own
+        /// argument: canonical server state that survives a tick and rides
+        /// SaveState/RestoreState.
+        public int HistorySlot;
 
         /// Body tilt and its angular velocity (app-88jb Т5, spec §3.2, owner
         /// correction Н10). RADIANS and radians per second. A hit above the center

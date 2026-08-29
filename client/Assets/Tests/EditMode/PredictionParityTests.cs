@@ -985,6 +985,17 @@ namespace Ring.Simulation.Tests
                 // its own, this line moves to Mixed and this comment is where
                 // that gets written down.
                 ["Tilt"] = PredictionRole.Server,
+                // app-88jb Т24 (spec §3.6): the rewind slot. Server, and not
+                // by elimination -- PlayerPrediction.Step never names the
+                // field, and its only writer in the whole tree is the world's
+                // own constructor, which the client does not run. The value
+                // does reach the client, inside ReconcileData's wholesale copy
+                // of PlayerState, and that is exactly why it needs a line
+                // here rather than none: a field that arrives on the wire and
+                // is never written by prediction is the definition of Server
+                // (CRITICAL RULE 3), and leaving it unclassified would let a
+                // future Step start writing it with nothing to object.
+                ["HistorySlot"] = PredictionRole.Server,
             };
 
         [Test]

@@ -409,7 +409,10 @@ namespace Ring.Data
                 MaxContainers = a.MaxContainers,
                 MaxContainerSlots = a.MaxContainerSlots,
                 // app-88jb Т22 (spec §3.5, decision Р413).
-                RelaxIterations = a.RelaxIterations
+                RelaxIterations = a.RelaxIterations,
+                // app-88jb Т24 (spec §3.6, decision Н24/Р407).
+                RewindCapTicks = a.RewindCapTicks,
+                RewindPictureTicks = a.RewindPictureTicks
             };
         }
 
@@ -964,6 +967,37 @@ namespace Ring.Data
             // playtest where bodies walk through each other again.
             if (cfg.Arena.RelaxIterations < 1)
                 errors.Add("Arena.RelaxIterations must be at least 1 — zero disables the hard body separation silently");
+            // app-88jb Т24 (spec §3.6, decision Н24/Р407) — RULE 12, the
+            // rewind cap and its split.
+            // ⚠ WRITTEN IN TICKS THROUGH TicksFromSeconds, NEVER AS
+            // `RewindCapTicks * TickDt <= 0.2f` (finding A-C5): six times
+            // TickDt is 0.20000002, strictly greater than 0.2f, so the
+            // multiplied form would reject the cap of 6 that the spec itself
+            // assigns and that ships as ArenaConfig's default. The epic has
+            // already paid for this exact float once — Т23's extraction
+            // channel finished a whole tick late (SimulationWorld.TickDt's own
+            // doc records it) — and RewindTests.CapRule_IsWrittenInTicks_
+            // NotInSeconds is the witness standing over this line.
+            // 0.2 s is the cap CRITICAL RULE 5 names ("кап отмотки 200 мс").
+            // It is a literal here and nowhere else on purpose: a named
+            // constant somewhere would be a second home for a number whose
+            // only reader is this rule.
+            if (cfg.Arena.RewindCapTicks > SimulationWorld.TicksFromSeconds(0.2f))
+            {
+                errors.Add("Arena.RewindCapTicks must not exceed " +
+                    $"{SimulationWorld.TicksFromSeconds(0.2f)} ticks — CRITICAL RULE 5 caps lag " +
+                    $"compensation at 200 ms (got {cfg.Arena.RewindCapTicks})");
+            }
+            // The picture half cannot be deeper than the window it is carved
+            // out of. Zero IS legal and means "no picture time at all" —
+            // k_picture = min(k, 0) = 0, and the whole compensation goes to
+            // the projectile — so this is an upper bound only; the lower one
+            // is the field's own [Range] in ArenaConfig.
+            if (cfg.Arena.RewindPictureTicks > cfg.Arena.RewindCapTicks)
+            {
+                errors.Add("Arena.RewindPictureTicks must not exceed Arena.RewindCapTicks " +
+                    $"(got {cfg.Arena.RewindPictureTicks} of {cfg.Arena.RewindCapTicks})");
+            }
             // app-88jb Т13 (spec §3.10 rules 2/3/4): the collector's own stack
             // of parts. Same helper the four archetypes go through in
             // ValidateMob — one body, every caller.

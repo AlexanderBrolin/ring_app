@@ -1067,22 +1067,31 @@ namespace Ring.Editor
             // C# initializers, so SetIfDifferent writes nothing, the asset
             // never goes dirty, and without this line the `Parts` key would
             // never appear in their YAML at all;
-            // ArenaConfig's marker is `MaxContainerSlots` as of Stage 3 Task 8
-            // (per-match container-slot cap, the class's new last field) —
-            // was `MaxPickups` (Stage 3 Task 3, per-match pickup cap) before
-            // that, `BarrierTop` (Stage 2 Task 46, the interior barriers'
-            // modelled height) before THAT, `PlayerSpawnRingFrac` (Stage 2
-            // Task 4) from Stage 2 Task 9, when ArenaConfig joined the
-            // mechanism for the first time, before THAT — and the committed
-            // asset carries each superseded key already, so leaving the
-            // marker on any of them would have left the newer field unable
-            // to reach the file at all).
+            // ArenaConfig's marker is `RewindPictureTicks` as of app-88jb Т24
+            // (the picture half of the rewind window, the class's new last
+            // field) — was `RelaxIterations` (app-88jb Т22) before that,
+            // `MaxContainerSlots` (Stage 3 Task 8, per-match container-slot
+            // cap) before THAT, `MaxPickups` (Stage 3 Task 3, per-match
+            // pickup cap) before that, `BarrierTop` (Stage 2 Task 46, the
+            // interior barriers' modelled height) before THAT,
+            // `PlayerSpawnRingFrac` (Stage 2 Task 4) from Stage 2 Task 9,
+            // when ArenaConfig joined the mechanism for the first time,
+            // before THAT — and the committed asset carries each superseded
+            // key already, so leaving the marker on any of them would have
+            // left the newer field unable to reach the file at all.
+            // ⚠ THIS PARAGRAPH HAD BEEN TWO GENERATIONS STALE: Т22 moved the
+            // key on the line below without touching the prose here, so it
+            // still named Stage 3 Task 8's field. Recorded rather than
+            // silently corrected, because the same drift is what the marker
+            // mechanism itself exists to prevent one file over — a comment
+            // that lies about the code is the same class of defect as an
+            // asset that lags its class).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "SlideThrustRecovery"); // app-88jb Т22 (was Parts, app-88jb Т16)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
-            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RelaxIterations"); // app-88jb Т22 (was MaxContainerSlots, Stage 3 Task 8)
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RewindPictureTicks"); // app-88jb Т24 (was RelaxIterations, app-88jb Т22)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
             // R-58) moved it to EliteShareOuterCap — the class's newest

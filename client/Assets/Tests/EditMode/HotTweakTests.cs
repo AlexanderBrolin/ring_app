@@ -316,6 +316,15 @@ namespace Ring.Simulation.Tests
                 // four marker things, not in a literal here.
                 ["Tilt"] = float.PositiveInfinity,
                 ["TiltVel"] = float.PositiveInfinity,
+                // app-88jb Т24 (spec §3.6): the rewind slot is an ADDRESS,
+                // not a magnitude -- there is no "too large" value of it to
+                // clamp towards, only a valid one and an invalid one, and
+                // validity is owned by PositionHistory's free list rather
+                // than by a balance number. ApplyConfig leaves it alone on
+                // purpose: a hot-tweak changes numbers, and the ring is sized
+                // from caps ArenaTopologyMatches refuses to hot-tweak at all.
+                // Same form and same reasoning as the two entries above.
+                ["HistorySlot"] = float.PositiveInfinity,
             };
 
             var w = new SimulationWorld(5, cfg);

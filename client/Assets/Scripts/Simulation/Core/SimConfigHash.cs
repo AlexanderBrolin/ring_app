@@ -232,6 +232,14 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.MaxContainerSlots);
             // app-88jb Т22 (spec §3.5, decision Р413).
             h = StateHash64.Add(h, c.RelaxIterations);
+            // app-88jb Т24 (spec §3.6, decision Н24/Р407): the rewind cap and
+            // the picture half of it — last, because ArenaSimConfig declares
+            // them last (this method's contract is the struct's own field
+            // order, stated above). Both change what a shot HITS, so two
+            // peers running different values must not be able to agree on a
+            // config digest.
+            h = StateHash64.Add(h, c.RewindCapTicks);
+            h = StateHash64.Add(h, c.RewindPictureTicks);
             return h;
         }
 

@@ -87,6 +87,34 @@ namespace Ring.Simulation.Core
         // now so the hot path never allocates once systems start filling them.
         MobState[] _mobs;
         int _mobCount;
+        /// app-88jb Т24 (spec §3.6): the rewind ring. Preallocated to
+        /// Arena.MaxMobs + Arena.MaxPlayers like the scratch buffers below,
+        /// but it is STATE, not scratch -- it survives a tick, and the slot
+        /// it hands out lives inside MobState/PlayerState and therefore
+        /// inside StateHash.
+        ///
+        /// DEBT A-7 IS CLOSED HERE, NOT DEFERRED, and the shape of the fix is
+        /// worth stating because the obvious fix was the wrong one. The
+        /// allocator used to be a free LIST, whose answer depended on the
+        /// order slots came back in -- real state, living outside WorldSave,
+        /// deciding future state. A rolled-back run therefore handed the next
+        /// spawn a different slot than a straight run, and HistorySlot is
+        /// hashed, so the digests parted company; worse, a body that died
+        /// after the save came back holding a slot the list had already
+        /// handed on. Putting the list into the save would have HIDDEN that
+        /// class of bug behind a bigger save format. Instead the allocator
+        /// stopped being state at all (RULING 133): the slot handed out is
+        /// the lowest free one, so the answer is a function of WHICH BODIES
+        /// ARE ALIVE, and that set is rebuilt from the restored bodies by
+        /// RestoreState -> PositionHistory.RederiveOccupancy.
+        ///
+        /// WHAT Т25 STILL OWES is the ring's other half: the ROWS. They are
+        /// not in StateHash and not in WorldSave, so a restore rewinds the
+        /// bodies and leaves the recorded positions of the rolled-back future
+        /// in place. Inert today -- Write and PosAt are stubs, nothing writes
+        /// a row and nothing reads one -- and Т25 is the task whose whole
+        /// subject is putting the history into the hash and into the save.
+        readonly PositionHistory _history;
         // Scratch buffer for SeparationSystem's per-tick pairwise impulses (Task
         // 20) — preallocated here so the hot path never allocates; recomputed
         // from scratch every tick, so it carries no state across ticks and is
@@ -323,6 +351,18 @@ namespace Ring.Simulation.Core
             // each instance's own backing array is sized to
             // Hero.MaxInventoryItems inside the loop below.
             _inventories = new Inventory[playerCount];
+            // app-88jb Т24 (spec §3.6): the rewind ring, built BEFORE the loop
+            // below because that loop rents the collectors' slots -- so slots
+            // 0..playerCount-1 belong to the collectors and every mob is
+            // numbered after them.
+            // Sized by Arena.MaxPlayers, NOT by playerCount: the same
+            // "preallocate to the arena's cap, never resize" contract
+            // _sepForces/_pushBodies follow below, and the cap is what
+            // ArenaTopologyMatches refuses to hot-tweak.
+            // Rows = RewindCapTicks + 1: the six ticks a shot may be rewound
+            // by, plus the tick it is rewound FROM.
+            _history = new PositionHistory(config.Arena.RewindCapTicks + 1,
+                config.Arena.MaxMobs + config.Arena.MaxPlayers);
             for (int i = 0; i < playerCount; i++)
             {
                 _inventories[i] = new Inventory(config.Hero.MaxInventoryItems);
@@ -338,7 +378,13 @@ namespace Ring.Simulation.Core
                         Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true,
                         // Stage 3 Task 2 (spec Р261): the magazine starts full at
                         // the config's own starting count.
-                        Ammo = config.Weapon.AmmoStart
+                        Ammo = config.Weapon.AmmoStart,
+                        // app-88jb Т24 (spec §3.6): the collector's row in the
+                        // rewind ring. Rented ONCE, here, and never returned --
+                        // a collector's body never leaves _players (KillPlayer
+                        // clears Alive, it does not compact the array), so
+                        // it never stops occupying its slot.
+                        HistorySlot = _history.RentSlot()
                     };
             }
             // Wave director starts idle, counting down to the first wave (Task 22
@@ -855,6 +901,19 @@ namespace Ring.Simulation.Core
             // exists, sizes off exactly these two fields).
             if (a.MaxContainers != b.MaxContainers) return false;
             if (a.MaxContainerSlots != b.MaxContainerSlots) return false;
+            // app-88jb Т24 (spec §3.6, coordinator RULING 134): the rewind cap
+            // joins the entity caps above on exactly their reasoning -- the
+            // constructor sizes PositionHistory's rows to RewindCapTicks + 1
+            // and never resizes them, so a hot-tweak deepening the window
+            // would leave the config claiming a depth the ring cannot hold,
+            // and every rewound shot past the old depth would silently read a
+            // row that belongs to another tick.
+            // ⚠ RewindPictureTicks is deliberately NOT here, and the
+            // difference is the one this whole list is built on: it sizes
+            // nothing. It is a pure number in the k split (spec §3.6), the
+            // same kind of mid-match-tunable knob RelaxIterations is, and
+            // both are absent from this comparator for the same reason.
+            if (a.RewindCapTicks != b.RewindCapTicks) return false;
             // Spec §3.13/§3.15 (Р186/Р287): portals are topology for the
             // same reason BarrierTop below is — the CLIENT draws them from
             // its own copy of the config (Presentation reads ArenaSimConfig
@@ -1864,6 +1923,12 @@ namespace Ring.Simulation.Core
                     SpawnContainer(ContainerKind.MobCorpse, pos, item);
                 }
 
+                // app-88jb Т24 (spec §3.6): the rewind slot stops being
+                // occupied. READ BEFORE THE SWAP, not after -- one line down
+                // this index holds the body that used to be at the tail, and
+                // returning ITS slot would free a live mob's row while leaking
+                // the dead one's.
+                _history.ReturnSlot(_mobs[index].HistorySlot);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -2330,7 +2395,15 @@ namespace Ring.Simulation.Core
                 // Wave-cadence-per-zone (bd app-ggvz Т1): the ring the
                 // CALLER put this mob into -- not derived from `pos` (see
                 // SpawnZone's own doc).
-                SpawnZone = zone
+                SpawnZone = zone,
+                // app-88jb Т24 (spec §3.6): this mob's row in the rewind
+                // ring, rented here and returned by DamageMob when the body
+                // leaves the array. Reached only PAST the cap refusal at the
+                // top of this method, and that ordering is the point: a
+                // rejected spawn must leak neither an entity id nor a slot --
+                // the same reason MobConfigFor is resolved before
+                // _nextEntityId is touched (its own comment above).
+                HistorySlot = _history.RentSlot()
             };
             Emit(SimEventKind.MobSpawned, pos, id, type, 0f);
             return id;
@@ -2753,6 +2826,27 @@ namespace Ring.Simulation.Core
             System.Array.Copy(save.Players, _players, _players.Length);
             _mobCount = save.MobCount;
             System.Array.Copy(save.Mobs, _mobs, _mobs.Length);
+            // app-88jb Т24 (coordinator RULING 133): the rewind ring's
+            // occupancy, re-derived here because both of its inputs -- the
+            // players above and the mobs on the line above this one -- have
+            // just been restored.
+            //
+            // THIS IS NOT SYNCHRONIZING TWO COPIES OF THE SAME FACT. Who owns
+            // which slot is stored in exactly ONE place, on the bodies
+            // themselves (MobState.HistorySlot / PlayerState.HistorySlot),
+            // and the save carries it because the save carries the bodies.
+            // PositionHistory's occupancy set is an INDEX over that one copy,
+            // not a second copy of it -- so it is rebuilt from the source
+            // rather than saved beside it, and there is no second version of
+            // the truth that could survive a restore out of step with the
+            // first. The alternative -- an allocator whose answer depends on
+            // the order slots were released in -- would have been real state
+            // living outside the save, and a rolled-back run would have
+            // handed the next spawn a different slot than a straight one:
+            // HistorySlot is hashed, so the two digests would part company
+            // (WorldLifecycleTests.SaveRestore_ReplaysToSameHash is the
+            // witness that measured it).
+            _history.RederiveOccupancy(this);
             _projectileCount = save.ProjectileCount;
             System.Array.Copy(save.Projectiles, _projectiles, _projectiles.Length);
             // Stage 3 Т6: pickups restore exactly like the two entity arrays
@@ -2848,7 +2942,24 @@ namespace Ring.Simulation.Core
         /// who leaves the raid in DirectorActive and clears will have the
         /// phase machine read "the boss is gone" on the next tick and open the
         /// gate -- the same conclusion it would draw if he had been killed.
-        internal void ClearMobsForTest() => _mobCount = 0;
+        ///
+        /// app-88jb Т24 (coordinator RULING 130): ONE ASSIGNMENT IS NO LONGER
+        /// THE WHOLE OPERATION, and the paragraph above that says so is kept
+        /// deliberately -- it records why the claim held until this task and
+        /// what changed it. What changed it is that "which mobs are on the
+        /// arena" is now carried by a THIRD piece of state: the rewind ring's
+        /// occupancy set (PositionHistory, see _history's own doc). Unlike
+        /// _mobs' debris past the count, that set is not merely invisible -- a
+        /// slot left occupied by a mob this method removed would never come
+        /// back, and the cadence tests call this repeatedly. So every live mob's
+        /// slot is handed back first, exactly as DamageMob hands back the one
+        /// mob it kills. A test seam that diverges from the battle path on
+        /// something the battle path is careful about is a seam that lies.
+        internal void ClearMobsForTest()
+        {
+            for (int i = 0; i < _mobCount; i++) _history.ReturnSlot(_mobs[i].HistorySlot);
+            _mobCount = 0;
+        }
 
         /// Test-only seam (Stage 3 Task 3), same contract as SetMobForTest/
         /// SetProjectileForTest above — mutates a live slot directly, and
@@ -3019,8 +3130,19 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.LootTargetContainerId);
             h = StateHash64.Add(h, (int)p.LootTargetSlot);
             // app-88jb Т7 (spec §3.2): body tilt and its angular velocity,
-            // LAST -- the end of the struct is the end of the fold, the same
-            // placement HashMob gave the mob's own pair in Т5. Both are live
+            // folded as a pair at what was then the end of the struct and the
+            // end of the fold -- the same placement HashMob gave the mob's own
+            // pair in Т5.
+            // ⚠ THE "LAST" HALF OF THAT CLAIM IS NO LONGER TRUE, and Т24 is
+            // where it stopped being: PlayerState.HistorySlot is declared
+            // after this pair and folded after it too, so the pair now closes
+            // nothing. What still holds -- and is the reason the wording is
+            // corrected rather than deleted -- is the RULE both placements
+            // follow: the fold mirrors the struct, and the collector's rewind
+            // slot is last in one because it is last in the other. (In HashMob
+            // the mob's pair does still close the fold: its HistorySlot went
+            // in beside SpawnZone, ahead of the tilt.)
+            // Both are live
             // per-tick state that survives across ticks (TiltSystem's collector
             // pass integrates them, DamagePlayer adds into TiltVel), so a
             // replay or a rollback that dropped either would diverge the moment
@@ -3031,6 +3153,14 @@ namespace Ring.Simulation.Core
             // this epic -- sanctioned, and re-pinned once at Т34, never here.
             h = StateHash64.Add(h, p.Tilt);
             h = StateHash64.Add(h, p.TiltVel);
+            // app-88jb Т24 (spec §3.6): the collector's rewind slot, LAST --
+            // last field of the struct, last term of the fold. It is here for
+            // MobState.HistorySlot's reasons (see HashMob) plus one of its
+            // own: a collector's slot is issued in the constructor and never
+            // returned, so it is the one piece of a player's state that is
+            // constant for the whole match -- and a constant that is not
+            // hashed is a constant nothing can prove two worlds agree on.
+            h = StateHash64.Add(h, p.HistorySlot);
             return h;
         }
 
@@ -3043,6 +3173,15 @@ namespace Ring.Simulation.Core
             // field's own doc, SimStates.cs). Not on the wire (MobRecord is
             // unchanged, 9 B).
             h = StateHash64.Add(h, (int)m.SpawnZone);
+            // app-88jb Т24 (spec §3.6): the rewind slot sits beside SpawnZone
+            // on the same rule that put SpawnZone beside Type -- a field is
+            // folded next to what it qualifies. Both are server bookkeeping
+            // about WHICH body this is rather than about where it stands, and
+            // both are canonical state: the slot survives a tick, rides
+            // SaveState/RestoreState, and decides which row a rewound shot
+            // reads, so a replay that dropped it would aim at a different
+            // body's past.
+            h = StateHash64.Add(h, m.HistorySlot);
             h = StateHash64.Add(h, m.Pos); h = StateHash64.Add(h, m.Vel);
             h = StateHash64.Add(h, m.Hp); h = StateHash64.Add(h, m.StateTimer);
             h = StateHash64.Add(h, m.FireCooldown); h = StateHash64.Add(h, (int)m.Ai);

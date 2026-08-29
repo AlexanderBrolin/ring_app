@@ -417,7 +417,45 @@ namespace Ring.Data
         /// Zero is NOT "no relaxation": it switches the whole hard separation
         /// off silently, which is the entire subject of this task, so the
         /// builder rejects it (validation, not a clamp).
-        [Range(1, 16)] public int RelaxIterations = 4; // sync-marker key — keep LAST (was MaxContainerSlots, Stage 3 Task 8)
+        [Range(1, 16)] public int RelaxIterations = 4; // Was the sync-marker key until app-88jb Т24.
+
+        /// app-88jb Т24 (spec §3.6, decision Н24/Р407): the REWIND CAP — how
+        /// many ticks a shot may be rewound by when the server asks where a
+        /// body stood. Six ticks is 0.2 s, the cap CRITICAL RULE 5 names.
+        ///
+        /// The `[Range]` ceiling is DELIBERATELY WIDER than the real limit.
+        /// The real one is `RewindCapTicks <= SimulationWorld.TicksFromSeconds(0.2f)`
+        /// and it lives in SimConfigBuilder.Validate, because a number has
+        /// exactly one home: a slider that enforced it would be a second copy
+        /// of the rule, silently diverging the day TickDt moves. The slider
+        /// only keeps the Inspector from offering nonsense. Precedent is
+        /// RelaxIterations right above -- `[Range(1, 16)]` for a rule that
+        /// only says `>= 1`.
+        [Range(1, 16)] public int RewindCapTicks = 6;
+
+        /// app-88jb Т24 (spec §3.6, decision Н24/Р407): the PICTURE TIME --
+        /// how many ticks of the compensation are spent on the QUESTION
+        /// ("where was the target") rather than on the projectile.
+        ///
+        /// The lag a shot arrives with is split in two, and the split is the
+        /// central decision of Ф3, not a tuning knob:
+        ///     k_picture = min(k, RewindPictureTicks)   -- only the question
+        ///     k_input   = k - k_picture                -- MOVES the round
+        /// The input half is compensation for travel that really happened on
+        /// the wire; the picture half changes nothing in the world, only what
+        /// the world is asked. Charging the whole lag to the projectile is
+        /// what the rejected scheme (Р381) did, and it made the weapon a
+        /// hitscan inside 10.5 m and left the victim 1 ms of dodge window out
+        /// of 201.
+        ///
+        /// IT LIVES IN ArenaConfig AND NOT IN NetConfig, and that is a rule,
+        /// not a filing preference: NetConfig never enters SimConfig or
+        /// SimConfigHash (Р52), so the simulation has no right to read
+        /// NetConfig.InterpBufferTicks -- doing so would stop it being a pure
+        /// function of (state, input, tick) and break CRITICAL RULE 2. The
+        /// two numbers being EQUAL is a written invariant with its own home,
+        /// Networking/NetInvariants.cs, not a duplicated field.
+        [Range(0, 16)] public int RewindPictureTicks = 3;   // sync-marker key — keep LAST (was RelaxIterations, app-88jb Т22)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's

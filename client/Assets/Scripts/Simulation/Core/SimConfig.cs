@@ -574,6 +574,17 @@ namespace Ring.Simulation.Core
         /// does not separate a chain of three, and zero disables the mechanism
         /// silently, so the builder refuses it.
         public int RelaxIterations;
+
+        /// app-88jb Т24 (spec §3.6, decision Н24/Р407): the rewind cap and
+        /// the share of it spent on the QUESTION rather than on the round.
+        /// Declared last, in ArenaConfig's own order — see that asset's two
+        /// fields for what the numbers mean and why the split exists; the
+        /// arithmetic is not repeated here, a number has one home.
+        /// Ticks, not seconds, on purpose (finding A-C5): six times TickDt is
+        /// 0.20000002, so a rule expressed in seconds would reject the very
+        /// cap the spec assigns.
+        public int RewindCapTicks;
+        public int RewindPictureTicks;
     }
 
     /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,
