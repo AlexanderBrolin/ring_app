@@ -406,7 +406,18 @@ namespace Ring.Data
         /// refuses and only WorldStats.ContainerSpawnsSkipped says so, which
         /// is precisely the counter Т37 step 4 exists to read.
         [Range(1, 1000)] public int MaxContainers = 300;
-        [Range(1, 8)] public int MaxContainerSlots = 8; // sync-marker key — keep LAST
+        [Range(1, 8)] public int MaxContainerSlots = 8; // Was the sync-marker key until app-88jb Т22.
+
+        /// app-88jb Т22 (spec §3.5, decision Р413): how many relaxation passes
+        /// the hard body separation runs per tick. ONE Jacobi iteration does not
+        /// separate a chain of three — the middle body is pushed both ways in
+        /// the same scan and the two contributions very nearly cancel — so this
+        /// is a number the behavior stands on, not a tuning knob. Four is the
+        /// same count Geometry.Depenetrate(…, iters) already uses.
+        /// Zero is NOT "no relaxation": it switches the whole hard separation
+        /// off silently, which is the entire subject of this task, so the
+        /// builder rejects it (validation, not a clamp).
+        [Range(1, 16)] public int RelaxIterations = 4; // sync-marker key — keep LAST (was MaxContainerSlots, Stage 3 Task 8)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
         // Arena topology (Radius/Obstacles) is a special case: SimulationRunner's

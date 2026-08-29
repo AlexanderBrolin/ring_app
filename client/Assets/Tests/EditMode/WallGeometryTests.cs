@@ -193,13 +193,25 @@ namespace Ring.Simulation.Tests
             // analytically, so any sticking found here is in
             // MoveWithCollisions (3 iterations, Skin) or the fixture, not
             // in the normal itself (task-15-brief).
-            cfg.Arena.WallA = new[] { new float2(-5f, 2f) };
-            cfg.Arena.WallB = new[] { new float2(5f, 2f) };
+            // app-88jb Т22: THE WHOLE FIGURE IS LIFTED 40 m OFF THE ORIGIN, and
+            // that is not cosmetic. MatchFlowSystem spawns the Director at
+            // float2.zero the moment a live collector stands in the Core zone
+            // (Stage 3 Т22, Р254 — unconditional, no placement search), so this
+            // fixture always had a 2.2 m body sitting on top of a collector
+            // placed at (0, 1.0). It was invisible while bodies were ghosts;
+            // from Т22 they are solid, and the boss pushed the collector half a
+            // metre off its line every tick, costing it a third of the distance
+            // this test measures. The wall's own geometry is unchanged —
+            // every y below carries the same offset, so all the reasoning above
+            // about band edges and touch boundaries holds verbatim.
+            const float y0 = 40f;
+            cfg.Arena.WallA = new[] { new float2(-5f, 2f + y0) };
+            cfg.Arena.WallB = new[] { new float2(5f, 2f + y0) };
             cfg.Arena.WallHalfWidth = new[] { 0.5f };
 
             var w = new SimulationWorld(1, cfg);
             var p = w.Player;
-            p.Pos = new float2(0f, 1.0f); // 0.05 m short of the touch boundary
+            p.Pos = new float2(0f, 1.0f + y0); // 0.05 m short of the touch boundary
             w.SetPlayerForTest(p);
 
             var input = new SimInput { MoveDir = new float2(1f, 0.3f) };
@@ -209,7 +221,7 @@ namespace Ring.Simulation.Tests
             // unconstrained y target — evidence the flat side actually
             // engaged (Урок 64), not that the fixture just never touches it.
             for (int i = 0; i < 10; i++) w.Tick(input);
-            Assert.Less(w.Player.Pos.y, 1.5f,
+            Assert.Less(w.Player.Pos.y, 1.5f + y0,
                 "test setup: must still be constrained by the wall's flat side at this checkpoint");
 
             // Capped well short of the arena's own outer ring (radius 113,

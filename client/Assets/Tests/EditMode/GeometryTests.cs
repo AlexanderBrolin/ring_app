@@ -1372,7 +1372,7 @@ namespace Ring.Simulation.Tests
             bool hit = Geometry.ResolveBodyPair(
                 new float2(0f, 0f), 0.45f, 120f, idA: 1,
                 new float2(2.15f, 0f), 2.2f, 4000f, idB: 2,
-                out float2 dA, out float2 dB);
+                out float2 dA, out float2 dB, out _, out _);
             Assert.IsTrue(hit, "перекрытие не распознано");
             float overlap = (0.45f + 2.2f) - 2.15f;
             Assert.AreEqual(-overlap * 4000f / 4120f, dA.x, 1e-4f,
@@ -1387,7 +1387,7 @@ namespace Ring.Simulation.Tests
             bool hit = Geometry.ResolveBodyPair(
                 new float2(0f, 0f), 0.5f, 90f, 1,
                 new float2(5f, 0f), 0.5f, 90f, 2,
-                out float2 dA, out float2 dB);
+                out float2 dA, out float2 dB, out _, out _);
             Assert.IsFalse(hit);
             Assert.AreEqual(0f, math.length(dA), 1e-6f);
             Assert.AreEqual(0f, math.length(dB), 1e-6f);
@@ -1410,9 +1410,9 @@ namespace Ring.Simulation.Tests
             // ResolveBodyPair_FullOverlap_DifferentIdPairs_PointDifferentWays
             // right below; neither of the two is the whole witness alone.
             Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
-                float2.zero, 0.5f, 90f, idB: 2, out float2 dA1, out _);
+                float2.zero, 0.5f, 90f, idB: 2, out float2 dA1, out _, out _, out _);
             Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 2,
-                float2.zero, 0.5f, 90f, idB: 1, out float2 dA2, out _);
+                float2.zero, 0.5f, 90f, idB: 1, out float2 dA2, out _, out _, out _);
             Assert.Greater(math.length(dA1), 0f, "полное перекрытие не разведено вовсе");
             Assert.AreEqual(-dA1.x, dA2.x, 1e-6f, "тай-брейк не зависит от id — это константа");
             Assert.AreEqual(-dA1.y, dA2.y, 1e-6f);
@@ -1438,9 +1438,9 @@ namespace Ring.Simulation.Tests
             // unseparated pair would therefore fail the assertion below for the
             // wrong reason instead of reporting what actually went wrong.
             Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
-                float2.zero, 0.5f, 90f, idB: 2, out float2 dPair12, out _);
+                float2.zero, 0.5f, 90f, idB: 2, out float2 dPair12, out _, out _, out _);
             Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
-                float2.zero, 0.5f, 90f, idB: 3, out float2 dPair13, out _);
+                float2.zero, 0.5f, 90f, idB: 3, out float2 dPair13, out _, out _, out _);
             Assert.Greater(math.length(dPair12), 0f, "пара 1-2 не разведена вовсе");
             Assert.Greater(math.length(dPair13), 0f, "пара 1-3 не разведена вовсе");
 
@@ -1481,7 +1481,7 @@ namespace Ring.Simulation.Tests
             bool hit = Geometry.ResolveBodyPair(
                 new float2(0f, 0f), 0.5f, 90f, idA: 1,
                 new float2(1f, 0f), 0.5f, 90f, idB: 2,
-                out float2 dA, out float2 dB);
+                out float2 dA, out float2 dB, out _, out _);
             Assert.IsFalse(hit, "касание ровно в точку принято за перекрытие");
             Assert.AreEqual(0f, math.length(dA), 1e-6f, "касание сдвинуло первое тело");
             Assert.AreEqual(0f, math.length(dB), 1e-6f, "касание сдвинуло второе тело");

@@ -33,6 +33,10 @@ namespace Ring.Simulation.Tests
                     // Stage 3 Task 3: mirrors HeroConfig's C# default (two-sources-
                     // of-numbers discipline — test/code-default side).
                     PickupRadius = 2f,
+                    // app-88jb Т22 (spec §3.5): mirrors HeroConfig's C# defaults
+                    // (two-sources-of-numbers discipline — test/code-default side).
+                    MaxDepenetrationPerTick = 0.5f, PushRecoilFraction = 0.25f,
+                    SlideThrustRecovery = 18f,
                     // Stage 3 Task 4: mirrors HeroConfig's C# defaults (two-sources-
                     // of-numbers discipline — test/code-default side).
                     InventoryCapacity = 8, MaxInventoryItems = 16,
@@ -147,6 +151,9 @@ namespace Ring.Simulation.Tests
                     // MobConfig's C# defaults — see the Weapon block's own note
                     // for why no fixture deviation exists here.
                     PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
+                    // app-88jb Т22: mirrors MobConfig's C# default — 1.0 on every
+                    // archetype, which is what makes mob-vs-mob conserve momentum.
+                    PushRecoilFraction = 1f,
                     // app-88jb Т13 (spec §3.3): the chaser's hit parts —
                     // mirrors MobConfig's C# default array (two-sources
                     // discipline). Heights are the old column x 1.46, the
@@ -196,6 +203,9 @@ namespace Ring.Simulation.Tests
                     // MobConfig's C# defaults — see the Weapon block's own note
                     // for why no fixture deviation exists here.
                     PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
+                    // app-88jb Т22: mirrors MobConfig's C# default — 1.0 on every
+                    // archetype, which is what makes mob-vs-mob conserve momentum.
+                    PushRecoilFraction = 1f,
                     // app-88jb Т13 (spec §3.3): the gunner's hit parts.
                     // Heights are the old zone column x 1.20 (crown 4.2063
                     // against 3.50). The shipped .asset gets them through the
@@ -362,6 +372,9 @@ namespace Ring.Simulation.Tests
                     // MobConfig's C# defaults — see the Weapon block's own note
                     // for why no fixture deviation exists here.
                     PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
+                    // app-88jb Т22: mirrors MobConfig's C# default — 1.0 on every
+                    // archetype, which is what makes mob-vs-mob conserve momentum.
+                    PushRecoilFraction = 1f,
                     // app-88jb Т13 (spec §3.3, evidence Т12): the elite's hit
                     // parts. ⚠ HER FACTOR IS 1.0216, NOT THE GUNNER'S 1.20 the
                     // spec's own table assumed — she is the ONE archetype whose
@@ -410,6 +423,9 @@ namespace Ring.Simulation.Tests
                     // MobConfig's C# defaults — see the Weapon block's own note
                     // for why no fixture deviation exists here.
                     PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
+                    // app-88jb Т22: mirrors MobConfig's C# default — 1.0 on every
+                    // archetype, which is what makes mob-vs-mob conserve momentum.
+                    PushRecoilFraction = 1f,
                     // app-88jb Т13 (spec §3.3): the Director's hit parts.
                     // Heights are the old column x 1.37 (crown 4.7903 against
                     // 3.50), and his 4.80 crown is what sets Hero.MaxAimHeight
@@ -575,6 +591,8 @@ namespace Ring.Simulation.Tests
                 ExtractRadius = 8f,
                 MaxContainers = 300,
                 MaxContainerSlots = 8,
+                // app-88jb Т22 (decision Р413): mirrors ArenaConfig's C# default.
+                RelaxIterations = 4,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).
                 MaxPlayers = 3, PlayerSpawnRingFrac = 0.92f,

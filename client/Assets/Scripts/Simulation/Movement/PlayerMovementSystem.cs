@@ -219,7 +219,13 @@ namespace Ring.Simulation.Movement
                 // Task 14 (A11): AimHeld slows the slide from THIS tick's Vel —
                 // reads input.AimHeld fresh every tick, so the multiplier takes
                 // effect the same tick aim goes up or down, never a tick late.
-                p.Vel = p.SlideDir * hero.SlideSpeed * (input.AimHeld ? hero.AimSlideSpeedMult : 1f);
+                // app-88jb Т22 (Р443): the thruster works for the WHOLE slide, so
+                // it wins the collision penalty back before this tick's speed is
+                // read. Linear, MoveTowards-shaped, floored at zero — the same
+                // decay shape every other converging speed in this file uses.
+                p.SlideSpeedPenalty = math.max(0f, p.SlideSpeedPenalty - hero.SlideThrustRecovery * dt);
+                p.Vel = p.SlideDir * math.max(0f, hero.SlideSpeed - p.SlideSpeedPenalty)
+                    * (input.AimHeld ? hero.AimSlideSpeedMult : 1f);
                 // C22: a normal exit opens the link window and keeps this
                 // tick's full slide-speed Vel as exit momentum — the NEXT
                 // tick's regular-movement branch decays it towards MaxSpeed.
@@ -257,6 +263,9 @@ namespace Ring.Simulation.Movement
                     }
                     p.StaminaRegenDelayTimer = hero.StaminaRegenDelay;
                     p.SlideTimer = hero.SlideDuration;
+                    // app-88jb Т22 (Р443): a fresh slide starts at full thrust —
+                    // the penalty belongs to the move that took it.
+                    p.SlideSpeedPenalty = 0f;
                     // M2: no chaining off the run-up/post-dash gate that just
                     // fired — a second slide needs its own fresh gate.
                     p.SlideBufferTimer = 0f;

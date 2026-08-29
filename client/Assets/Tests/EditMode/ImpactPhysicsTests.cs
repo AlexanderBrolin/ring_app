@@ -718,5 +718,58 @@ namespace Ring.Simulation.Tests
                     "фикстура: летящий снаряд не пришёл в КОРПУС — отрицательная половина пуста"),
                 "летящий снаряд в корпус валит — хедшот перестал быть особенным");
         }
+
+        /// app-88jb Т22 (owner decision Р442): the guard that makes the
+        /// body-push law self-limiting, and the reason it needs no
+        /// minimum-speed constant of its own.
+        ///
+        /// ⚠ THIS WITNESS IS A UNIT TEST ON PURPOSE, and the world-level form it
+        /// replaces is the lesson (session 72). A fixture that drove a collector
+        /// AWAY from an overlapping chaser looked like the right shape and
+        /// measured the wrong thing: the chaser's own AI accelerates toward the
+        /// retreating player at Accel*dt = 1.0 m/s per tick, so the mob's
+        /// velocity moved for a reason that has nothing to do with the guard,
+        /// and the assert could not tell the two causes apart. The guard is
+        /// arithmetic; arithmetic gets an arithmetic witness.
+        [Test]
+        public void ResolveBodyPush_SeparatingPair_GetsNothing()
+        {
+            // A negative closing speed — the bodies are moving apart.
+            Assert.IsFalse(Impact.ResolveBodyPush(120f, 90f, -7f, 0.25f,
+                out float target, out float pusher), "расходящаяся пара получила импульс");
+            Assert.AreEqual(0f, target, "цель получила скорость при отрицательном сближении");
+            Assert.AreEqual(0f, pusher, "толкатель получил отдачу при отрицательном сближении");
+
+            // Exactly zero — a body at rest; the same branch, the other side
+            // of its boundary.
+            Assert.IsFalse(Impact.ResolveBodyPush(120f, 90f, 0f, 0.25f, out target, out pusher),
+                "неподвижный сборщик толкнул тело");
+            Assert.AreEqual(0f, target, "цель сдвинулась от нулевого сближения");
+        }
+
+        /// app-88jb Т22: the two factors of the law, pinned as arithmetic.
+        /// The world-level witnesses in BodyCollisionTests read the same rule
+        /// through the game; this one reads it through the formula, so a change
+        /// of balance numbers cannot quietly move what the law IS.
+        [Test]
+        public void ResolveBodyPush_SharesMomentum_ByMassAndSpeed()
+        {
+            // Collector 120 against a chaser 90: the share is 120/210 = 0.571428...
+            Assert.IsTrue(Impact.ResolveBodyPush(120f, 90f, 13.5f, 0.25f,
+                out float target, out float pusher));
+            Assert.AreEqual(7.714286f, target, 1e-4f, "доля импульса цели не по массам");
+            // The recoil is the mirrored share scaled by 0.25:
+            // 0.25 * (90/210) * 13.5 = 1.446428...
+            Assert.AreEqual(1.446429f, pusher, 1e-4f, "отдача не равна своей доле");
+
+            // Twice as fast is twice as hard, with no ceiling (ruling 114).
+            Assert.IsTrue(Impact.ResolveBodyPush(120f, 90f, 27f, 0.25f, out float fast, out _));
+            Assert.AreEqual(target * 2f, fast, 1e-4f,
+                "толчок перестал быть линейным по скорости — появился потолок");
+
+            // The Director at 4000: the share is 120/4120 = 0.029126...
+            Assert.IsTrue(Impact.ResolveBodyPush(120f, 4000f, 13.5f, 0.25f, out float heavy, out _));
+            Assert.AreEqual(0.393204f, heavy, 1e-4f, "тяжёлое тело сдвинулось не по своей массе");
+        }
     }
 }

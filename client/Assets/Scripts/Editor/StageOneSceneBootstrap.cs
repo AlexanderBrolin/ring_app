@@ -1077,12 +1077,12 @@ namespace Ring.Editor
             // asset carries each superseded key already, so leaving the
             // marker on any of them would have left the newer field unable
             // to reach the file at all).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "Parts"); // app-88jb Т16 (was TiltGain, app-88jb Т11a)
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "SlideThrustRecovery"); // app-88jb Т22 (was Parts, app-88jb Т16)
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
-            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "MaxContainerSlots"); // Stage 3 Task 8 (was MaxPickups, Stage 3 Task 3)
+            EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RelaxIterations"); // app-88jb Т22 (was MaxContainerSlots, Stage 3 Task 8)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
             // R-58) moved it to EliteShareOuterCap — the class's newest
@@ -1154,9 +1154,9 @@ namespace Ring.Editor
             // `WeaponConfig` alone, and the spec's own starting-numbers table
             // names the pair's home as "WeaponConfig + the mobs".
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+                "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+                "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join

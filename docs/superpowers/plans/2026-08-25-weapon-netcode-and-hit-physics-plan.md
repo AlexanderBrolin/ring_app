@@ -3813,7 +3813,8 @@ public void ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis()
 **Files:** `Simulation/AI/SeparationSystem.cs` (`Apply` `:29`),
 `Simulation/Core/SimulationWorld.cs` (`_sepForces` `:308` — **размер**),
 `Simulation/Movement/PlayerMovementSystem.cs`, `Simulation/Core/SimConfig.cs`
-+ `Data/*Config.cs` (`DashPushSpeed` **3.5 м/с**, `MaxDepenetrationPerTick` **0.5 м/тик**,
++ `Data/*Config.cs` (⚠ **Р442: `DashPushSpeed` ВЫЧЕРКНУТ** — вместо него
+`PushRecoilFraction`, Hero **0.25** / Mob **1.0**; `MaxDepenetrationPerTick` **0.5 м/тик**,
 ⚠ **`Simulation/Core/PlayerPrediction.cs`** (сигнатура `Step` растёт пятым
 параметром — в Files v2 файла не было вовсе, поправка круга 3),
 ⚠ **дом `PushableBody` — там же, в `PlayerPrediction.cs`**, рядом со своим
@@ -3823,8 +3824,72 @@ public void ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis()
 `RelaxIterations` **4** — ⚠ последнего числа нет ни в спеке, ни в первой
 редакции плана (находка ревью M-b): одна итерация Якоби цепочку из трёх тел не
 разводит, четыре — разводят, и это то же число, что уже принято прецедентом
-`Geometry.Depenetrate(…, iters)`), Create `Tests/EditMode/BodyCollisionTests.cs`
+`Geometry.Depenetrate(…, iters)`), ⚠ **Р442 добавляет два дома:**
+`Simulation/Combat/Impact.cs` (закон толчка телом — новая функция рядом со своей
+роднёй `VelocityDelta`) и `Simulation/Core/Geometry.cs` (`ResolveBodyPair`
+получает `out float2 normal`, Ruling 115), Create `Tests/EditMode/BodyCollisionTests.cs`
 (+ `.meta`).
+
+---
+
+## ⭐⭐ AMENDMENT Р441/Р442 (2026-08-29) — ЧИТАТЬ ПЕРЕД ЛЮБЫМ ШАГОМ Т22
+
+Владелец принял два решения, которые меняют этот таск. Всё, что ниже
+противоречит им, **недействительно**; противоречащие места помечены на месте.
+
+**Р441 — подкат не проходит ни под кем.** Правило «проход разрешается ЧАСТЯМИ»
+**не пишется**. Основание: `SimConfigBuilder.ValidateParts:2009` требует
+`Parts[0].Bottom == 0` и контигуальность, поэтому части любого допустимого тела
+покрывают `[0, крона]` без дыр, профиль подката `[0, 0.55]` пересекает их
+**всегда**, и ветка недостижима **по построению**. Свидетеля у неё нет и быть не
+может. В подкате тела — такие же препятствия, как стоя.
+
+**Р442 — толчок телом по закону сохранения импульса, а не плоским числом:**
+
+```
+share      = m_толкателя / (m_толкателя + m_цели)
+цель      += share * сближение                   (сближение <= 0 ⇒ импульса нет)
+толкатель -= PushRecoilFraction * (1 - share) * сближение
+```
+
+`сближение` — проекция скорости на **нормаль контакта**, не полная скорость.
+Дом — `Impact`, форма — зеркало `Geometry.ResolveBodyPair` (две величины через
+`out`). Формула пули `VelocityDelta` остаётся отдельной **намеренно**: снаряд
+вязнет в теле, два тела движутся оба; форма пули — предел формы тел при малой
+массе снаряда, и связь пишется в доке новой функции.
+
+⛔ **Почему дословно формулу пули брать нельзя** (посчитано): при массе сборщика
+120 сырое значение = **40 / 18 / 10** (дэш/подкат/бег), и потолок 6 срезал бы
+все три **до одного числа**, уничтожив различие, ради которого поправка и
+вносилась.
+
+**Потолка у толчка телом НЕТ** (Ruling 114) — три границы уже стоят: доля всегда
+меньше единицы (моб не улетит быстрее сборщика); движение мобов заметающее
+(`MobAiSystem.cs:402-403` зовёт `MoveWithCollisions`); ИИ гасит скорость на
+`Accel × dt` = 1.0 м/с за тик у чейзера. `ImpactSpeedCap` **не трогается** и
+остаётся при своей работе для пуль, где формула ничем не ограничена.
+
+**Отдельного порога скорости НЕТ** — его роль играет знак сближения: стоящий
+сборщик даёт ноль, расходящиеся тела дают минус.
+
+**Закон применяется ко всем трём парам.** У мобов `PushRecoilFraction` = 1.0 —
+точное сохранение импульса; у сборщика 0.25.
+
+⭐ **Кокон дэша получается САМ, без ветки:** дэш теряет 3.2 м/с из 30 за контакт
+(11 %), Н15 выполняется тем, что дэш быстрый и короткий. Подкат сквозь трёх
+чейзеров: 13.5 → 12.05 → 10.76 → 9.61 при беге 7.5.
+
+⛔ **Инвариант прогнозируемости (Ruling 113):** `PushableBody` **не несёт
+скорости** — на проводе её нет (`MobRecord` 9 байт, `SnapshotBlocks.cs:267`).
+Поэтому общий код сервера и клиента физически не может дать сборщику толчок от
+чужого движения: сборщик платит только собственную отдачу. Это свойство типа, не
+`if`. Моб↔моб живёт в серверном коде, где `MobState.Vel` есть, — там закон полный.
+
+⛔ **Тай-брейк (Ruling 116):** в паре со сборщиком `Id` **не читается** вовсе —
+сборщик всегда сторона A с фиксированным знаком. У сборщика поля `Id` нет
+(`app-rw2l`), а `MobRecord.Id` на клиенте — лоссовый u16-код, не серверный `Id`.
+
+---
 
 **Три пары, и все три обязательны (Н15 + Н21):** сборщик ↔ моб; **моб ↔ моб**
 (жёсткое разведение садится **в тот же цикл перебора пар**, который уже идёт,
@@ -3841,18 +3906,19 @@ public void ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis()
 ⚠ **Порядок разрешений в тике** (D-C3): движение → **тела** → **арена** →
 повторная проверка тел. Выталкивание из тела может загнать сборщика в стену,
 поэтому арена разрешается **последней**.
-⚠ **Дэш расталкивает, а не расталкивается** (Н15): кокон сообщает мобу
-`DashPushSpeed`, сам сборщик траектории не меняет. **Случай «дэш кончился
+⚠ **Дэш расталкивает, а не расталкивается** (Н15) — ⚠ **Р442: но НЕ особым
+случаем.** Кокон получается из закона: на 30 м/с сборщик теряет 3.2 м/с за
+контакт (11 %), потому что дэш быстрый и короткий. Ветки `DashTimer > 0` в
+правиле толчка **нет**. **Случай «дэш кончился
 внутри тела»** (D-C3): дэш проходит 2.7 м, диаметр Директора 4.4 м — сборщик
 может остановиться **внутри**; тогда в первый тик после дэша разведение идёт
 обычным правилом, но выталкивание ограничено `MaxDepenetrationPerTick`
 (стартово 0.5 м/тик).
-⚠ **Подкат разрешается ЧАСТЯМИ, а не архетипом** (находка A-I6): проверка не
-выполняется для тех **частей** цели, чей диапазон высот не пересекает профиль
-подката. Под Директором и под чейзером подкат **не пройдёт** — у обоих ноги
-начинаются от нуля; проход останется только там, где у цели действительно нет
-частей на высоте профиля. **Это честнее, чем обещать проход под всеми**, и это
-вопрос 4 владельцу к вехе В2.
+⛔ **ОТМЕНЕНО Р441.** Прежний текст требовал правила «подкат разрешается
+ЧАСТЯМИ, а не архетипом» (находка A-I6). Владелец правило снял: части любого
+допустимого тела покрывают `[0, крона]` без дыр, поэтому ветка недостижима по
+построению, а свидетеля у неё не существует. **В подкате тела для сборщика —
+такие же препятствия, как стоя**, и высоты в правиле толчка не участвуют вовсе.
 ⚠ **Предсказание — только от ВИДИМЫХ тел (Н20), и у него для этого нужен ВХОД,
 которого сегодня нет** (находка ревью D-C11): `PlayerPrediction.Step` принимает
 `(ref PlayerState, in SimInput, in SimConfig, in ImpactPulse)` и не видит **ни
@@ -3868,6 +3934,16 @@ public void ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis()
 /// SimulationWorld exists, and the server hands the same span in from its own
 /// arrays -- so both sides resolve the input against IDENTICAL data or the
 /// prediction is not a prediction at all.
+///
+/// ⛔ NO VELOCITY FIELD, AND THAT IS THE POINT (Р442, ruling 113). The wire has
+/// no mob velocity to give -- MobRecord is 9 bytes of Id/Type/Ai/Pos/Dir/Hp,
+/// the same budget that already refused body tilt (Р383) -- so a shared rule
+/// that read one would be unreproducible on the client and would turn every
+/// body contact into a reconcile correction. Leaving the field out makes the
+/// rule "the collector's own velocity change never reads another body's motion"
+/// impossible to break rather than merely documented: the data is not there.
+/// The mob-vs-mob half of the law runs server-side against MobState.Vel, where
+/// the full relative approach IS available and momentum is conserved exactly.
 public readonly struct PushableBody
 {
     public readonly float2 Pos;
@@ -3983,7 +4059,9 @@ public void ThreeBodiesInAChain_AreSeparated_ByRelaxation()
 }
 ```
 
-- [ ] **Step 2:** три поля конфига (**с `[Range]` и переездом маркер-ключа**,
+- [ ] **Step 2:** три поля конфига — `MaxDepenetrationPerTick` **0.5** (Hero),
+      `RelaxIterations` **4** (Arena), ⚠ **`PushRecoilFraction`** (Hero **0.25**,
+      Mob **1.0**; Р442 заменил им `DashPushSpeed`) — (**с `[Range]` и переездом маркер-ключа**,
       Global Constraints) + расширение `_sepForces` до `MaxMobs + MaxPlayers` +
       второй преаллоцированный буфер **смещений** той же формы; заглушка
       (смещения копятся, но не применяются) до компиляции; R-FILTER
@@ -3996,7 +4074,9 @@ public void ThreeBodiesInAChain_AreSeparated_ByRelaxation()
       редакции плана; находка ревью B-I4):** `RelaxIterations >= 1`
       (⚠ ноль **молча выключает** всё жёсткое разведение — то есть весь смысл
       таска), `MaxDepenetrationPerTick > 0` (⚠ ноль **замуровывает** сборщика
-      внутри тела навсегда), `DashPushSpeed >= 0`. Свидетель — по образцу
+      внутри тела навсегда), ⚠ **`PushRecoilFraction` в `[0, 1]`** (Р442: ноль =
+      «полный кокон, ход не сбавляет» и законен; больше единицы — тело получало
+      бы больше, чем отдаёт, то есть импульс из ниоткуда). Свидетель — по образцу
       `ImpactConfigTests`, нарушение на **втором** элементе там, где правило
       сводит несколько:
 
@@ -4023,43 +4103,187 @@ public void Validate_ZeroMaxDepenetration_Throws()
     Assert.That(ex.Message, Does.Contain("Hero.MaxDepenetrationPerTick"));
 }
 ```
-- [ ] **Step 3 (GREEN, ядро):** в `SeparationSystem.Apply` — второй проход по
-      парам через `Geometry.ResolveBodyPair`, смещения **копятся в буфер** и
-      применяются **одним проходом после перебора**; `RelaxIterations` итераций;
-      затем арена (`Geometry.Depenetrate`), затем повторная проверка тел.
-- [ ] **Step 3a (RED, тест 31 спеки — подкат разрешается ЧАСТЯМИ; находка ревью
-      D-C10):** без этого свидетеля правило Step 4 вводится без единого теста.
+- [ ] **Step 3 (GREEN, позиционное ядро):** в `SeparationSystem.Apply` — второй
+      проход по парам через `Geometry.ResolveBodyPair`, смещения **копятся в
+      буфер** и применяются **одним проходом после перебора**; `RelaxIterations`
+      итераций; затем арена (`Geometry.Depenetrate`), затем повторная проверка
+      тел. ⚠ Здесь же `ResolveBodyPair` получает **`out float2 normal`**
+      (Ruling 115) — нормаль понадобится Step 4, и выводить её второй раз
+      запрещено правилом 2: вырожденное направление Ruling 108 не переписывается.
+      ⚠ В паре со сборщиком `Id` не читается (Ruling 116). Толчка здесь **ещё
+      нет** — только позиция.
+- [ ] **Step 3a (RED, СЕМЬ свидетелей закона толчка; Р442 заменил им прежний
+      тест 31 «подкат частями», отменённый Р441):** без них закон вводится
+      ветками без единой жертвы — ровно тот класс, который эпик отверг трижды
+      (Ruling 95, Ruling 88, `app-rahx`). Числа в ассертах — **предсказать до
+      прогона** в семантике урока 585 (промежуточные — double, округление при
+      записи); ниже даны ориентиры, посчитанные от массы сборщика 120.
 
 ```csharp
 [Test]
-public void Slide_DoesNotPassUnderABodyWhoseLegsStartAtTheGround()
+public void Push_GrowsWithApproachSpeed()
 {
-    // Тест 31 спеки (находка A-I6): подкат разрешается ЧАСТЯМИ цели, а не её
-    // архетипом. У чейзера и у Директора ноги начинаются от нуля, значит
-    // подкат не проходит ни под кем из них — «проходит под ногами» физически
-    // означает «проходит сквозь ноги». Это же вопрос 4 владельцу к вехе В2.
-    // ⚠ OpenField() — иначе подкат уходит из (159,0) прочь от моба и тест
-    // истинен тривиально (правило спавн-кольца).
+    // ⭐ ГЛАВНЫЙ свидетель поправки владельца: толчок обязан ЧИТАТЬ СКОРОСТЬ.
+    // Без него мутация «толкать константой» выживает весь сьют. Ориентиры по
+    // чейзеру: бег 7.5 → 4.29, подкат 13.5 → 7.71, дэш 30 → 17.14 м/с.
+    // Сравниваются ТРИ прогона одной фикстуры, а не абсолютные числа: так тест
+    // переживает тюнинг чисел на В2 и умирает только от снятия скорости.
+    float run   = TestWorlds.MeasurePushOnChaser(MoveMode.Run);
+    float slide = TestWorlds.MeasurePushOnChaser(MoveMode.Slide);
+    float dash  = TestWorlds.MeasurePushOnChaser(MoveMode.Dash);
+
+    Assert.Greater(slide, run * 1.5f, "подкат толкнул не сильнее бега");
+    Assert.Greater(dash, slide * 1.5f, "дэш толкнул не сильнее подката");
+}
+
+[Test]
+public void Push_ScalesWithMass_DirectorBarelyMoves()
+{
+    // Второй несущий множитель закона — массы. Ориентиры при подкате 13.5:
+    // чейзер 90 → 7.71, Директор 4000 → 0.393 м/с, отношение ~19.6.
+    float chaser   = TestWorlds.MeasurePushOnBody(MobType.Chaser, MoveMode.Slide);
+    float director = TestWorlds.MeasurePushOnBody(MobType.Director, MoveMode.Slide);
+
+    Assert.Greater(chaser, director * 10f, "толчок не зависит от массы тела");
+    Assert.Less(director, 1f, "Директора сдвинуло как лёгкое тело");
+}
+
+[Test]
+public void GrazingContact_PushesLessThanHeadOn()
+{
+    // Свидетель ПРОЕКЦИИ: сближение берётся вдоль нормали контакта, а не как
+    // полная скорость. Иначе пробегающий мимо сборщик расшвыривал бы толпу
+    // вбок так же, как влетевший в лоб.
+    float headOn  = TestWorlds.MeasurePushOnChaser(MoveMode.Slide, offsetY: 0f);
+    float grazing = TestWorlds.MeasurePushOnChaser(MoveMode.Slide, offsetY: 0.8f);
+
+    Assert.Greater(headOn, grazing * 1.5f,
+        "касательный контакт толкнул как лобовой — скорость взята не по нормали");
+}
+
+[Test]
+public void SeparatingBodies_GetNoImpulse()
+{
+    // Свидетель guard'а `сближение <= 0`. Он же — причина, по которой закону НЕ
+    // нужен отдельный порог скорости: расходящиеся тела дают минус, стоящий
+    // сборщик — ноль. Тело перекрыто со сборщиком, но УЕЗЖАЕТ от него.
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(7, cfg);
-    TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(2.5f, 0f)));
-    var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(0, m);
-    var p = w.Player;
-    p.SlideTimer = cfg.Hero.SlideDuration; p.SlideDir = new float2(1f, 0f);
-    w.SetPlayerForTest(p);
+    TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(0.5f, 0f)));
+    var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f;
+    m.Vel = new float2(6f, 0f);                 // уезжает вперёд
+    w.SetMobForTest(0, m);
+    float2 velBefore = w.Mobs[0].Vel;
 
-    for (int i = 0; i < 20; i++) w.Tick(default);
+    w.Tick(default);                            // сборщик стоит
 
-    Assert.GreaterOrEqual(math.distance(w.Player.Pos, w.Mobs[0].Pos),
-        cfg.Hero.Radius + cfg.Chaser.Radius - 0.05f,
-        "подкат прошёл СКВОЗЬ ноги чейзера");
+    Assert.LessOrEqual(w.Mobs[0].Vel.x, velBefore.x,
+        "расходящаяся пара получила толчок — guard сближения снят");
+}
+
+[Test]
+public void Slide_LosesOnlyItsRecoilShare_NotTheWholeCollision()
+{
+    // Свидетель PushRecoilFraction = 0.25. При полной отдаче подкат просел бы
+    // 13.5 → 7.71 (медленнее бега 7.5) и «прорезать толпу» стало бы ложью;
+    // при 0.25 он теряет 1.45 и остаётся на 12.05.
+    float after = TestWorlds.MeasureSlideSpeedAfterOneChaser();
+
+    Assert.Greater(after, 11f, "подкат потерял больше своей доли отдачи");
+    Assert.Less(after, 13.5f, "подкат не потерял НИЧЕГО — отдача не применяется");
+}
+
+[Test]
+public void SlideThroughThreeChasers_StaysFasterThanRunning()
+{
+    // ⭐⭐ ЗАМЫСЕЛ ВЛАДЕЛЬЦА КАК ИСПОЛНЯЕМЫЙ ТЕСТ (Р442): «тройка комбо мувмента
+    // должна прорезать толпу лёгких врагов». Ориентир цепочки:
+    // 13.5 → 12.05 → 10.76 → 9.61 при беге 7.5.
+    float after = TestWorlds.MeasureSlideSpeedAfterThreeChasers();
+
+    Assert.Greater(after, TestConfigs.OpenField().Hero.MaxSpeed,
+        "подкат сквозь троих стал медленнее бега — комбо толпу не прорезает");
+}
+
+[Test]
+public void PushedMob_KnocksBackTheMobBehindIt()
+{
+    // Свидетель ТРЕТЬЕЙ пары (Р442 снял границу «моб↔моб без импульса»):
+    // сбитый чейзер сносит того, кто за ним. Ориентир: сбитый на 17.1 м/с
+    // отдаёт следующему 0.5 × 17.1 = 8.55 м/с. Без цепной реакции толпа
+    // расступается по одному, и «прорезать» превращается в «протолкнуться».
+    float behind = TestWorlds.MeasureSecondRowSpeedAfterDash();
+
+    Assert.Greater(behind, 3f,
+        "второй ряд не получил импульса — закон не применён к паре моб↔моб");
 }
 ```
 
-- [ ] **Step 4 (GREEN, дэш и подкат):** `DashTimer > 0` — сборщик расталкивает
-      (моб получает `DashPushSpeed`), сам не двигается; первый тик после дэша —
-      обычное правило с `MaxDepenetrationPerTick`; подкат — пропуск тех частей
-      цели, чей диапазон не пересекает профиль.
+  ⚠ **Хелперы `TestWorlds.Measure*` — новые, и их форма обязана быть ОДНА** на
+  все семь тестов (правило 2): «поставить тело, задать сборщику режим движения,
+  прокрутить до контакта, вернуть скорость измеряемого тела». Дублировать
+  фикстуру семь раз запрещено. `MoveMode` — локальное перечисление тестовой
+  сборки, **не** новый тип симуляции.
+  ⚠ **`OpenField()`, а не `Open()`** во всех семи: у `Open()` сборщик спавнится
+  на кольце в 159.16 м и до тела не доходит вовсе (правило спавн-кольца).
+
+- [ ] **Step 4 (GREEN, закон толчка — Р442):** новая функция в `Impact`, рядом
+      со своей роднёй `VelocityDelta`, и подключение её в **тот же** цикл пар
+      Step 3 — к **трём парам**. Ветвей по режиму движения (`DashTimer`,
+      `SlideTimer`) и по архетипу в правиле **НЕТ ВОВСЕ**: закон читает только
+      массы, скорость вдоль нормали и `PushRecoilFraction` каждой стороны.
+
+```csharp
+/// Momentum-conserving shove between two bodies in contact (app-88jb Т22,
+/// owner decision Р442). The target gains the pusher's momentum share; the
+/// pusher loses that share mirrored, scaled by how much of the reaction its
+/// footing FAILS to absorb -- a self-propelled body pushes against the ground,
+/// and the ground takes the rest. PushRecoilFraction is that leftover: 0.25 for
+/// the collector, 1.0 for a mob, which makes mob-vs-mob conserve momentum
+/// EXACTLY and leaves the collector's deviation a single named number rather
+/// than a special case in the caller.
+///
+/// NO CEILING, AND THAT IS DELIBERATE (ruling 114): `share` is below one by
+/// construction, so a body can never leave faster than the thing that hit it --
+/// physics is its own ceiling here. ImpactSpeedCap above belongs to
+/// VelocityDelta, whose `m*v/M` has no such bound and genuinely needs one.
+/// A cap here would only flatten progression: a faster dash must shove harder.
+///
+/// THE GUARD IS THE THRESHOLD. `approachSpeed <= 0` covers a body standing
+/// still, a body already leaving, and the tick after a shove has landed -- the
+/// impulse is self-limiting because the target outruns the pusher. That is why
+/// no minimum-speed constant exists: it would be a second answer to a question
+/// the sign already answers.
+///
+/// `approachSpeed` is the closing speed ALONG THE CONTACT NORMAL, never a
+/// full-vector magnitude: a collector running PAST a body must not hurl it the
+/// way one running INTO it does.
+public static bool ResolveBodyPush(float pusherMass, float targetMass,
+    float approachSpeed, float pusherRecoilFraction,
+    out float targetDelta, out float pusherDelta)
+{
+    targetDelta = 0f;
+    pusherDelta = 0f;
+    if (approachSpeed <= 0f) return false;
+    float share = pusherMass / (pusherMass + targetMass);
+    targetDelta = share * approachSpeed;
+    pusherDelta = pusherRecoilFraction * (1f - share) * approachSpeed;
+    return true;
+}
+```
+
+      ⚠ **Нормаль — из `ResolveBodyPair`** (Ruling 115), не считается второй раз.
+      ⚠ **Сборщик читает только СВОЮ скорость** (Ruling 113): `PushableBody` не
+      несёт скорости, поэтому общий код сервера и клиента не может дать сборщику
+      толчок от чужого движения. Пара моб↔моб живёт в серверном коде, где
+      `MobState.Vel` доступен обеим сторонам, — там закон полный.
+      ⚠ **Случай «дэш кончился внутри тела»** остаётся как был (D-C3): первый тик
+      после дэша — обычное правило, выталкивание ограничено
+      `MaxDepenetrationPerTick`.
+      ⚠ **Дока `SeparationSystem` (`:17-19`) становится ложной** от этого таска
+      («This never touches Pos as a second movement path») — пересогласовать
+      текстом, а не молча.
+
 - [ ] **Step 5 (только видимые):** и сервер, и `PlayerPrediction` разводят
       сборщика **лишь от видимых ему тел**.
       ⚠⚠ **ЧЕСТНАЯ ОГОВОРКА КРУГА 3:** под сегодняшней LoS-видимостью это
@@ -4156,7 +4380,8 @@ public void PredictionAndServerAgree_WhenTheBodyIsVisible()
   `WallCount = 0` и `ZoneWallCount = 0` (`TestConfigs.cs:430-462`), то есть
   барьеров нет вовсе; а на арене С барьерами сокрытое тело всё равно не может
   быть в контакте (разбор в доке теста-сторожа). Новых хелперов таск не вводит.
-- [ ] **Step 6:** R-FILTER `BodyCollisionTests` → PASS 5/5; R-FILTER
+- [ ] **Step 6:** R-FILTER `BodyCollisionTests` → PASS **14/14** (5 из Step 1 +
+      7 из Step 3a + 2 из Step 5); R-FILTER
       `AllocationTests` → PASS.
 - [ ] **Step 7 (мутации M22/M23/M24/M25/M26; предсказания ДО прогона):**
       M22 — разведение без учёта масс (поровну) → жертва
@@ -4217,7 +4442,31 @@ public void SeparationOutcome_DoesNotDependOnArrayOrder()
             "исход разведения зависит от порядка тел в массиве");
 }
 ```
-- [ ] **Step 8:** R-TEST полный → три golden; `total` = **1651**.
+  ⚠ **ШЕСТЬ МУТАЦИЙ СВЕРХ ПРЕЖНИХ — ЗАКОН ТОЛЧКА (Р442).** Каждая названа
+  вместе с жертвой **до** прогона; жертва — имя теста И номер ассерта:
+
+  | # | Мутация | Жертва |
+  |---|---|---|
+  | **M27** | толчок не читает скорость (константа вместо `approachSpeed`) | `Push_GrowsWithApproachSpeed`, оба ассерта |
+  | **M28** | толчок не читает массы (`share` = 0.5) | `Push_ScalesWithMass_DirectorBarelyMoves`, ассерты 1 и 2 |
+  | **M29** | снят guard `approachSpeed <= 0` | `SeparatingBodies_GetNoImpulse`, ассерт 1 |
+  | **M30** | `PushRecoilFraction` игнорируется (отдача полная) | `SlideThroughThreeChasers_StaysFasterThanRunning`, ассерт 1; **и** `Slide_LosesOnlyItsRecoilShare…`, ассерт 1 |
+  | **M31** | импульс снят с пары моб↔моб | `PushedMob_KnocksBackTheMobBehindIt`, ассерт 1 |
+  | **M32** | скорость берётся полной, а не проекцией на нормаль | `GrazingContact_PushesLessThanHeadOn`, ассерт 1 |
+
+  ⚠ **Отрицательное предсказание стоит столько же** (правило эпика): если
+  ожидается, что мутация переживёт сьют, это пишется ДО прогона и разбирается
+  как находка, а не объясняется задним числом.
+  ⚠ **M30 названа с ДВУМЯ жертвами намеренно** — одна пинит числовую долю
+  отдачи, вторая замысел владельца («комбо прорезает толпу»); если умрёт только
+  вторая, значит первая написана на слишком широком допуске.
+
+- [ ] **Step 8:** R-TEST полный → три golden; `total` = **1694** — ⚠ **число
+      пересчитано Р442**: прежние 1651 были предсказанием до Т12–Т21, факт после
+      Т21 = **1678**, таск добавляет 14 (`BodyCollisionTests`) + 2 (валидация в
+      `ConfigTests`). ⚠⚠ Эталоны **обязаны сдвинуться** — Т22 первый таск Ф2,
+      меняющий движение тел; предсказание по каждому из трёх пишется ДО прогона,
+      четвёртый красный = стоп.
 - [ ] **Step 9:** ГЕЙТ-ФАЙЛ + ГЕЙТ-META; R-COMMIT `feat(app-88jb): Т22 —
       жёсткое разведение трёх пар тел`.
 

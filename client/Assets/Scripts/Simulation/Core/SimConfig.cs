@@ -68,6 +68,22 @@ namespace Ring.Simulation.Core
         /// It is applied BEFORE CocoonDamping divides, so the collector's
         /// effective ceiling is ImpactSpeedCap / CocoonDamping.
         public float Mass, ImpactSpeedCap, CocoonDamping;
+        /// app-88jb Т22 (spec §3.5, owner decisions Н15/Р442): body-collision
+        /// numbers — the per-tick ceiling on being pushed out of a body, and the
+        /// share of a collision's reaction this body actually takes. See
+        /// HeroConfig's own doc for the model behind PushRecoilFraction; the
+        /// short of it is that ImpactSpeedCap above belongs to VelocityDelta
+        /// (a projectile's `m*v/M` has no built-in bound and needs a ceiling)
+        /// while the body-vs-body law needs none, because its share is below
+        /// one by construction and a body can never leave faster than whatever
+        /// ran into it (ruling 114).
+        public float MaxDepenetrationPerTick, PushRecoilFraction;
+        /// app-88jb Т22 (owner decision Р443): the suit thruster's power, as the
+        /// slide speed it wins back per second after a collision took some. See
+        /// HeroConfig's own doc — this is the number that makes the slide DRIVEN
+        /// rather than coasting, the one a meta-upgrade raises, and the one a
+        /// future jump will attach to.
+        public float SlideThrustRecovery;
         /// Tilt (spec §3.2, owner decision Н10/Н23). The spring is parameterized
         /// through the damping RATIO and the settle TIME, never through raw k/c:
         /// tuning stiffness and damping by eye is not possible, and the spec got
@@ -241,6 +257,10 @@ namespace Ring.Simulation.Core
         public float AvoidMargin;
 
         public float Mass, ImpactSpeedCap, ProjectileMass;
+        /// app-88jb Т22 (spec §3.5, owner decision Р442): this archetype's share
+        /// of a collision's reaction — 1.0 everywhere today, which is what makes
+        /// mob-vs-mob conserve momentum exactly. See MobConfig's own doc.
+        public float PushRecoilFraction;
         public float CenterOfMassHeight, TiltDampingRatio, TiltSettleSeconds, TiltGain;
         /// Knockdown (owner decision Н23, variant 3a): above this tilt the mob
         /// goes down for DownedSeconds and neither shoots nor strikes. Radians.
@@ -549,6 +569,11 @@ namespace Ring.Simulation.Core
         /// = 8/1, and §3.12 counts on a one-byte occupancy mask, exact at 8.
         public int MaxContainers;
         public int MaxContainerSlots;
+        /// app-88jb Т22 (spec §3.5, decision Р413): relaxation passes per tick
+        /// for the hard body separation. See ArenaConfig's own doc — one pass
+        /// does not separate a chain of three, and zero disables the mechanism
+        /// silently, so the builder refuses it.
+        public int RelaxIterations;
     }
 
     /// Server-side visibility filter numbers (Stage 2 Task 19, spec §3.5,

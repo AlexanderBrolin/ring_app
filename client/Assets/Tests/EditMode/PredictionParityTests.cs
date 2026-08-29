@@ -120,8 +120,14 @@ namespace Ring.Simulation.Tests
                 // (this class's own fixture note), so the honest pulse is the
                 // empty one. The knockback path has its own witness,
                 // PredictedKnockback_MatchesTheServer_TickForTick below.
+                // app-88jb Т22: an EMPTY body set, for the same reason the pulse
+                // above is empty — these are solo worlds, so there is nothing for
+                // the collector to be separated from and the honest input is the
+                // empty one. The body-separation parity has its own witness,
+                // BodyCollisionTests.PredictionAndServerAgree_WhenTheBodyIsVisible.
                 PlayerPrediction.Step(ref predicted, in sent, in cfg,
-                    in Ring.Simulation.Combat.ImpactPulse.None);
+                    in Ring.Simulation.Combat.ImpactPulse.None,
+                    System.ReadOnlySpan<PushableBody>.Empty);
 
                 AssertPlayerStateBitEqual(world.PlayerAt(0), predicted, in atStart, scenario, tick);
                 observe?.Invoke(tick, world);
@@ -781,7 +787,8 @@ namespace Ring.Simulation.Tests
             // crossed the two fields, or moved one of them for its own
             // reasons, has nowhere to hide.
             var pulse = new Ring.Simulation.Combat.ImpactPulse(new float2(0.3f, 0f), 0.2f);
-            PlayerPrediction.Step(ref predicted, default, in cfg, in pulse);
+            PlayerPrediction.Step(ref predicted, default, in cfg, in pulse,
+                System.ReadOnlySpan<PushableBody>.Empty);
 
             // The input is `default` — no movement, no trigger — so an idle
             // tick leaves Vel and TiltVel at zero and everything read below
@@ -859,6 +866,11 @@ namespace Ring.Simulation.Tests
                 ["Pos"] = PredictionRole.Predicted,          // through MoveWithCollisions(ref p.Pos, ...)
                 ["DashDir"] = PredictionRole.Predicted,
                 ["DashSpeedCur"] = PredictionRole.Predicted,
+                // app-88jb Т22 (Р443): the slide's collision penalty is written
+                // by the collector's own body separation, which PlayerPrediction
+                // runs too — same role as DashSpeedCur above, for the same
+                // reason (it decides where the collector's own body goes).
+                ["SlideSpeedPenalty"] = PredictionRole.Predicted,
                 ["DashTimer"] = PredictionRole.Predicted,
                 ["DashCooldown"] = PredictionRole.Predicted,
                 ["IframeTimer"] = PredictionRole.Predicted,

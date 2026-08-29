@@ -267,6 +267,58 @@ namespace Ring.Simulation.Tests
                 () => BuildShipped(h, w, c, g, wv, a, vis));
         }
 
+        /// app-88jb Т22 (spec §3.5, decision Р413). A SILENT failure is what
+        /// this rule exists against: zero here is not "zero iterations of a
+        /// harmless smoothing pass", it is the hard body separation switched
+        /// OFF, and the only place that shows is a playtest where the collector
+        /// walks through mobs again -- the very thing the task delivers.
+        [Test]
+        public void Validate_ZeroRelaxIterations_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            a.RelaxIterations = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Arena.RelaxIterations"));
+        }
+
+        /// app-88jb Т22 (spec §3.5, finding D-C3). Zero does not mean "never
+        /// push the collector out of a body"; it means the collector that ended
+        /// a dash inside the Director stays walled in there for the rest of the
+        /// match, because every tick is allowed to undo exactly none of the
+        /// overlap.
+        [Test]
+        public void Validate_ZeroMaxDepenetration_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            h.MaxDepenetrationPerTick = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Hero.MaxDepenetrationPerTick"));
+        }
+
+        /// app-88jb Т22 (spec §3.5, owner decision Р442). The upper end is the
+        /// interesting one and it is why this is a RANGE rather than a
+        /// non-negativity check: above one a body would come out of a collision
+        /// with more speed than the collision put into it -- momentum from
+        /// nowhere -- and [Range] on the ScriptableObject is an Inspector hint
+        /// that never sees a value arriving from code (the same I3 rationale
+        /// SwingLeadFactor's own rule carries).
+        ///
+        /// ⚠ THE VIOLATION IS ON THE MOB, not the hero, deliberately: the rule
+        /// is written once in the Hero block and once in ValidateMob, and a
+        /// witness that only ever tripped the hero's copy would leave the four
+        /// archetypes' half of it unproven.
+        [Test]
+        public void Validate_PushRecoilFractionAboveOne_Throws()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            g.PushRecoilFraction = 1.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("PushRecoilFraction"));
+        }
+
         [Test]
         public void Build_NegativeBarrierTop_Throws()
         {
@@ -2241,6 +2293,16 @@ namespace Ring.Simulation.Tests
             elite.Radius = expected.Elite.Radius;
             director.MaxHp = expected.Director.MaxHp;
             director.Radius = expected.Director.Radius;
+            // app-88jb Т22: the RADIUS alone is no longer a complete body. Since
+            // bodies became solid, a melee archetype has to out-reach its own
+            // contact width, and these two assets carry a chaser-sized reach
+            // (1.1, the class's C# default) under an elite-sized body (0.8) —
+            // a swing that could never land, which the builder now refuses.
+            // Setting the reach alongside the radius keeps this fixture a
+            // COHERENT body; the test's own subject (MaxHp and Radius reaching
+            // SimConfig) is untouched.
+            elite.AttackRange = expected.Elite.AttackRange;
+            director.AttackRange = expected.Director.AttackRange;
 
             SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 

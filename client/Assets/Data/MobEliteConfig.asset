@@ -66,3 +66,4 @@ MonoBehaviour:
   RicochetMinSpeed: 6
   PierceMassRatio: 0.06
   PierceDamageLoss: 0.5
+  PushRecoilFraction: 1

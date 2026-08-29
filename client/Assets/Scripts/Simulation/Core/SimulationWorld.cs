@@ -91,7 +91,58 @@ namespace Ring.Simulation.Core
         // 20) — preallocated here so the hot path never allocates; recomputed
         // from scratch every tick, so it carries no state across ticks and is
         // deliberately excluded from SaveState/RestoreState and StateHash.
+        // ⚠ app-88jb Т22 WIDENED IT TO HOLD COLLECTORS TOO (MaxMobs +
+        // MaxPlayers, not MaxMobs): from that task the pair scan covers three
+        // pair kinds, and a collector indexes past the mob count. The sizing
+        // precedent is _projCandidates two lines below, which has budgeted for
+        // both populations since Stage 2 Task 17.
         readonly float2[] _sepForces;
+        // app-88jb Т22: the SECOND buffer of the same shape, for POSITIONAL
+        // separation. It is separate from _sepForces rather than reused,
+        // because the two quantities are applied to different fields (Vel and
+        // Pos) at different points of the same tick, and folding them would
+        // make "displacement" and "impulse" indistinguishable at the one place
+        // that has to tell them apart.
+        readonly float2[] _sepDisplace;
+        // app-88jb Т22: the shove (owner decision Р442). A THIRD buffer rather
+        // than a second use of _sepForces, which the SOFT separation above has
+        // already spent by the time the hard pass runs: reusing it would make
+        // the hard pass silently depend on the soft pass having finished, which
+        // is the kind of coupling that survives review once and breaks the
+        // tick it is reordered.
+        readonly float2[] _sepPush;
+        // app-88jb Т22: the per-collector body list handed to
+        // BodySeparation.Accumulate, and the map from its slots back to the
+        // buffers above. Both preallocated to the same bound as the buffers,
+        // for the reason every scratch in this file is: the pair scan runs
+        // every tick and must not allocate.
+        readonly PushableBody[] _pushBodies;
+        // app-88jb Т22 (finding Н-43): the overlapping mob pairs found by the
+        // hard pass's ONE broad scan, so the relaxation iterations after it
+        // never re-scan the arena. At Arena.MaxMobs 1350 a full scan is 911k
+        // pairs, and four of them per tick is 3.6M — measured, not feared: it
+        // blew AllocationTests' own 180-second ceiling. Sized to four entries
+        // per mob, which is far past what a soft-separated crowd ever produces
+        // (bodies are held 2.4 m apart while contact is 1.0 m); if it ever
+        // fills, collection stops and the remaining pairs simply wait for the
+        // next tick, which is the same graceful degradation SpawnContainer's
+        // cap already uses.
+        readonly (int a, int b)[] _pairCandidates;
+        int _pairCandidateCount;
+        // app-88jb Т22: the reciprocals Accumulate hands back, indexed like
+        // _pushBodies and scattered through _pushSlot. They exist because the
+        // shared routine stays indexed by its OWN input -- teaching it the
+        // world's slot layout would be exactly the coupling that keeps it from
+        // also serving the client, which has no such layout.
+        readonly float2[] _pushDisp;
+        readonly float2[] _pushVel;
+        // app-88jb Т22: how far the hard pass has already moved each collector
+        // THIS TICK. Hero.MaxDepenetrationPerTick is a per-tick ceiling rather
+        // than a per-iteration one, so the running total has to survive across
+        // the relaxation passes — and keeping it here rather than dividing the
+        // ceiling by RelaxIterations is what stops one config number from
+        // silently changing the meaning of another.
+        readonly float2[] _sepPlayerMoved;
         ProjectileState[] _projectiles;
         int _projectileCount;
         // Scratch buffer for ProjectileSystem's per-tick candidate min-scan
@@ -305,7 +356,14 @@ namespace Ring.Simulation.Core
                     PhaseTicks = TicksFromSeconds(config.Wave.FirstWaveDelay)
                 };
             _mobs = new MobState[config.Arena.MaxMobs];
-            _sepForces = new float2[config.Arena.MaxMobs];
+            _sepForces = new float2[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _sepDisplace = new float2[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _sepPush = new float2[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _pushBodies = new PushableBody[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _pairCandidates = new (int a, int b)[config.Arena.MaxMobs * 4];
+            _pushDisp = new float2[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _pushVel = new float2[config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            _sepPlayerMoved = new float2[config.Arena.MaxPlayers];
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _projCandidates = new (float t, int kind, int index)[
                 config.Arena.MaxMobs + config.Arena.MaxPlayers + 3];
@@ -386,7 +444,7 @@ namespace Ring.Simulation.Core
             // motion on the next tick's MoveWithCollisions call (see
             // SeparationSystem's doc comment).
             MobAiSystem.Update(this);
-            SeparationSystem.Apply(this);
+            SeparationSystem.Apply(this, _players);
             ProjectileSystem.Update(this);
             // app-88jb Т5 (spec §3.2): the tilt spring steps HERE -- after
             // this tick's hits are resolved, so a body integrates from the
@@ -575,6 +633,10 @@ namespace Ring.Simulation.Core
                 // config's DashSpeed ceiling — same clamp-to-new-ceiling contract
                 // as every other dash timer/value here.
                 p.DashSpeedCur = math.clamp(p.DashSpeedCur, 0f, next.Hero.DashSpeed);
+                // app-88jb Т22 (Р443): the same reasoning for the slide's own
+                // collision penalty — a hot-tweak that lowers SlideSpeed must not
+                // leave a penalty bigger than the speed it is subtracted from.
+                p.SlideSpeedPenalty = math.clamp(p.SlideSpeedPenalty, 0f, next.Hero.SlideSpeed);
                 p.IframeTimer = math.clamp(p.IframeTimer, 0f, next.Hero.DashIframes);
                 p.DashBufferTimer = math.clamp(p.DashBufferTimer, 0f, next.Hero.DashBufferWindow);
                 p.FireCooldown = math.clamp(p.FireCooldown, 0f, next.Weapon.FireInterval);
@@ -1086,19 +1148,57 @@ namespace Ring.Simulation.Core
         /// something upstream is already broken — the same "refuse loudly"
         /// contract SnapshotBlocks.MaxHpFor's own decode-time domain gate
         /// documents, applied at the call site instead of the wire.
-        internal MobSimConfig MobConfigFor(MobType type) => type switch
+        internal MobSimConfig MobConfigFor(MobType type) => MobConfigRefFor(type);
+
+        /// The same answer WITHOUT COPYING (app-88jb Т22, finding Н-43).
+        /// MobSimConfig is a fifteen-field struct, and the value-returning
+        /// overload above copies all of it on every call — invisible while the
+        /// only callers were per-mob, and measured the moment Т22 put config
+        /// reads inside a per-PAIR loop: at Arena.MaxMobs the separation scan
+        /// asks this question tens of thousands of times a tick, and the copies
+        /// alone tripled the full test run.
+        ///
+        /// ONE HOME FOR THE SWITCH, not two: the value overload delegates here.
+        /// Callers that keep the answer around still take the copy (a `ref
+        /// readonly` into _config would go stale across a hot-tweak migration);
+        /// callers inside a loop take the reference.
+        internal ref readonly MobSimConfig MobConfigRefFor(MobType type)
         {
-            MobType.Chaser => _config.Chaser,
-            MobType.Gunner => _config.Gunner,
-            MobType.Elite => _config.Elite,
-            MobType.Director => _config.Director,
-            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
-                "unknown archetype"),
-        };
+            switch (type)
+            {
+                case MobType.Chaser: return ref _config.Chaser;
+                case MobType.Gunner: return ref _config.Gunner;
+                case MobType.Elite: return ref _config.Elite;
+                case MobType.Director: return ref _config.Director;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                        "unknown archetype");
+            }
+        }
 
         /// SeparationSystem's seam into its preallocated per-tick force buffer
-        /// (Task 20) — sized to Arena.MaxMobs, recomputed every tick, never grown.
+        /// (Task 20) — sized to Arena.MaxMobs + Arena.MaxPlayers since app-88jb
+        /// Т22, recomputed every tick, never grown. The collectors occupy the
+        /// slots ABOVE the mob count, which is the only reason a single buffer
+        /// can serve a scan over three pair kinds.
         internal float2[] SepForces => _sepForces;
+
+        /// The positional twin of SepForces (app-88jb Т22), same size, same
+        /// per-tick contract. Two buffers because the two quantities land on
+        /// different fields at different points of the tick — see the field's
+        /// own doc.
+        internal float2[] SepDisplace => _sepDisplace;
+
+        /// The hard pass's velocity buffer and its four scratch companions
+        /// (app-88jb Т22) — same size, same "recomputed every tick, never
+        /// grown, never hashed" contract as SepForces above.
+        internal float2[] SepPush => _sepPush;
+        internal PushableBody[] PushBodies => _pushBodies;
+        internal (int a, int b)[] PairCandidates => _pairCandidates;
+        internal int PairCandidateCount { get => _pairCandidateCount; set => _pairCandidateCount = value; }
+        internal float2[] PushDisp => _pushDisp;
+        internal float2[] PushVel => _pushVel;
+        internal float2[] SepPlayerMoved => _sepPlayerMoved;
 
         /// ProjectileSystem's seam into its preallocated per-tick candidate
         /// scratch (Task 5) — sized to Arena.MaxMobs + Arena.MaxPlayers + 3
@@ -1994,6 +2094,9 @@ namespace Ring.Simulation.Core
             // same clean-corpse-read reason as DashTimer itself, unlike
             // DashDir (a heading, deliberately left as-is below).
             p.DashSpeedCur = 0f;
+            // app-88jb Т22 (Р443): same rule as DashSpeedCur above — a penalty
+            // with no slide to belong to reads as inconsistent state.
+            p.SlideSpeedPenalty = 0f;
             p.IframeTimer = 0f;
             // Task 9: Stamina itself freezes for free (UpdateDead never
             // touches it), but the regen-delay countdown is reset so a
@@ -2860,6 +2963,7 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, p.DashTimer); h = StateHash64.Add(h, p.DashCooldown);
             h = StateHash64.Add(h, p.IframeTimer); h = StateHash64.Add(h, p.DashBufferTimer);
             h = StateHash64.Add(h, p.DashSpeedCur); // Task 12: ricochet-retained dash speed
+            h = StateHash64.Add(h, p.SlideSpeedPenalty); // app-88jb Т22: collision tax on the slide
             h = StateHash64.Add(h, p.FireCooldown);
             // Stage 3 Т6 (Task 2's field, spec Р261): the magazine, folded in
             // right after the cooldown it shares a weapon with — the pair is

@@ -124,7 +124,7 @@ namespace Ring.Simulation.Tests
             c.Elite = new MobSimConfig
             {
                 MaxSpeed = c.Chaser.MaxSpeed, Accel = c.Chaser.Accel,
-                AttackRange = c.Chaser.AttackRange, TelegraphSeconds = c.Chaser.TelegraphSeconds,
+                AttackRange = c.Elite.AttackRange, TelegraphSeconds = c.Chaser.TelegraphSeconds,
                 AttackCooldown = c.Chaser.AttackCooldown,
                 SwingLeadFactor = c.Chaser.SwingLeadFactor, SwingLeadMaxMeters = c.Chaser.SwingLeadMaxMeters,
                 SeparationRadius = c.Chaser.SeparationRadius, SeparationStrength = c.Chaser.SeparationStrength,
@@ -135,6 +135,18 @@ namespace Ring.Simulation.Tests
                 ProjectileLifetime = c.Gunner.ProjectileLifetime, ProjectileDamage = c.Gunner.ProjectileDamage,
                 LeadFactor = c.Gunner.LeadFactor, MuzzleHeight = c.Gunner.MuzzleHeight,
                 Radius = 0.65f, MaxHp = 58f, ContactDamage = c.Chaser.ContactDamage,
+                // app-88jb Т22: this hybrid used to borrow the CHASER's reach
+                // (1.1) while wearing a 0.65 m body — contact width 1.10, so the
+                // two numbers were exactly equal and, once Т22 made bodies
+                // solid, the elite could never be strictly inside its own attack
+                // range: it went Idle -> Chase -> Reposition and Telegraph never
+                // happened. It also carried NO MASS AT ALL, which is a body
+                // ResolveBodyPair's own doc names as an unchecked precondition
+                // (mA + mB > 0). Both are the archetype's own numbers now, so
+                // the hybrid is a coherent body: elite mass, elite reach,
+                // chaser timings — which is what "an enhanced chaser" meant.
+                Mass = c.Elite.Mass, ImpactSpeedCap = c.Elite.ImpactSpeedCap,
+                PushRecoilFraction = c.Elite.PushRecoilFraction,
             };
             return c;
         }
@@ -177,7 +189,15 @@ namespace Ring.Simulation.Tests
             {
                 var c = EliteHybridConfig();
                 var w = new SimulationWorld(1, c);
-                w.SpawnMobForTest(MobType.Elite, new float2(1.0f, 0f)); // well inside AttackRange
+                // app-88jb Т22: the collector is moved OFF THE ORIGIN, because
+                // MatchFlowSystem spawns the Director exactly there the moment a
+                // live collector stands in the Core zone (Р254, unconditional).
+                // While bodies were ghosts a 2.2 m boss standing on top of the
+                // fixture cost nothing; from Т22 he shoves both the collector and
+                // the elite every tick, and the elite never gets to melee range
+                // at all — Telegraph and Recover simply never happen.
+                TestWorlds.RelocatePlayerForTest(w, 0, new float2(40f, 0f));
+                w.SpawnMobForTest(MobType.Elite, new float2(41.0f, 0f)); // well inside AttackRange
                 seen.Add(w.Mobs[0].Ai); // Idle, straight out of SpawnMob
                 for (int i = 0; i < 40; i++)
                 {
@@ -188,7 +208,8 @@ namespace Ring.Simulation.Tests
             {
                 var c = EliteHybridConfig();
                 var w = new SimulationWorld(1, c);
-                w.SpawnMobForTest(MobType.Elite, new float2(20f, 0f)); // well outside PreferredRange
+                TestWorlds.RelocatePlayerForTest(w, 0, new float2(40f, 0f)); // see above
+                w.SpawnMobForTest(MobType.Elite, new float2(60f, 0f)); // well outside PreferredRange
                 for (int i = 0; i < 300; i++)
                 {
                     w.Tick(default);

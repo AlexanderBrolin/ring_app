@@ -228,6 +228,10 @@ namespace Ring.Simulation.Tests
                 // Task 12: ricochet-decayed dash speed clamps to the new
                 // DashSpeed ceiling, same contract as the dash timers above.
                 ["DashSpeedCur"] = next.Hero.DashSpeed,
+                // app-88jb Т22 (Р443): the collision tax on a slide is subtracted
+                // FROM SlideSpeed, so a hot-tweak that lowers that speed must not
+                // leave a penalty larger than what it is subtracted from.
+                ["SlideSpeedPenalty"] = next.Hero.SlideSpeed,
                 ["FireCooldown"] = next.Weapon.FireInterval,
                 ["RecoilOffset"] = float.PositiveInfinity, // clamped by WeaponSystem, not ApplyConfig
                 // Stage 3 Task 2: the magazine clamps down to the new AmmoMax

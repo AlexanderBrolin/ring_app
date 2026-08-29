@@ -805,10 +805,32 @@ namespace Ring.Simulation.Core
         /// separation, which is exactly the dependence of the outcome on the
         /// number of pairs that the double buffer exists to remove. The spec's
         /// own pseudocode (§3.5) carries no skin either.
+        /// THE CONTACT NORMAL COMES OUT WITH THE DISPLACEMENTS (app-88jb Т22,
+        /// ruling 115), pointing from B to A, and it is an OUTPUT rather than
+        /// something the caller re-derives. Т22's shove needs the closing speed
+        /// ALONG this normal, and deriving it a second time at the call site
+        /// would mean writing the degenerate tie-break above twice -- the one
+        /// piece of this function that is genuinely subtle, and the one place a
+        /// silent divergence between the server's copy and the client's would
+        /// be undetectable until a body flew the wrong way. `normalize(dA)`
+        /// would have been the cheap alternative and is rejected for the same
+        /// reason: it is a DERIVED quantity that silently depends on the sign
+        /// convention of dA, so its correctness stops being visible where it is
+        /// used. On `false` the normal is zero, like both displacements.
+        /// THE OVERLAP COMES OUT TOO (app-88jb Т22, ruling 117), because it is
+        /// the only honest measure of how much the two bodies CONVERGED this
+        /// tick, and the shove is owed exactly that: a collision response undoes
+        /// the interpenetration that actually happened, no more. Handing the
+        /// caller the raw closing speed instead lets a body that is already
+        /// being pushed away get hit again at full strength every tick it stays
+        /// in contact -- measured, not feared (session 72).
         public static bool ResolveBodyPair(float2 posA, float rA, float mA, int idA,
                                            float2 posB, float rB, float mB, int idB,
-                                           out float2 dA, out float2 dB)
+                                           out float2 dA, out float2 dB, out float2 normal,
+                                           out float overlapOut)
         {
+            normal = float2.zero;
+            overlapOut = 0f;
             dA = float2.zero;
             dB = float2.zero;
             float2 delta = posA - posB;
@@ -854,6 +876,8 @@ namespace Ring.Simulation.Core
             float total = mA + mB;
             dA = n * (overlap * (mB / total));
             dB = -n * (overlap * (mA / total));
+            normal = n;
+            overlapOut = overlap;
             return true;
         }
 

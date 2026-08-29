@@ -497,5 +497,195 @@ namespace Ring.Simulation.Tests
             IdleTicks(world, 2);
             Assert.AreEqual(MatchPhase.GateOpen, world.Match.Phase, "premise: the gate is open");
         }
+
+        // ── app-88jb Т22: ONE fixture for every body-push witness ─────────────
+        //
+        // Seven tests in BodyCollisionTests read the push law from different
+        // angles (speed, mass, projection, the guard, the recoil, the combo, the
+        // chain). Writing seven fixtures would have been seven chances for one
+        // of them to differ in a way nobody meant, so the shape is written once
+        // here and the tests differ only in ARGUMENTS -- the same discipline
+        // SimConfigBuilder's ValidateMob follows for four archetypes.
+
+        /// How the collector was moving when it met the body.
+        internal enum MoveMode { Run, Slide, Dash }
+
+        /// Drives a collector straight along +x into ONE body and reports the
+        /// hardest shove it landed, plus its own speed at that moment.
+        ///
+        /// The run-up distance is PER MODE and that is not a fudge: a dash lasts
+        /// 0.15 s and covers 3.3 m, a slide 0.52 s and 7.0 m, while a run needs
+        /// runway to reach MaxSpeed at all. Putting the body where each mode is
+        /// actually at speed is what makes the three numbers comparable.
+        internal static void RunIntoBody(MobType type, MoveMode mode, float offsetY,
+            out float bodySpeed, out float collectorSpeed)
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            float x = mode switch { MoveMode.Dash => 1.5f, MoveMode.Slide => 2.5f, _ => 12f };
+            SpawnMobsAt(w, (type, new float2(x, offsetY)));
+            var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(0, m);
+
+            PlayerState p = w.Player;
+            SimInput input = default;
+            switch (mode)
+            {
+                case MoveMode.Run:
+                    input = new SimInput { MoveDir = new float2(1f, 0f) };
+                    break;
+                case MoveMode.Slide:
+                    p.SlideTimer = cfg.Hero.SlideDuration;
+                    p.SlideDir = new float2(1f, 0f);
+                    break;
+                case MoveMode.Dash:
+                    p.DashTimer = cfg.Hero.DashDuration;
+                    p.DashDir = new float2(1f, 0f);
+                    p.DashSpeedCur = cfg.Hero.DashSpeed;
+                    break;
+            }
+            w.SetPlayerForTest(0, p);
+
+            bodySpeed = 0f;
+            collectorSpeed = math.length(w.Player.Vel);
+            for (int i = 0; i < 80; i++)
+            {
+                w.Tick(input);
+                float s = math.length(w.Mobs[0].Vel);
+                if (s > bodySpeed)
+                {
+                    bodySpeed = s;
+                    collectorSpeed = math.length(w.Player.Vel);
+                }
+            }
+        }
+
+        /// Puts a collector ALREADY OVERLAPPING a body and slides it SIDEWAYS,
+        /// perpendicular to the contact normal; returns the hardest shove the
+        /// body took.
+        ///
+        /// ⚠ THIS IS THE WITNESS FOR THE PROJECTION (session 72, mutation M32),
+        /// and the earlier "grazing pass" fixture was not: in a graze the fresh
+        /// overlap is tiny, so ruling 117's overlap cap holds the blow down
+        /// whether the speed is projected onto the normal or taken whole, and
+        /// the mutation survived. Deep overlap plus perpendicular motion is the
+        /// one shape where the two disagree — the cap is wide open (the bodies
+        /// are 0.45 m into each other) while the projection is zero, because the
+        /// collector is going past the body rather than into it.
+        internal static float SidewaysPushOnOverlappedChaser()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            SpawnMobsAt(w, (MobType.Chaser, new float2(0.5f, 0f)));
+            var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(0, m);
+
+            PlayerState p = w.Player;
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            p.SlideDir = new float2(0f, 1f);          // ВДОЛЬ, не В тело
+            w.SetPlayerForTest(0, p);
+
+            float best = 0f;
+            for (int i = 0; i < 3; i++)
+            {
+                w.Tick(default);
+                best = math.max(best, math.length(w.Mobs[0].Vel));
+            }
+            return best;
+        }
+
+        /// Slides a collector through a line of chasers and returns its speed on
+        /// the LAST tick of the slide. `count` bodies stand 2 m apart from x = 2,
+        /// which is inside the slide's own 7 m reach.
+        internal static float SlideThroughChasers(int count) => SlideThroughChasers(count, out _);
+
+        /// `minSpeed` is the DIP -- the lowest speed the slide reached while it
+        /// ran. Without it the thruster has no witness at all: by the last tick
+        /// the engine has won most of the loss back, so the exit speed alone
+        /// cannot tell "a collision cost something and was recovered" from
+        /// "nothing ever happened".
+        internal static float SlideThroughChasers(int count, out float minSpeed)
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            var spawns = new (MobType, float2)[count];
+            for (int i = 0; i < count; i++) spawns[i] = (MobType.Chaser, new float2(2f + 2f * i, 0f));
+            SpawnMobsAt(w, spawns);
+            for (int i = 0; i < count; i++)
+            {
+                var m = w.Mobs[i]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(i, m);
+            }
+
+            PlayerState p = w.Player;
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            p.SlideDir = new float2(1f, 0f);
+            w.SetPlayerForTest(0, p);
+
+            float last = math.length(w.Player.Vel);
+            minSpeed = float.MaxValue;
+            for (int i = 0; i < 40; i++)
+            {
+                w.Tick(default);
+                if (w.Player.SlideTimer <= 0f) break;
+                last = math.length(w.Player.Vel);
+                minSpeed = math.min(minSpeed, last);
+            }
+            return last;
+        }
+
+        /// Dashes into the FIRST of two chasers standing in line and returns the
+        /// hardest shove the SECOND one took — the witness that the law reaches
+        /// the mob↔mob pair and not only the collector's own contact.
+        ///
+        /// ⚠⚠ THE SECOND CHASER STANDS OUTSIDE THE COLLECTOR'S OWN REACH, and
+        /// that distance is the whole witness (session 72, mutation M31). The
+        /// first form of this fixture put it at 2.6 m — well inside the dash's
+        /// 3.3 m travel plus 0.95 m of contact — so the COLLECTOR shoved it
+        /// directly and the test passed with the mob↔mob impulse deleted. At
+        /// 6.0 m only the flying chaser can reach it, so the assert is about the
+        /// chain and nothing else.
+        internal static float SecondRowSpeedAfterDash()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            // ⚠ THE SOFT SEPARATION IS SWITCHED OFF, and without that this
+            // fixture witnesses nothing (session 72, mutation M31 surviving
+            // three times). The soft pass adds a FORCE of up to
+            // SeparationStrength 6 straight into Vel whenever two mobs come
+            // within 2.4 m — so the second chaser was knocked back by a
+            // mechanism that predates Т22 entirely, and deleting the momentum
+            // law changed nothing the assert could see. With the radius at zero
+            // that pass early-outs (its own `threshold <= 0f`), exactly as
+            // MobAiTests already does to isolate its wall tie-break, and the
+            // only thing left that can move the second body is the impulse
+            // carried into it by the first.
+            cfg.Chaser.SeparationRadius = 0f;
+            var w = new SimulationWorld(7, cfg);
+            SpawnMobsAt(w, (MobType.Chaser, new float2(1.5f, 0f)),
+                (MobType.Chaser, new float2(6f, 0f)));
+            for (int i = 0; i < 2; i++)
+            {
+                var m = w.Mobs[i]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(i, m);
+            }
+
+            PlayerState p = w.Player;
+            p.DashTimer = cfg.Hero.DashDuration;
+            p.DashDir = new float2(1f, 0f);
+            p.DashSpeedCur = cfg.Hero.DashSpeed;
+            w.SetPlayerForTest(0, p);
+
+            // ⚠ THE SIGNED X COMPONENT, NOT THE SPEED (session 72, mutation
+            // M31 surviving twice). A chaser reaches 5.2 m/s under its own legs,
+            // so any threshold on |Vel| below that is satisfied by the mob
+            // simply running — the test could not fail. Both chasers stand
+            // BETWEEN the collector and nothing, with the player behind them at
+            // x = 0, so their own AI only ever drives them towards NEGATIVE x.
+            // A positive x velocity therefore has exactly one possible source:
+            // being knocked back by the body in front.
+            float best = 0f;
+            for (int i = 0; i < 30; i++)
+            {
+                w.Tick(default);
+                best = math.max(best, w.Mobs[1].Vel.x);
+            }
+            return best;
+        }
     }
 }

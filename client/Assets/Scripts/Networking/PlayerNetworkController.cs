@@ -566,7 +566,8 @@ namespace Ring.Networking
         internal void Predict(in SimInput decodedInput, in SimConfig cfg)
         {
             if (!IsPredicting) return;
-            PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg, in ImpactPulse.None);
+            PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg, in ImpactPulse.None,
+                System.ReadOnlySpan<Ring.Simulation.Core.PushableBody>.Empty);
         }
 
         /// Server side: publish the input the world must consume, and the tick

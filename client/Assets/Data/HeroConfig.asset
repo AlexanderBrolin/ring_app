@@ -22,12 +22,6 @@ MonoBehaviour:
   DashCooldown: 0.9
   DashIframes: 0.2
   DashBufferWindow: 0.15
-  LegsTop: 0.55
-  BodyTop: 1.35
-  HeadTop: 1.75
-  LegsDamageMult: 0.75
-  BodyDamageMult: 1
-  HeadDamageMult: 1.7
   SlideProfileTop: 0.55
   MuzzleHeight: 1
   SlideMuzzleHeight: 0.45
@@ -79,3 +73,6 @@ MonoBehaviour:
     Top: 1.75
     Zone: 3
     DamageMult: 1.7
+  MaxDepenetrationPerTick: 0.5
+  PushRecoilFraction: 0.25
+  SlideThrustRecovery: 18

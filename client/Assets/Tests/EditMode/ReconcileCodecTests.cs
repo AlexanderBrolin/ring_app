@@ -433,7 +433,8 @@ namespace Ring.Simulation.Tests
             // the step as the wire's own decoded value, and an impulse either
             // side carried alone would answer a different question.
             PlayerPrediction.Step(ref expected, in decoded, in cfg,
-                in Ring.Simulation.Combat.ImpactPulse.None);
+                in Ring.Simulation.Combat.ImpactPulse.None,
+                System.ReadOnlySpan<PushableBody>.Empty);
             AssertPlayerStateBitEqual(expected, core.Predicted,
                 "the core's own step must be PlayerPrediction.Step over the decoded input");
 

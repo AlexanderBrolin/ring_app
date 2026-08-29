@@ -976,6 +976,12 @@ namespace Ring.Simulation.Tests
             // is the wall-end tie-break this test targets.
             var c = TestConfigs.Open();
             c.Chaser.SeparationRadius = 0f;
+            // app-88jb Т22: the HARD separation has to go off for the same
+            // reason and by the same right — it is a second thing that moves
+            // two mobs apart, and this test's subject is the wall-end tie-break
+            // alone. Zero iterations is the hard pass's own "off", exactly as
+            // a zero SeparationRadius is the soft pass's.
+            c.Arena.RelaxIterations = 0;
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(2f, 2f) };
             c.Arena.WallB = new[] { new float2(2f, -2f) };
@@ -1039,6 +1045,12 @@ namespace Ring.Simulation.Tests
             // switches that confound off entirely.
             var c = TestConfigs.Open();
             c.Chaser.SeparationRadius = 0f;
+            // app-88jb Т22: the HARD separation has to go off for the same
+            // reason and by the same right — it is a second thing that moves
+            // two mobs apart, and this test's subject is the wall-end tie-break
+            // alone. Zero iterations is the hard pass's own "off", exactly as
+            // a zero SeparationRadius is the soft pass's.
+            c.Arena.RelaxIterations = 0;
             c.Arena.WallCount = 1;
             c.Arena.WallA = new[] { new float2(2f, 7f) };
             c.Arena.WallB = new[] { new float2(2f, 2f) };

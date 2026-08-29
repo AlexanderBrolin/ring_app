@@ -108,6 +108,10 @@ namespace Ring.Data
                     TiltDampingRatio = hero.TiltDampingRatio,
                     TiltSettleSeconds = hero.TiltSettleSeconds,
                     TiltGain = hero.TiltGain,
+                    // app-88jb Т22 (spec §3.5): body-collision mapping.
+                    MaxDepenetrationPerTick = hero.MaxDepenetrationPerTick,
+                    PushRecoilFraction = hero.PushRecoilFraction,
+                    SlideThrustRecovery = hero.SlideThrustRecovery,
                     // app-88jb Т13 (spec §3.3): the collector's hit parts.
                     // A DIRECT ALIAS of the SO's own array, not a clone — the
                     // same convention Wave.WavePauseByZone and Loot's three
@@ -327,7 +331,10 @@ namespace Ring.Data
             // app-88jb Т20 (spec §3.4): this archetype's piercing mapping,
             // through the same one method, for the same reason.
             PierceMassRatio = m.PierceMassRatio,
-            PierceDamageLoss = m.PierceDamageLoss
+            PierceDamageLoss = m.PierceDamageLoss,
+            // app-88jb Т22 (spec §3.5): this archetype's reaction share, through
+            // the same one method, for the same reason.
+            PushRecoilFraction = m.PushRecoilFraction
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)
@@ -400,7 +407,9 @@ namespace Ring.Data
                 ExtractKind = a.ExtractKind ?? System.Array.Empty<byte>(),
                 ExtractRadius = a.ExtractRadius,
                 MaxContainers = a.MaxContainers,
-                MaxContainerSlots = a.MaxContainerSlots
+                MaxContainerSlots = a.MaxContainerSlots,
+                // app-88jb Т22 (spec §3.5, decision Р413).
+                RelaxIterations = a.RelaxIterations
             };
         }
 
@@ -569,8 +578,8 @@ namespace Ring.Data
             ReqAtLeast(errors, "Weapon.SpreadSlideMult", cfg.Weapon.SpreadSlideMult, 1f);
             ReqInRange(errors, "Weapon.RunSpreadSpeedFrac", cfg.Weapon.RunSpreadSpeedFrac, 0f, 1f);
 
-            ValidateMob(errors, "Chaser", cfg.Chaser);
-            ValidateMob(errors, "Gunner", cfg.Gunner);
+            ValidateMob(errors, "Chaser", cfg.Chaser, cfg.Hero.Radius);
+            ValidateMob(errors, "Gunner", cfg.Gunner, cfg.Hero.Radius);
             // Stage 3 Т22 (coordinator R-186, debt named by Т12's own report):
             // the two archetypes Т10 added were left out of this sweep because
             // ninety call sites could legally omit them and would have thrown
@@ -578,8 +587,8 @@ namespace Ring.Data
             // all five sections, the omission has no excuse left — and a
             // Director with MaxHp 0 or Radius 0 is exactly the kind of silent
             // nonsense the rest of this method exists to refuse.
-            ValidateMob(errors, "Elite", cfg.Elite);
-            ValidateMob(errors, "Director", cfg.Director);
+            ValidateMob(errors, "Elite", cfg.Elite, cfg.Hero.Radius);
+            ValidateMob(errors, "Director", cfg.Director, cfg.Hero.Radius);
 
             // Stage 3 Т22 (spec §3.5/§3.4, coordinator R-181): the match-flow
             // block. Т12 delivered these five numbers and nothing checked them;
@@ -905,6 +914,23 @@ namespace Ring.Data
             // it (lore A1) — >= 1, not > 1 (Validate_CocoonDampingExactlyOne_IsLegal
             // is the witness for that boundary).
             ReqAtLeast(errors, "Hero.CocoonDamping", cfg.Hero.CocoonDamping, 1f);
+            // app-88jb Т22 (spec §3.5, decisions Р413/Р442): three rules whose
+            // violations all fail SILENTLY, which is the whole reason they are
+            // builder rules and not just [Range] hints in the Inspector.
+            // Zero MaxDepenetrationPerTick walls the collector inside a body
+            // forever; a fraction above one would have a body gain more speed
+            // than the collision gives it, i.e. momentum out of nowhere.
+            ReqPositive(errors, "Hero.MaxDepenetrationPerTick", cfg.Hero.MaxDepenetrationPerTick);
+            ReqInRange(errors, "Hero.PushRecoilFraction", cfg.Hero.PushRecoilFraction, 0f, 1f);
+            // Zero is LEGAL here and means an unpowered slide (the loss stands
+            // for the rest of the move) — negative is not a quieter way of
+            // saying it, so the rule is non-negativity rather than positivity.
+            ReqNonNegative(errors, "Hero.SlideThrustRecovery", cfg.Hero.SlideThrustRecovery);
+            // Zero here does not mean "no relaxation" — it switches the hard
+            // body separation off entirely, and the only way to notice is a
+            // playtest where bodies walk through each other again.
+            if (cfg.Arena.RelaxIterations < 1)
+                errors.Add("Arena.RelaxIterations must be at least 1 — zero disables the hard body separation silently");
             // app-88jb Т13 (spec §3.10 rules 2/3/4): the collector's own stack
             // of parts. Same helper the four archetypes go through in
             // ValidateMob — one body, every caller.
@@ -1906,7 +1932,7 @@ namespace Ring.Data
         static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
             => SpawnPlacement.GeometryBlocked(in arena, pos, bodyRadius, doorsPassable: true);
 
-        static void ValidateMob(List<string> errors, string name, MobSimConfig m)
+        static void ValidateMob(List<string> errors, string name, MobSimConfig m, float heroRadius)
         {
             ReqPositive(errors, $"{name}.MaxSpeed", m.MaxSpeed);
             ReqPositive(errors, $"{name}.Accel", m.Accel);
@@ -1943,6 +1969,24 @@ namespace Ring.Data
             // own in this task, same as Hero's.
             ReqPositive(errors, $"{name}.Mass", m.Mass);
             ReqPositive(errors, $"{name}.ProjectileMass", m.ProjectileMass);
+            // app-88jb Т22 (spec §3.5, decision Р442): the same [0, 1] bound the
+            // Hero block states, on every archetype — one rule, both sides of
+            // the collision, exactly as ProjectileMass above.
+            ReqInRange(errors, $"{name}.PushRecoilFraction", m.PushRecoilFraction, 0f, 1f);
+            // app-88jb Т22: A MELEE ARCHETYPE MUST OUT-REACH ITS OWN BODY.
+            // From this task bodies are solid, so a mob can never get closer to
+            // the collector than `its radius + the hero's`. An AttackRange at or
+            // below that width is therefore not "a short reach" — it is a swing
+            // that can NEVER land, and the failure is silent: the mob chases
+            // forever and its Telegraph state is simply never entered. Measured
+            // rather than feared (session 72): a test fixture with a 0.65 m body
+            // and a 1.1 m reach did exactly that. Ranged archetypes declare
+            // AttackRange 0 and are exempt by the guard below — for them the
+            // number means "no melee at all", not "a reach of zero".
+            if (m.AttackRange > 0f && m.AttackRange <= m.Radius + heroRadius)
+                errors.Add($"{name}.AttackRange ({m.AttackRange}) must exceed the contact width "
+                    + $"{m.Radius} + Hero.Radius {heroRadius} — a melee swing shorter than the "
+                    + "bodies' own separation can never land");
             // app-88jb Т19 (spec §3.10 rule 9): the same three bounds as the
             // Weapon block's, on every archetype — see that block's own note
             // for why each end is open or closed. One rule, both sides of the

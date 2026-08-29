@@ -84,6 +84,24 @@ namespace Ring.Simulation.Core
         public float2 SlideDir;
         public float SlideTimer, SlideBufferTimer, RunUpTimer, PostDashSlideTimer, LinkWindowTimer;
 
+        /// app-88jb Т22 (owner decision Р443): speed a collision has taken off
+        /// THIS slide, in m/s, which Hero.SlideThrustRecovery then wins back at
+        /// its own rate. The slide's speed is `SlideSpeed - this`, floored at
+        /// zero.
+        ///
+        /// A PENALTY RATHER THAN A "CURRENT SPEED" FIELD, and the shape is the
+        /// decision (finding Н-42). DashSpeedCur above is a current speed
+        /// because a dash always starts through the branch that initialises it;
+        /// a slide does not — SEVENTEEN test fixtures set SlideTimer directly to
+        /// put a collector in the slide STATE (hit profile, weapon spread, loot
+        /// rules), and a current-speed field would have handed every one of them
+        /// a slide at zero speed. Zero is the natural default of a penalty, so
+        /// those fixtures keep meaning exactly what they meant.
+        ///
+        /// Zeroed when a slide STARTS, not when it ends: the number belongs to
+        /// the move, and reading it outside a slide has no meaning.
+        public float SlideSpeedPenalty;
+
         /// Stage 2 Task 10: edge-request rate limit — one countdown PER KIND
         /// (Р26; a single shared counter would cut the legal dash->slide link,
         /// whose own windows Hero.PostDashSlideWindow / Hero.LinkWindowSeconds

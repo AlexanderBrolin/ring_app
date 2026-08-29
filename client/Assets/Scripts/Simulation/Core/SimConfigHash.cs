@@ -88,6 +88,10 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.CocoonDamping);
             h = StateHash64.Add(h, c.CenterOfMassHeight); h = StateHash64.Add(h, c.TiltDampingRatio);
             h = StateHash64.Add(h, c.TiltSettleSeconds); h = StateHash64.Add(h, c.TiltGain);
+            // app-88jb Т22 (spec §3.5): body-collision numbers.
+            h = StateHash64.Add(h, c.MaxDepenetrationPerTick);
+            h = StateHash64.Add(h, c.PushRecoilFraction);
+            h = StateHash64.Add(h, c.SlideThrustRecovery);
             // app-88jb Т13 (spec §3.3): the collector's hit parts.
             h = HashHitPartArray(h, c.Parts);
             return h;
@@ -164,6 +168,9 @@ namespace Ring.Simulation.Core
             // wired in the same step that declares them, same reason again.
             h = StateHash64.Add(h, c.PierceMassRatio);
             h = StateHash64.Add(h, c.PierceDamageLoss);
+            // app-88jb Т22 (spec §3.5, decision Р442): this archetype's reaction
+            // share, wired in the same step that declares it, same reason again.
+            h = StateHash64.Add(h, c.PushRecoilFraction);
             return h;
         }
 
@@ -223,6 +230,8 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.ExtractRadius);
             h = StateHash64.Add(h, c.MaxContainers);
             h = StateHash64.Add(h, c.MaxContainerSlots);
+            // app-88jb Т22 (spec §3.5, decision Р413).
+            h = StateHash64.Add(h, c.RelaxIterations);
             return h;
         }
 

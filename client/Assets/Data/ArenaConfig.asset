@@ -142,3 +142,4 @@ MonoBehaviour:
   ExtractRadius: 8
   MaxContainers: 300
   MaxContainerSlots: 8
+  RelaxIterations: 4

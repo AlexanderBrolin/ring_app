@@ -163,7 +163,52 @@ namespace Ring.Data
                 Zone = HitZone.Body, DamageMult = 1.0f },
             new HitPart { Radius = 0.16f, Bottom = 1.35f, Top = 1.75f,
                 Zone = HitZone.Head, DamageMult = 1.7f },
-        }; // sync-marker key — keep LAST (was TiltGain, app-88jb)
+        }; // Was the sync-marker key until app-88jb Т22's PushRecoilFraction below.
+
+        // app-88jb Т22 (spec §3.5, owner decisions Н15/Р442): the two numbers a
+        // body collision needs from the collector.
+        //
+        // MaxDepenetrationPerTick caps how far ONE tick may push the collector
+        // out of a body it is already inside. The case is real rather than
+        // defensive: the dash covers 2.7 m and the Director is 4.4 m across, so
+        // a dash can END inside that body, and an uncapped push would teleport
+        // the collector 0.97 m in a single frame. Zero is NOT a legal "off"
+        // switch — it walls the collector inside the body forever — which is
+        // why SimConfigBuilder rejects it rather than accepting a silent no-op.
+        //
+        // PushRecoilFraction is how much of a collision's reaction the
+        // collector's own footing FAILS to absorb. A self-propelled body pushes
+        // against the ground and the ground takes the rest, so this is a
+        // modelled term rather than a fudge: at 0.25 a dash keeps 89% of its
+        // speed through a contact (Н15's cocoon falls out of the arithmetic
+        // instead of needing a branch) and a slide through three chasers still
+        // leaves the collector faster than running. A mob's own fraction is 1.0
+        // — see MobConfig's twin — which makes mob-vs-mob conserve momentum
+        // exactly and leaves the collector's deviation ONE named number.
+        // Above 1 a body would gain more than it gives, which is why the range
+        // and the validation rule both stop at one.
+        [Range(0.01f, 5f)] public float MaxDepenetrationPerTick = 0.5f;
+        [Range(0f, 1f)] public float PushRecoilFraction = 0.25f; // Was the sync-marker key until SlideThrustRecovery below.
+
+        // app-88jb Т22 (owner decision Р443): the suit's impulse thrusters, as a
+        // number. In the fiction they are WEAK units around the shoulder blades
+        // whose vector cannot be aimed properly yet, which is why the slide is
+        // the only move that uses them: prone, the thrust is at least
+        // controllable, and it cannot lift the body off the ground.
+        //
+        // Mechanically this is how much slide speed the thrust WINS BACK per
+        // second after a collision has taken some (PushRecoilFraction above is
+        // what takes it). It is the difference between a slide that COASTS and
+        // one that is DRIVEN, and it is the single number a meta-upgrade raises:
+        // a stronger engine shrugs a chaser off and keeps going, a weak one
+        // bogs down on the third. It is also where a future jump attaches —
+        // thrust that can beat the recoil is thrust that can leave the ground.
+        //
+        // Linear, in m/s per second, the same MoveTowards-shaped decay this
+        // project uses everywhere for a speed converging on a target. Zero is
+        // legal and means an unpowered slide: the loss stands for the rest of
+        // the move.
+        [Range(0f, 60f)] public float SlideThrustRecovery = 18f; // sync-marker key — keep LAST (was PushRecoilFraction, app-88jb Т22)
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

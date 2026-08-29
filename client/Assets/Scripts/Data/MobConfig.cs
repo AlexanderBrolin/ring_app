@@ -114,7 +114,18 @@ namespace Ring.Data
         /// bootstrap adds none of its own — what it does deliver is the key
         /// itself, through the sync marker below.
         [Range(0.001f, 1f)] public float PierceMassRatio = 0.06f;
-        [Range(0f, 0.95f)] public float PierceDamageLoss = 0.5f; // sync-marker key — keep LAST (was RicochetMinSpeed, app-88jb)
+        [Range(0f, 0.95f)] public float PierceDamageLoss = 0.5f; // Was the sync-marker key until app-88jb Т22.
+
+        /// app-88jb Т22 (spec §3.5, owner decision Р442): this archetype's share
+        /// of a collision's reaction — the mob-side twin of HeroConfig's own
+        /// field, same range, same meaning (see that class's doc for the model).
+        /// ONE for every archetype, and that is not a placeholder: a mob has no
+        /// planted footing to shed reaction into, so mob-vs-mob conserves
+        /// momentum EXACTLY, and the collector's 0.25 stays the single named
+        /// deviation in the whole law rather than a special case in the caller.
+        /// It is also the ready handle for a future anchor-like archetype that
+        /// should be harder to shove than its mass alone would say.
+        [Range(0f, 1f)] public float PushRecoilFraction = 1f; // sync-marker key — keep LAST (was PierceDamageLoss, app-88jb Т20)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

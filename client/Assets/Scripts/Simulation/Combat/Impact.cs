@@ -80,6 +80,61 @@ namespace Ring.Simulation.Combat
             return math.min(raw, targetImpactSpeedCap) / damping;
         }
 
+        /// Momentum-conserving shove between two bodies in contact (app-88jb Т22,
+        /// owner decision Р442). The target gains the pusher's momentum share;
+        /// the pusher loses that share mirrored, scaled by how much of the
+        /// reaction its own footing FAILS to absorb -- a self-propelled body
+        /// pushes against the ground and the ground takes the rest.
+        /// `pusherRecoilFraction` IS that leftover: 0.25 for the collector, 1.0
+        /// for a mob, which makes mob-vs-mob conserve momentum EXACTLY and
+        /// leaves the collector's deviation ONE named number in a
+        /// ScriptableObject instead of a special case in the caller.
+        ///
+        /// THIS IS NOT VelocityDelta ABOVE, AND THE TWO ARE KEPT APART ON
+        /// PURPOSE. A projectile EMBEDS itself: its whole momentum is absorbed,
+        /// the target's own reaction lives in CocoonDamping, and `m*v/M` has no
+        /// built-in bound, which is why that formula needs ImpactSpeedCap.
+        /// Two bodies BOTH move, so the share below is under one by
+        /// construction. The bullet form is the small-mass limit of this one
+        /// (m_src/(m_src+m_tgt) -> m_src/m_tgt as m_src shrinks), and reusing it
+        /// verbatim was measured and rejected: at the collector's 120 kg it
+        /// gives 40 / 18 / 10 m/s for dash / slide / run, and a ceiling of 6
+        /// flattens all three to ONE number -- erasing exactly the difference
+        /// between a dash and a walk that Р442 exists to create.
+        ///
+        /// NO CEILING HERE, AND THAT IS THE DECISION (ruling 114). Three bounds
+        /// already stand: the share is below one, so a body can never leave
+        /// faster than whatever ran into it; mobs move through
+        /// MoveWithCollisions, which SWEEPS, so no speed tunnels through a wall;
+        /// and MobAiSystem bleeds Vel back toward its own MaxSpeed at Accel*dt
+        /// every tick (1.0 m/s per tick for a chaser). A fourth, invented
+        /// ceiling would buy none of that and would cost the thing the owner
+        /// asked for: a faster dash must shove harder, without end.
+        ///
+        /// THE GUARD IS THE THRESHOLD. `approachSpeed <= 0` covers a body
+        /// standing still, one already leaving, and -- the interesting case --
+        /// the tick after a shove has landed, because the target now outruns the
+        /// pusher and the closing speed goes negative on its own. The impulse is
+        /// therefore self-limiting, which is why no minimum-speed constant
+        /// exists: it would be a second answer to a question the sign already
+        /// answers, and a standing collector would still not jitter the crowd.
+        ///
+        /// `approachSpeed` is the closing speed ALONG THE CONTACT NORMAL, never
+        /// a full-vector magnitude: a collector running PAST a body must not
+        /// hurl it the way one running INTO it does.
+        public static bool ResolveBodyPush(float pusherMass, float targetMass,
+            float approachSpeed, float pusherRecoilFraction,
+            out float targetDelta, out float pusherDelta)
+        {
+            targetDelta = 0f;
+            pusherDelta = 0f;
+            if (approachSpeed <= 0f) return false;
+            float share = pusherMass / (pusherMass + targetMass);
+            targetDelta = share * approachSpeed;
+            pusherDelta = pusherRecoilFraction * (1f - share) * approachSpeed;
+            return true;
+        }
+
         /// Peak tilt of a single impulse -- computed by RUNNING THE ACTUAL INTEGRATOR,
         /// never by a closed form (round-3 finding C-C1, and this is the whole point).
         ///
