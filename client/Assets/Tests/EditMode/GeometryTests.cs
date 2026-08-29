@@ -1466,8 +1466,11 @@ namespace Ring.Simulation.Tests
             // than passed off as a witness: the gate is `overlap <= 0`, so a
             // contact at exactly one point is NOT an overlap and has to be
             // declined. It earns its place against the mutant that relaxes that
-            // gate to `< 0` — a mutant the three tests above all survive, their
-            // overlaps being 0.5, -4 and 1.0, not one of them on the border.
+            // gate to `< 0` — a mutant the four tests above all survive, their
+            // overlaps being 0.5, -4, 1.0 and 1.0, not one of them on the
+            // border. (Four, not three: ruling 111 added a fifth test ABOVE
+            // this guard, and a count left stale is the same doc-lie this task
+            // found in the tie-break test — caught by review, fixed here.)
             // The border is introduced by this very task, so its witness is
             // written here rather than left to the caller (rulings 81/82, 37).
             //

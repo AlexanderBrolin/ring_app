@@ -758,6 +758,15 @@ namespace Ring.Simulation.Core
         /// gives up 4000/4120 = 0.971 of it and the Director the remaining
         /// 0.029, and on that pair the two come out to the overlap bit for bit.
         ///
+        /// PRECONDITION ON THE MASSES, unchecked like the id one below:
+        /// mA + mB > 0. Both shares divide by that sum, so two massless bodies
+        /// would be handed back `true` with NaN in BOTH displacements, and a
+        /// negative mass would silently swap which body yields. Neither is
+        /// reachable from config — masses come from ScriptableObjects and are
+        /// positive — and this file states such assumptions rather than
+        /// checking them, in PushOutOfArc's own words (:644-662). Task
+        /// app-atm9 carries the debt.
+        ///
         /// DEGENERATE CASE (finding D-C3): at full overlap the direction is a
         /// DETERMINISTIC TIE-BREAK BY ID, not the constant (1,0). The argument
         /// for that is already written in this file, in PushOutOfStadium's own
@@ -783,11 +792,13 @@ namespace Ring.Simulation.Core
         /// constant this case exists to avoid.
         ///
         /// GEOMETRY.SKIN IS NOT PART OF THE MAGNITUDE, and the omission is the
-        /// decision rather than an oversight (ruling 107). The three other
-        /// pushes in this file — PushOutOfCircle (:593), PushOutOfStadium
+        /// decision rather than an oversight (ruling 107). The three places
+        /// this file applies Skin — PushOutOfCircle (:593), PushOutOfStadium
         /// (:627), ClampInsideRing (:730) — each write `pos` themselves and are
         /// the LAST WORD on where that body lands, so their skin is applied
-        /// exactly once per body per resolve. This function is not the last
+        /// exactly once per body per resolve. PushOutOfArc (:663) is not a
+        /// fourth such place: it writes no `pos` and no skin of its own, it
+        /// delegates to those three. This function is not the last
         /// word: its displacements are accumulated over EVERY pair the body
         /// takes part in, so a per-pair skin would ACCUMULATE — a body
         /// overlapped by three neighbors would be handed 3 * Skin of invented
