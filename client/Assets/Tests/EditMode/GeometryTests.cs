@@ -1363,5 +1363,125 @@ namespace Ring.Simulation.Tests
             float2 closestAfter = Geometry.ClosestPointOnSegment(pos, wallA, wallB, out _);
             Assert.Less(math.length(pos - closestAfter), halfW + radius);
         }
+
+        [Test]
+        public void ResolveBodyPair_LighterBodyYieldsMore_ByMassRatio()
+        {
+            // Test 26: the expectation is a NUMBER (4000/4120 = 0.9709), not
+            // "almost all of it" (lesson 428). The overlap is exactly 0.5 m.
+            bool hit = Geometry.ResolveBodyPair(
+                new float2(0f, 0f), 0.45f, 120f, idA: 1,
+                new float2(2.15f, 0f), 2.2f, 4000f, idB: 2,
+                out float2 dA, out float2 dB);
+            Assert.IsTrue(hit, "перекрытие не распознано");
+            float overlap = (0.45f + 2.2f) - 2.15f;
+            Assert.AreEqual(-overlap * 4000f / 4120f, dA.x, 1e-4f,
+                "сборщик уступил не по отношению масс");
+            Assert.AreEqual(overlap * 120f / 4120f, dB.x, 1e-4f,
+                "Директор сдвинулся не по отношению масс");
+        }
+
+        [Test]
+        public void ResolveBodyPair_NoOverlap_ReturnsFalse_AndZeroes()
+        {
+            bool hit = Geometry.ResolveBodyPair(
+                new float2(0f, 0f), 0.5f, 90f, 1,
+                new float2(5f, 0f), 0.5f, 90f, 2,
+                out float2 dA, out float2 dB);
+            Assert.IsFalse(hit);
+            Assert.AreEqual(0f, math.length(dA), 1e-6f);
+            Assert.AreEqual(0f, math.length(dB), 1e-6f);
+        }
+
+        [Test]
+        public void ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis()
+        {
+            // Test 28, and it pins EXACTLY ONE HALF of the tie-break: that the
+            // SIGN of the direction comes from the ids, because swapping them
+            // negates both components — exactly, not within the tolerance, since
+            // it is one angle multiplied by +1 and by -1.
+            //
+            // IT DOES NOT PIN THE DIRECTION ITSELF, and an earlier wording of
+            // this comment claimed that it did (ruling 111). The forbidden
+            // constant (1,0), multiplied by that same antisymmetric sign, flips
+            // sign on an id swap too, so it passes all three assertions below —
+            // with both y values zero, which quietly degenerates the third one
+            // into -0 == -0. The half this test cannot see belongs to
+            // ResolveBodyPair_FullOverlap_DifferentIdPairs_PointDifferentWays
+            // right below; neither of the two is the whole witness alone.
+            Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
+                float2.zero, 0.5f, 90f, idB: 2, out float2 dA1, out _);
+            Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 2,
+                float2.zero, 0.5f, 90f, idB: 1, out float2 dA2, out _);
+            Assert.Greater(math.length(dA1), 0f, "полное перекрытие не разведено вовсе");
+            Assert.AreEqual(-dA1.x, dA2.x, 1e-6f, "тай-брейк не зависит от id — это константа");
+            Assert.AreEqual(-dA1.y, dA2.y, 1e-6f);
+        }
+
+        [Test]
+        public void ResolveBodyPair_FullOverlap_DifferentIdPairs_PointDifferentWays()
+        {
+            // The OTHER half of the tie-break, and the reason it needs a test of
+            // its own (ruling 111): the sibling right above,
+            // ResolveBodyPair_FullOverlap_BreaksTheTieByIdNotByTheXAxis, pins
+            // that the SIGN comes from the ids, and it cannot tell an id-derived
+            // DIRECTION from the constant (1,0) wearing that same sign. What
+            // separates the two is this — a constant points every pair the SAME
+            // way, so two DIFFERENT pairs must point DIFFERENT ways.
+            //
+            // Both pairs are deliberately ordered idA < idB, so the sign is +1
+            // in both calls and cannot contribute to the difference measured
+            // below. What is left is the direction alone.
+            //
+            // THE PREMISES ARE LOAD-BEARING, not decoration: math.normalize of a
+            // zero vector is NaN, every comparison against NaN is false, and an
+            // unseparated pair would therefore fail the assertion below for the
+            // wrong reason instead of reporting what actually went wrong.
+            Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
+                float2.zero, 0.5f, 90f, idB: 2, out float2 dPair12, out _);
+            Geometry.ResolveBodyPair(float2.zero, 0.5f, 90f, idA: 1,
+                float2.zero, 0.5f, 90f, idB: 3, out float2 dPair13, out _);
+            Assert.Greater(math.length(dPair12), 0f, "пара 1-2 не разведена вовсе");
+            Assert.Greater(math.length(dPair13), 0f, "пара 1-3 не разведена вовсе");
+
+            // The floor is an ARC, not a round number: two unit directions one
+            // degree apart lie 2*sin(0.5 deg) = 0.01745 from each other, and
+            // anything closer than a degree is not a tie-break telling two pairs
+            // apart, it is rounding. 0.017 is that chord rounded DOWN, so the
+            // literal stays a strict floor. The shipped pair clears it 17-fold
+            // (the distance is 0.2956); a constant direction scores exactly 0.
+            //
+            // The expectation is the RULE, not a recomputation of the formula
+            // (lesson 428): pinning 0.2956 itself would pin the particular angle
+            // function, and that is the implementer's choice, not the contract.
+            float apart = math.distance(math.normalize(dPair12), math.normalize(dPair13));
+            Assert.Greater(apart, 0.017f,
+                "разные пары id разошлись в одну сторону — направление не зависит от id");
+        }
+
+        [Test]
+        public void ResolveBodyPair_ExactTouch_IsNotAnOverlap_Guard()
+        {
+            // A GUARD, GREEN ON TODAY'S CODE (lesson 427), and named one rather
+            // than passed off as a witness: the gate is `overlap <= 0`, so a
+            // contact at exactly one point is NOT an overlap and has to be
+            // declined. It earns its place against the mutant that relaxes that
+            // gate to `< 0` — a mutant the three tests above all survive, their
+            // overlaps being 0.5, -4 and 1.0, not one of them on the border.
+            // The border is introduced by this very task, so its witness is
+            // written here rather than left to the caller (rulings 81/82, 37).
+            //
+            // THE FIXTURE IS EXACTLY REPRESENTABLE IN FLOAT ON PURPOSE: 0.5 and
+            // 1.0 are powers of two, so rA + rB and the distance are both 1.0
+            // bit for bit and the overlap is exactly 0f. A border witness built
+            // on rounded numbers would be measuring the rounding, not the gate.
+            bool hit = Geometry.ResolveBodyPair(
+                new float2(0f, 0f), 0.5f, 90f, idA: 1,
+                new float2(1f, 0f), 0.5f, 90f, idB: 2,
+                out float2 dA, out float2 dB);
+            Assert.IsFalse(hit, "касание ровно в точку принято за перекрытие");
+            Assert.AreEqual(0f, math.length(dA), 1e-6f, "касание сдвинуло первое тело");
+            Assert.AreEqual(0f, math.length(dB), 1e-6f, "касание сдвинуло второе тело");
+        }
     }
 }

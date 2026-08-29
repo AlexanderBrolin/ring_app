@@ -732,6 +732,120 @@ namespace Ring.Simulation.Core
             return true;
         }
 
+        /// Symmetric depenetration of two BODIES (app-88jb Т21, decisions
+        /// Р392/Р412) — the primitive this file did not have. PushOutOfCircle
+        /// (:583) is ONE-SIDED: it moves `pos` and leaves the circle exactly
+        /// where it was, which is the right shape against arena geometry that
+        /// cannot move and the wrong one against a second body that has mass.
+        ///
+        /// A PURE FUNCTION WITH TWO OUT-DISPLACEMENTS, NEVER A `ref pos`
+        /// MUTATOR, and that is not a style preference but a direct requirement
+        /// of SeparationSystem's own written contract (SeparationSystem.cs:12-15):
+        /// "a single resolve-as-you-go pass would let position updates from the
+        /// first pairs bias the pairs scanned afterward; the double buffer
+        /// removes that order dependency by construction". The order in _mobs is
+        /// reshuffled by swap-remove on every death, so a resolve-as-you-go
+        /// outcome would be a FUNCTION OF THE DEATH HISTORY — unreproducible
+        /// against a client that saw those same deaths in another order.
+        /// Handing back displacements instead of writing positions is precisely
+        /// what lets the caller accumulate every pair first and apply once.
+        ///
+        /// THE LIGHTER BODY YIELDS MORE, by the mass ratio and not by half:
+        /// dA = +n * overlap * mB/(mA+mB) and dB = -n * overlap * mA/(mA+mB),
+        /// with n the unit vector pointing from B to A. The two shares add up
+        /// to `overlap`, so one call closes the whole penetration rather than a
+        /// fraction of it: a collector (120 kg) meeting the Director (4000 kg)
+        /// gives up 4000/4120 = 0.971 of it and the Director the remaining
+        /// 0.029, and on that pair the two come out to the overlap bit for bit.
+        ///
+        /// DEGENERATE CASE (finding D-C3): at full overlap the direction is a
+        /// DETERMINISTIC TIE-BREAK BY ID, not the constant (1,0). The argument
+        /// for that is already written in this file, in PushOutOfStadium's own
+        /// doc (:597-606): a constant fallback normal is an INVENTED direction,
+        /// and a degenerate normal has to be derived from something the
+        /// geometry actually carries. Two bodies sitting on the same point
+        /// carry nothing but their identities, so the identities are what the
+        /// direction is built from — and swapping the two arguments has to FLIP
+        /// ITS SIGN, or the tie-break is that same constant under another name.
+        ///
+        /// PRECONDITION OF THAT SIGN RULE, not a checked one: it holds for
+        /// idA != idB. At idA == idB both argument orders take the same arm of
+        /// `idA <= idB`, so the sign does NOT flip and the outcome depends on
+        /// which body is passed first. Equal ids are reachable in principle —
+        /// mob entity ids start at 1 (SimulationWorld:157) while a collector is
+        /// identified by an index in [0, MaxPlayers) — and are harmless today
+        /// only because the one future caller fixes its argument order. Task
+        /// app-rw2l carries that debt and closes it in Т22 by giving collectors
+        /// an id space disjoint from the mobs'.
+        ///
+        /// For the same reason math.normalizesafe(d, new float2(1f, 0f))
+        /// (SeparationSystem.cs:52) must not be repeated here: it IS the very
+        /// constant this case exists to avoid.
+        ///
+        /// GEOMETRY.SKIN IS NOT PART OF THE MAGNITUDE, and the omission is the
+        /// decision rather than an oversight (ruling 107). The three other
+        /// pushes in this file — PushOutOfCircle (:593), PushOutOfStadium
+        /// (:627), ClampInsideRing (:730) — each write `pos` themselves and are
+        /// the LAST WORD on where that body lands, so their skin is applied
+        /// exactly once per body per resolve. This function is not the last
+        /// word: its displacements are accumulated over EVERY pair the body
+        /// takes part in, so a per-pair skin would ACCUMULATE — a body
+        /// overlapped by three neighbors would be handed 3 * Skin of invented
+        /// separation, which is exactly the dependence of the outcome on the
+        /// number of pairs that the double buffer exists to remove. The spec's
+        /// own pseudocode (§3.5) carries no skin either.
+        public static bool ResolveBodyPair(float2 posA, float rA, float mA, int idA,
+                                           float2 posB, float rB, float mB, int idB,
+                                           out float2 dA, out float2 dB)
+        {
+            dA = float2.zero;
+            dB = float2.zero;
+            float2 delta = posA - posB;
+            float dist = math.length(delta);
+            float overlap = (rA + rB) - dist;
+            if (overlap <= 0f) return false;
+
+            float2 n;
+            if (dist > 1e-6f)
+            {
+                n = delta / dist;
+            }
+            else
+            {
+                // The degenerate direction, DERIVED from the pair's identities
+                // rather than invented. The angle is symmetric in the pair —
+                // min/max make that structural, not an arithmetic identity a
+                // reader has to check — and the sign is antisymmetric in the
+                // argument order, so swapping the two bodies flips n by
+                // flipping one sign bit: the antisymmetry is EXACT, not within
+                // a tolerance.
+                //
+                // The remainder folds the angle into one turn BEFORE sin/cos
+                // see it. Without it a large id would hand them an argument
+                // whose neighboring floats are whole degrees apart, and the
+                // direction would stop being a usable function of the ids.
+                // Integer overflow in the products, and a negative remainder
+                // (C# gives the remainder the DIVIDEND's sign), are both fine:
+                // each is deterministic, and determinism — not any particular
+                // angle — is the entire requirement here.
+                //
+                // Trigonometry on a determinism-critical path is precedent in
+                // this project rather than a gamble: SpawnPlacement.OnRing
+                // (:42) calls this same math.cos/math.sin pair, and its own doc
+                // records that the expression was proven digest-inert by a
+                // dedicated full test run; MobAiSystem (:648) does the same for
+                // door costs.
+                int key = (math.min(idA, idB) * 31 + math.max(idA, idB) * 17) % 360;
+                float sign = idA <= idB ? 1f : -1f;
+                n = Rotate(new float2(1f, 0f), math.radians(key)) * sign;
+            }
+
+            float total = mA + mB;
+            dA = n * (overlap * (mB / total));
+            dB = -n * (overlap * (mA / total));
+            return true;
+        }
+
         /// Remove the velocity component pointing into the surface.
         public static float2 Slide(float2 vel, float2 normal)
         {
