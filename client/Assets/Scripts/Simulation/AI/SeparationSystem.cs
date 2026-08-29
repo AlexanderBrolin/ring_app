@@ -5,7 +5,7 @@ using Unity.Mathematics;
 namespace Ring.Simulation.AI
 {
     /// Push-apart between bodies. TWO mechanisms live here, and they are
-    /// neighbours rather than one thing:
+    /// neighbors rather than one thing:
     ///
     ///   * SOFT (spec Task 20, Phase 6) — a FORCE into Vel between overlapping
     ///     mobs, which keeps a converging wave from bunching onto one point
@@ -375,7 +375,7 @@ namespace Ring.Simulation.AI
         /// collector into a wall, and the wall is the thing that must win.
         ///
         /// ⛔ ONLY FOR COLLECTORS A BODY ACTUALLY MOVED, and the guard is not an
-        /// optimisation — running this unconditionally was a REGRESSION, caught
+        /// optimization — running this unconditionally was a REGRESSION, caught
         /// by WallGeometryTests (session 72). Depenetrate takes `ref vel` and
         /// clips the component pointing into the surface; MoveWithCollisions has
         /// already resolved the arena for this tick, with its own collide-and-

@@ -273,7 +273,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked));
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileBlocked,
                 out SimEvent blocked));
-            // wall normal points back toward the arena centre, i.e. -x here
+            // wall normal points back toward the arena center, i.e. -x here
             Assert.AreEqual(-1f, blocked.HitDir.x, 1e-4f);
             Assert.AreEqual(0f, blocked.HitDir.y, 1e-4f);
             Assert.AreEqual(MuzzleH, blocked.Height, 1e-4f);

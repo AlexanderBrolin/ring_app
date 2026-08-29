@@ -33,7 +33,7 @@ namespace Ring.Networking.Protocol
     /// SimInputSanitizer.Sanitize only normalizes when `|MoveDir| > 1`
     /// (SimInputSanitizer.cs) — leaving anything below 1 untouched. A codec
     /// that always encoded a unit vector would turn a slow analog approach
-    /// into a full-speed run: a behavioural change, not a precision loss.
+    /// into a full-speed run: a behavioral change, not a precision loss.
     ///
     /// ZERO MOVEDIR (decision, item 2). At magnitude 0 the angle byte is
     /// whatever `Quantize.Dir(float2.zero)` happens to encode (structurally

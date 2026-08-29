@@ -91,7 +91,7 @@ namespace Ring.Simulation.Core
         ///
         /// A PENALTY RATHER THAN A "CURRENT SPEED" FIELD, and the shape is the
         /// decision (finding Н-42). DashSpeedCur above is a current speed
-        /// because a dash always starts through the branch that initialises it;
+        /// because a dash always starts through the branch that initializes it;
         /// a slide does not — SEVENTEEN test fixtures set SlideTimer directly to
         /// put a collector in the slide STATE (hit profile, weapon spread, loot
         /// rules), and a current-speed field would have handed every one of them

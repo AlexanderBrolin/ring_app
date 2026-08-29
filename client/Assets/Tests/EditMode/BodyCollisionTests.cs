@@ -350,7 +350,7 @@ namespace Ring.Simulation.Tests
             // ⚠ A GUARD, NOT A WITNESS (lesson 427), and named so honestly:
             // both sides do NOTHING here, so what this pins is the wiring of the
             // fifth parameter and the fact that an empty set is a legal input
-            // rather than an exception. No behavioural witness for the "only
+            // rather than an exception. No behavioral witness for the "only
             // visible" rule exists — see the analysis above.
             SimConfig cfg = TestConfigs.OpenField();
             var w = new SimulationWorld(7, cfg, playerCount: 2);
@@ -449,7 +449,7 @@ namespace Ring.Simulation.Tests
             {
                 // A snapshot of EVERY body in the world — the chaser, and the
                 // Director with his retinue that MatchFlowSystem puts at the
-                // arena centre.
+                // arena center.
                 frozen.Clear(); bodies.Clear();
                 for (int k = 0; k < w.MobCount; k++)
                 {
