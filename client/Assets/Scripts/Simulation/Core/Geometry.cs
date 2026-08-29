@@ -777,15 +777,23 @@ namespace Ring.Simulation.Core
         /// direction is built from — and swapping the two arguments has to FLIP
         /// ITS SIGN, or the tie-break is that same constant under another name.
         ///
-        /// PRECONDITION OF THAT SIGN RULE, not a checked one: it holds for
-        /// idA != idB. At idA == idB both argument orders take the same arm of
-        /// `idA <= idB`, so the sign does NOT flip and the outcome depends on
-        /// which body is passed first. Equal ids are reachable in principle —
-        /// mob entity ids start at 1 (SimulationWorld:157) while a collector is
-        /// identified by an index in [0, MaxPlayers) — and are harmless today
-        /// only because the one future caller fixes its argument order. Task
-        /// app-rw2l carries that debt and closes it in Т22 by giving collectors
-        /// an id space disjoint from the mobs'.
+        /// EQUAL KEYS ARE NOW A CHECKED PRECONDITION AND DECLINE THE PAIR
+        /// (ruling 121, review round of Т22, finding C-1). At idA == idB both
+        /// argument orders take the same arm of `idA <= idB`, so the sign does
+        /// NOT flip: both sides of the pair would be handed the SAME direction
+        /// and would travel together instead of apart — a runaway, not a
+        /// separation. Nor can it be fixed by choosing a better key. The case
+        /// is reachable exactly where the two bodies are INDISTINGUISHABLE in
+        /// the data both the server and the client's prediction share: two
+        /// collectors, whose tie-break key is their MASS BITS because
+        /// PushableBody deliberately carries no id (ruling 116). At full
+        /// overlap their positions are equal too, and hero radius and mass come
+        /// from one HeroSimConfig — there is nothing left to break the tie
+        /// with, and inventing one (a slot index, an argument order) is exactly
+        /// the direction the client cannot reproduce. So the pair is declined:
+        /// it is the one answer both sides reach identically, and two
+        /// collectors standing on one point are separated by their own next
+        /// input rather than by a direction nobody can agree on.
         ///
         /// For the same reason math.normalizesafe(d, new float2(1f, 0f))
         /// (SeparationSystem.cs:52) must not be repeated here: it IS the very
@@ -868,6 +876,11 @@ namespace Ring.Simulation.Core
                 // records that the expression was proven digest-inert by a
                 // dedicated full test run; MobAiSystem (:648) does the same for
                 // door costs.
+                // The checked precondition this function's own doc states
+                // above (ruling 121): equal keys cannot produce an
+                // antisymmetric direction, so there is no separation to give.
+                if (idA == idB) return false;
+
                 int key = (math.min(idA, idB) * 31 + math.max(idA, idB) * 17) % 360;
                 float sign = idA <= idB ? 1f : -1f;
                 n = Rotate(new float2(1f, 0f), math.radians(key)) * sign;

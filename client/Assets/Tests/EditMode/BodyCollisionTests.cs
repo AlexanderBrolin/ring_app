@@ -98,9 +98,15 @@ namespace Ring.Simulation.Tests
         /// the push arrives, not to drive the red phase.
         ///
         /// The case is real rather than hypothetical: the dash covers 2.7 m and
-        /// the Director is 4.4 m across, so a dash CAN end inside that body, and
-        /// without MaxDepenetrationPerTick the collector would be thrown 0.97 m
-        /// in a single tick.
+        /// the Director is 4.4 m across, so a dash CAN end inside that body.
+        ///
+        /// ⚠ WITHOUT MaxDepenetrationPerTick THE THROW IS 2.48 m, not the
+        /// 0.97 m an earlier wording gave (review round of Т22, finding M-2).
+        /// 0.97 is the collector's SHARE of the overlap — 4000/4120 — which the
+        /// plan wrote as a fraction and this comment turned into metres. The
+        /// fixture's own overlap is (0.45 + 2.2) - 0.1 = 2.55 m, and 0.971 of
+        /// that is 2.48: five times the ceiling this test pins, rather than
+        /// twice it.
         [Test]
         public void DashEndingInsideTheDirector_DoesNotFlingTheCollectorFourMeters()
         {
@@ -157,6 +163,25 @@ namespace Ring.Simulation.Tests
         /// Three runs of ONE fixture are compared against each other rather than
         /// against absolute numbers, so the test survives the balance pass at
         /// milestone В2 and dies only if the law stops reading speed.
+        ///
+        /// ⚠⚠ BOTH THRESHOLDS ARE THE PLAN'S OWN 1.5 AGAIN, and the second one
+        /// spent this round at 1.3 (review round of Т22, finding I-5). It was
+        /// lowered under a measurement rather than under an argument: session
+        /// 72 predicted 12.57 / 7.71 = 1.63, measured less, and moved the
+        /// literal instead of asking why. The answer was in the fixture, not in
+        /// the law — the mob it measured was never frozen (finding I-4), so the
+        /// RUN channel was reading the chaser's own 5.2 m/s legs. With the body
+        /// actually immobilized the three channels come out 2.86 / 5.15 / 10.44
+        /// m/s, i.e. ratios of 1.80 and 2.03, and the plan's threshold clears
+        /// on both.
+        ///
+        /// ⚠ THE ABSOLUTE NUMBERS MOVED TOO, AND DOWNWARD, which is the honest
+        /// consequence of the same freeze rather than a regression: a chaser
+        /// that walks INTO the blow feeds the contact more interpenetration per
+        /// tick, so ruling 117's cap (`overlap/dt`) stops biting and the slide
+        /// landed the full 0.5714 · 13.5 = 7.71. Against a body that only ever
+        /// gets pushed, the cap governs — which is precisely the quantity the
+        /// law promises and the one a fixture should be measuring.
         [Test]
         public void Push_GrowsWithApproachSpeed()
         {
@@ -167,8 +192,15 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunIntoBody(MobType.Chaser, TestWorlds.MoveMode.Dash, 0f,
                 out float dash, out _);
 
+            // ⭐ THE RUN CHANNEL NEEDS A FLOOR OF ITS OWN, and without it the
+            // comparisons above are blind to the one mutation Р442 forbids by
+            // name — "no branch for dash, slide or run". Delete the shove for
+            // everything but the slide and the dash and `run` becomes 0, at
+            // which point `slide > run * 1.5` is 5.15 > 0 and passes. Measured
+            // 2.86 m/s against a floor of 1.0.
+            Assert.Greater(run, 1f, "бег не толкнул вовсе — закон ветвится по режиму движения");
             Assert.Greater(slide, run * 1.5f, "подкат толкнул не сильнее бега");
-            Assert.Greater(dash, slide * 1.3f, "дэш толкнул не сильнее подката");
+            Assert.Greater(dash, slide * 1.5f, "дэш толкнул не сильнее подката");
         }
 
         /// The second load-bearing factor: MASS. The Director outweighs the
@@ -207,16 +239,34 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunIntoBody(MobType.Chaser, TestWorlds.MoveMode.Slide, 0f,
                 out float headOn, out _);
 
-            // Measured: 1.99 m/s sideways against 7.71 head-on. The sideways
-            // figure is not zero and should not be — as the collector slides
-            // past, the contact normal ROTATES and picks up a component along
-            // the travel, which is the projection doing its job rather than
-            // failing it. Under the mutation that reads the speed's magnitude
-            // instead, the sideways figure becomes the head-on one (7.71).
-            Assert.Less(sideways, 3f,
+            // ⚠⚠ MEASURED: EXACTLY 0 sideways against 5.15 head-on — and the
+            // sideways figure used to read 1.99, WHICH WAS NOT THE PROJECTION'S
+            // RESIDUE (review round of Т22, finding M-10). An earlier wording
+            // here explained the 1.99 as the contact normal rotating and
+            // picking up a component along the travel. The chaser in this
+            // fixture was simply never frozen: it accelerates at 30 m/s², a
+            // round 1.0 m/s per tick, and the fixture measures three ticks.
+            // 1.99 was the mob's own two ticks of acceleration to the second
+            // decimal, and the explanation was a story fitted to a number.
+            //
+            // Zero is what the law actually promises, and the sign is why: `n`
+            // points from the body to the collector, so a collector travelling
+            // sideways has a POSITIVE component along `n` from the first tick
+            // on — it is separating, not closing — and ResolveBodyPush declines
+            // an approach that is not positive. The cap is wide open the whole
+            // time (the bodies are 0.45 m into each other, worth 13.5 m/s), so
+            // nothing but the projection is holding the blow down.
+            //
+            // Under the mutation that reads the speed's MAGNITUDE the sideways
+            // figure becomes 0.5714 · 13.5 = 7.71, which the first assert kills
+            // with two orders of magnitude to spare. The second is the premise:
+            // the same fixture DOES shove when the collector closes, so a world
+            // where the push was deleted outright cannot pass by scoring zero
+            // twice.
+            Assert.Less(sideways, 0.5f,
                 "тело отброшено движением ВДОЛЬ него — скорость взята не по нормали");
-            Assert.Greater(headOn, sideways * 2f,
-                "лобовой толчок не отличается от бокового — проекция не применяется");
+            Assert.Greater(headOn, 3f,
+                "премисса: лобовой подкат не толкнул вовсе — фикстура ничего не мерила");
         }
 
         /// Witness for PushRecoilFraction = 0.25. At full recoil a slide would
@@ -325,29 +375,6 @@ namespace Ring.Simulation.Tests
         }
 
         /// ⭐ THE HALF THAT MATTERS (finding D-C11): without it the guard above
-        /// passes trivially, because both sides do nothing. Here the body is
-        /// there, both sides must separate the collector IDENTICALLY, and the
-        /// last assert states the premise — the fixture really did put a body in
-        /// the way — so a world where nothing separated could not pass by
-        /// agreeing on doing nothing.
-        ///
-        /// ⚠⚠ THE BODY IS PINNED IN PLACE EVERY TICK, and that is the fixture's
-        /// whole craft rather than a convenience (session 72). The client's span
-        /// necessarily holds LAST TICK's body position — it has no mobs to
-        /// simulate — while the server separates against the position the body
-        /// has NOW. A body that moves therefore guarantees a mismatch, and the
-        /// first form of this test measured exactly that instead of the rule:
-        /// 0.196 m of divergence, all of it the shove the collector had just
-        /// given the chaser. Holding the body still removes the one difference
-        /// that is NOT the rule, so what remains under the assert is the rule
-        /// alone.
-        ///
-        /// The real, un-pinnable version of that gap is named honestly elsewhere
-        /// and belongs to the lag gate: a networked client separates against
-        /// snapshot positions ~140 ms old, worth up to 0.73 m per tick, which is
-        /// risk Р-F and point 7 of the Ф4 gate — not something a fixture can
-        /// assert away.
-        /// ⭐ THE HALF THAT MATTERS (finding D-C11): without it the guard above
         /// passes trivially, because both sides do nothing. Here bodies are
         /// there, both sides must separate the collector IDENTICALLY, and the
         /// last assert states the premise — the collector really was stopped by
@@ -358,12 +385,19 @@ namespace Ring.Simulation.Tests
         /// (session 72), and neither is convenience:
         ///
         ///   1. THE SPAN CARRIES EVERY BODY IN THE WORLD, not just the chaser
-        ///      this test spawns. MatchFlowSystem puts the DIRECTOR at
-        ///      float2.zero the moment a live collector stands in the Core zone,
-        ///      plus his retinue — so the server separates the collector from a
-        ///      4000 kg body the first version of this span knew nothing about,
-        ///      and the two sides disagreed by 0.198 m for a reason that was
-        ///      never the rule.
+        ///      this test spawns. That is the correct SHAPE — the server
+        ///      separates from every body it has, so a span that carried a
+        ///      hand-picked subset would be testing the fixture rather than the
+        ///      rule — and it was paid for by a run: an earlier version
+        ///      disagreed by 0.198 m against a 4000 kg body it knew nothing of.
+        ///      ⚠ THAT BODY CANNOT APPEAR HERE ANY MORE, and an earlier wording
+        ///      of this paragraph said in the present tense that it does
+        ///      (review round of Т22, finding M-1). MatchFlowSystem wakes the
+        ///      Director when a live collector stands in the CORE, and
+        ///      OpenField() is ZONELESS (owner decision R-173), so
+        ///      AnyLiveCollectorInCore returns false outright at
+        ///      ZoneRadius.Length < 2. The shape stays because it is right, not
+        ///      because a Director is expected.
         ///   2. THE BODIES ARE FROZEN back onto their snapshot after every tick.
         ///      The client's span necessarily holds LAST tick's positions — it
         ///      has no mobs to simulate — while the server separates against the
@@ -381,7 +415,7 @@ namespace Ring.Simulation.Tests
         public void PredictionAndServerAgree_WhenTheBodyIsVisible()
         {
             SimConfig cfg = TestConfigs.OpenField();
-            // ⚠ THE BODY IS IMMOBILISED BY CONFIG, not only frozen after the
+            // ⚠ THE BODY IS IMMOBILIZED BY CONFIG, not only frozen after the
             // tick. MobAiSystem runs BEFORE the separation within the same tick,
             // so a chaser with a nonzero Accel travels Accel·dt² before the
             // server starts separating — and the server then separates against a
@@ -396,12 +430,15 @@ namespace Ring.Simulation.Tests
 
             var input = new SimInput { MoveDir = new float2(1f, 0f) };
 
-            // ⚠ THE WORLD HAS TO SETTLE before the comparison starts. The
-            // Director is not born in the constructor but on a phase transition
-            // inside the FIRST tick — and the server separates from him on that
-            // same tick, while the client's span, taken BEFORE the tick, does
-            // not know he exists yet. Five warm-up ticks retire the question:
-            // after them the set of bodies no longer changes.
+            // ⚠ FIVE WARM-UP TICKS, AND THEIR STATED REASON NO LONGER HOLDS
+            // (review round of Т22, finding M-1). They were written against a
+            // Director born on a phase transition inside the FIRST tick, whom
+            // the client's span — taken BEFORE that tick — could not know
+            // about; on a ZONELESS fixture he is never born at all. What the
+            // ticks still do is let the collector cover the ground to the body
+            // before the comparison starts, and the premise below is what
+            // proves they did. They stay because removing them would move the
+            // fixture without buying anything.
             for (int i = 0; i < 5; i++) w.TickAll(new[] { input, default });
 
             PlayerState predicted = w.PlayerAt(0);
@@ -463,7 +500,7 @@ namespace Ring.Simulation.Tests
             TestWorlds.SpawnMobsAt(a, (MobType.Chaser, pts[0]), (MobType.Chaser, pts[1]),
                 (MobType.Chaser, pts[2]));
             TestWorlds.SpawnMobsAt(b, (MobType.Chaser, pts[2]), (MobType.Chaser, pts[1]),
-                (MobType.Chaser, pts[0]));           // ТОТ ЖЕ набор, ОБРАТНЫЙ порядок
+                (MobType.Chaser, pts[0]));           // SAME set, REVERSED order
             foreach (var w in new[] { a, b })
                 for (int i = 0; i < 3; i++)
                 {
@@ -481,5 +518,221 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual(setA[i], setB[i], 1e-5f,
                     "исход разведения зависит от порядка тел в массиве");
         }
+
+        // ── The THIRD pair kind: collector ↔ collector (spec §3.5, review
+        //    round of Т22, finding C-1) ────────────────────────────────────
+        //
+        // ⚠⚠ THIS PAIR HAD ZERO WITNESSES UNTIL THIS ROUND, and the gap was
+        // not an oversight that went unnoticed — it was WRITTEN DOWN. The
+        // guard fixture below moves its second collector 60 m away with the
+        // words "otherwise they would separate FROM EACH OTHER", i.e. the
+        // interaction was known and stepped around rather than checked. Every
+        // instrument Т22 did run (fifteen mutations, the diff self-review, the
+        // sweeps) was blind to it by construction: a mutation is measured
+        // THROUGH the tests, and no test observed this pair.
+        //
+        // What the four tests below pin, and why each is a separate one:
+        //   * the SHARE   -- each collector takes its own mass-weighted half of
+        //     the overlap, never the whole of it;
+        //   * RULING 113  -- a collector's velocity change never reads another
+        //     body's motion, which is the invariant that makes the client's
+        //     half reproducible at all;
+        //   * PARITY      -- the server's answer for a collector standing in
+        //     another collector equals the client's own, to the centimetre;
+        //   * the DEGENERATE PAIR -- two collectors on one point are left
+        //     alone, because nothing in the shared data can tell them apart.
+
+        /// ⭐ THE HEADLINE WITNESS of finding C-1: the pair is resolved ONCE
+        /// PER SIDE, and each side keeps only its OWN half.
+        ///
+        /// Before this round CollectorPass spilled Accumulate's reciprocals
+        /// into EVERY slot, collectors included — so the pair was processed in
+        /// collector p's pass and again in collector q's, and by
+        /// ResolveBodyPair's own symmetry (dA of one pass IS dB of the other)
+        /// each slot received its share TWICE. At equal mass that is the whole
+        /// overlap where half was owed.
+        ///
+        /// THE NUMBER IS DERIVED, NOT MEASURED-AND-PINNED (lesson 428). The
+        /// two stand 0.6 m apart inside a 0.9 m contact width, so the overlap
+        /// is 0.3 m and each owes itself 0.3 · 120/240 = 0.15 m. A tick runs
+        /// the collector pass TWICE against ONE frozen snapshot, and the
+        /// second pass sees the pair 0.15 m less overlapped from the first —
+        /// 0.075 m more each — so the tick's total is 0.225 m per collector
+        /// and the gap ends at 1.05 m. Under the doubling it was 0.30 m and
+        /// 1.20 m: the tolerance below is an order of magnitude tighter than
+        /// the difference between the two answers.
+        [Test]
+        public void TwoCollectors_EachTakeTheirOwnHalfOfTheOverlap()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(-0.3f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0.3f, 0f));
+
+            w.TickAll(new SimInput[2]);
+
+            Assert.AreEqual(-0.525f, w.PlayerAt(0).Pos.x, 0.01f,
+                "первый сборщик взял не свою долю перекрытия");
+            Assert.AreEqual(0.525f, w.PlayerAt(1).Pos.x, 0.01f,
+                "второй сборщик взял не свою долю перекрытия");
+        }
+
+        /// ⭐ WITNESS FOR RULING 113, and the sharpest of the four: a collector
+        /// standing still is DISPLACED by the one that runs into it — that is
+        /// the positional half doing its job — but its VELOCITY must not move
+        /// a millimetre per second, because the blow would have to be derived
+        /// from somebody else's speed.
+        ///
+        /// The ruling called that "impossible to break rather than merely
+        /// documented -- the data is not there", and the data really is not:
+        /// PushableBody carries no velocity. The spill made it available
+        /// anyway, by the back door of the OTHER collector's pass — and the
+        /// client, whose CollectorPass hands Accumulate two empty reciprocal
+        /// spans, cannot reproduce a single metre per second of it.
+        [Test]
+        public void StandingCollector_IsNotShovedByAnotherCollectorsMotion()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(2.5f, 0f));
+
+            PlayerState p = w.PlayerAt(0);
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            p.SlideDir = new float2(1f, 0f);
+            w.SetPlayerForTest(0, p);
+
+            float worst = 0f;
+            float2 stoodAt = w.PlayerAt(1).Pos;
+            var inputs = new SimInput[2];
+            for (int i = 0; i < 20; i++)
+            {
+                w.TickAll(inputs);
+                worst = math.max(worst, math.length(w.PlayerAt(1).Vel));
+            }
+
+            Assert.AreEqual(0f, worst, 1e-4f,
+                "стоящий сборщик получил скорость от чужого движения");
+            // The premise: the slide really did arrive. Without it a fixture
+            // where nothing ever touched would pass the assert above.
+            Assert.Greater(math.distance(w.PlayerAt(1).Pos, stoodAt), 0.1f,
+                "премисса: подкат не дошёл — стоящего никто не сдвинул");
+        }
+
+        /// ⭐ PARITY ON THE THIRD PAIR, the half of finding C-1 that reaches
+        /// the wire. PredictionAndServerAgree_WhenTheBodyIsVisible pins the
+        /// collector↔mob pair; this one pins the pair where BOTH bodies run a
+        /// pass of their own on the server and only ONE of them exists on the
+        /// client.
+        ///
+        /// The same two pieces of fixture craft the mob version documents
+        /// apply and for the same reasons: the body is frozen back onto its
+        /// snapshot after every tick (the client's span necessarily holds last
+        /// tick's position), and it is a body that never moves under its own
+        /// power anyway — a collector with no input.
+        [Test]
+        public void PredictionAndServerAgree_WhenTheBodyIsAnotherCollector()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            var stands = new float2(2f, 0f);
+            TestWorlds.RelocatePlayerForTest(w, 1, stands);
+
+            var input = new SimInput { MoveDir = new float2(1f, 0f) };
+            PlayerState predicted = w.PlayerAt(0);
+            var bodies = new PushableBody[1];
+
+            for (int i = 0; i < 25; i++)
+            {
+                bodies[0] = new PushableBody(w.PlayerAt(1).Pos, cfg.Hero.Radius, cfg.Hero.Mass);
+                PlayerPrediction.Step(ref predicted, in input, in cfg,
+                    Ring.Simulation.Combat.ImpactPulse.None,
+                    new System.ReadOnlySpan<PushableBody>(bodies));
+                w.TickAll(new[] { input, default(SimInput) });
+
+                PlayerState q = w.PlayerAt(1);
+                q.Pos = stands; q.Vel = float2.zero;
+                w.SetPlayerForTest(1, q);
+            }
+
+            Assert.Less(math.distance(predicted.Pos, w.PlayerAt(0).Pos), 0.01f,
+                "предсказание разошлось с сервером на ВТОРОМ СБОРЩИКЕ");
+            Assert.Less(w.PlayerAt(0).Pos.x, 2f - cfg.Hero.Radius,
+                "премисса: сборщик прошёл сквозь сборщика — фикстура ничего не разводила");
+        }
+
+        /// A GUARD, GREEN BEFORE AND AFTER (lesson 427), and it earns its place
+        /// against the mutation that deletes the equal-key guard in
+        /// ResolveBodyPair's degenerate branch.
+        ///
+        /// ⚠ TWO COLLECTORS ON ONE POINT CANNOT BE SEPARATED, and that is a
+        /// property of the DATA rather than of the algorithm (ruling 121). The
+        /// degenerate direction is derived from the pair's tie-break keys; a
+        /// collector's key is its MASS BITS (PushableBody carries no id, ruling
+        /// 116), and two collectors weigh the same by construction. Equal keys
+        /// do not flip on an argument swap, so both sides would compute the
+        /// SAME direction and the pair would travel across the arena together
+        /// at MaxDepenetrationPerTick — a runaway, not a separation. Declining
+        /// the pair is the one answer both sides reach identically.
+        ///
+        /// It was green before this round too, but by ACCIDENT rather than by
+        /// rule: the doubled spill made the two halves cancel to exactly zero.
+        [Test]
+        public void TwoCollectorsOnTheSamePoint_AreLeftAlone_Guard()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            // The premise IS the fixture: OpenField sets PlayerSpawnRingFrac = 0,
+            // so Geometry.SpawnPosFor puts every player on the origin.
+            Assert.AreEqual(0f, math.distance(w.PlayerAt(0).Pos, w.PlayerAt(1).Pos), 1e-6f,
+                "премисса: фикстура не поставила двух сборщиков в одну точку");
+
+            w.TickAll(new SimInput[2]);
+
+            Assert.AreEqual(0f, math.length(w.PlayerAt(0).Pos), 1e-4f,
+                "первый сборщик уехал из вырожденной пары");
+            Assert.AreEqual(0f, math.length(w.PlayerAt(1).Pos), 1e-4f,
+                "второй сборщик уехал из вырожденной пары");
+        }
+
+        /// Witness for finding I-1: a CORPSE IS NOT AN OBSTACLE, and until this
+        /// round it was one.
+        ///
+        /// SnapshotBodies keeps a dead collector's slot (the reciprocals are
+        /// indexed by slot and a map would be a second answer) and gives it
+        /// ZERO RADIUS, justifying that in as many words: "a body of radius 0
+        /// can never overlap, so ResolveBodyPair returns false for every pair
+        /// it is in". The arithmetic says otherwise — the gate is
+        /// `(rA + rB) - dist > 0`, so a corpse of radius 0 overlaps a LIVING
+        /// body of radius 0.45 at any distance under 0.45 m. Zero guarantees
+        /// `false` only against a second zero.
+        ///
+        /// The corpse is offset in y so the wrong behavior is visible as a
+        /// DEFLECTION rather than as a slow-down: nothing else in this fixture
+        /// can move the collector off the x axis.
+        [Test]
+        public void DeadCollector_DoesNotSeparateTheLiving()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(2f, 0.3f));
+
+            PlayerState corpse = w.PlayerAt(1);
+            corpse.Hp = 0f;
+            corpse.Alive = false;
+            w.SetPlayerForTest(1, corpse);
+
+            var input = new SimInput { MoveDir = new float2(1f, 0f) };
+            for (int i = 0; i < 30; i++) w.TickAll(new[] { input, default(SimInput) });
+
+            Assert.AreEqual(0f, w.PlayerAt(0).Pos.y, 1e-4f,
+                "труп с нулевым радиусом столкнул живого сборщика с прямой");
+            // The premise: the living collector really did walk over the spot.
+            Assert.Greater(w.PlayerAt(0).Pos.x, 2f,
+                "премисса: сборщик не дошёл до трупа — тест ничего не проверил");
+        }
+
     }
 }

@@ -258,7 +258,35 @@ namespace Ring.Simulation.AI
                 // collectors — so the reciprocals need no map at all.
                 disp[mobCount + p] += d;
                 if (withShove) push[mobCount + p] += v;
-                for (int k = 0; k < bodyCount; k++)
+
+                // ⛔⛔ THE RECIPROCALS GO TO MOBS ONLY, AND THE BOUND IS
+                // `mobCount` RATHER THAN `bodyCount` FOR TWO REASONS THAT ARE
+                // BOTH LOAD-BEARING (ruling 121, review round of Т22, finding
+                // C-1). Accumulate fills a reciprocal for EVERY body it
+                // overlaps, collectors included; spilling those into collector
+                // slots was the defect.
+                //
+                //   1. IT PROCESSED THE PAIR TWICE. Every live collector runs a
+                //      pass of its own, so the pair p↔q is resolved in p's pass
+                //      and again in q's — and ResolveBodyPair is symmetric
+                //      (swapping the arguments flips `n`, so one pass's dA IS
+                //      the other's dB). Each slot therefore received its share
+                //      twice: at equal mass, the WHOLE overlap where half was
+                //      owed. Bounded here, the pair is still resolved from both
+                //      sides, but each side keeps only what it computed for
+                //      ITSELF, which is the same half the client computes.
+                //   2. IT BROKE RULING 113. The reciprocal velocity is derived
+                //      from the PUSHER's speed, and PlayerPrediction hands
+                //      Accumulate two EMPTY reciprocal spans — it has no mobs
+                //      to move and no other collector's velocity to read. A
+                //      collector shoved by another collector's motion is
+                //      therefore unreproducible by construction, which is the
+                //      one thing a predicted quantity may never be.
+                //
+                // A mob has no pass of its own, so its side of a collector↔mob
+                // pair exists ONLY as this reciprocal — which is why the loop
+                // stays rather than going away.
+                for (int k = 0; k < mobCount; k++)
                 {
                     disp[k] += bodyDisp[k];
                     if (withShove) push[k] += bodyVel[k];
@@ -297,9 +325,19 @@ namespace Ring.Simulation.AI
             {
                 // A DEAD collector keeps its slot but gets ZERO RADIUS: the slot
                 // layout has to stay `mobCount + q` for the reciprocals to land
-                // without a map, and a corpse is not an obstacle (a body of
-                // radius 0 can never overlap, so ResolveBodyPair returns false
-                // for every pair it is in).
+                // without a map, and a corpse is not an obstacle.
+                //
+                // ⚠ THE RADIUS ALONE DOES NOT MAKE IT ONE, and an earlier
+                // wording of this comment claimed it did — "a body of radius 0
+                // can never overlap, so ResolveBodyPair returns false for every
+                // pair it is in" (review round of Т22, finding I-1). The gate is
+                // `(rA + rB) - dist > 0`: zero guarantees `false` only against a
+                // SECOND zero, while against a living 0.45 m collector a corpse
+                // overlapped at any distance under 0.45 m and shoved it off its
+                // line. What actually declines the corpse is
+                // BodySeparation.Accumulate's own `Radius <= 0` skip; the zero
+                // here is what MARKS it, and the mark and the rule live in the
+                // one place each belongs to.
                 bool alive = players[q].Alive;
                 bodies[n++] = new PushableBody(players[q].Pos,
                     alive ? heroRadius : 0f, heroMass);
@@ -307,19 +345,30 @@ namespace Ring.Simulation.AI
             return n;
         }
 
-        /// Applies ONE direction of the push law: `pusher` closes on `target` at
-        /// `approach` along `awayFromPusher`. Written once and called from both
-        /// directions of a mob pair, so the asymmetry between the two is the
-        /// ARGUMENTS and never a second copy of the arithmetic.
+        /// Applies ONE direction of the push law: `pusher` closes on `target`
+        /// at `approach`, i.e. it travels along `-towardPusher`. Written once
+        /// and called from both directions of a mob pair, so the asymmetry
+        /// between the two is the ARGUMENTS and never a second copy of the
+        /// arithmetic.
+        ///
+        /// ⚠ THE PARAMETER WAS CALLED `awayFromPusher` AND POINTED THE OTHER
+        /// WAY (review round of Т22, finding M-5). Both call sites hand it the
+        /// contact normal, whose own convention — stated by ResolveBodyPair —
+        /// is that it points from the second body TO the first, i.e. from the
+        /// target to the pusher; the body is thrown along its NEGATION, which
+        /// is why the first line below carries a minus. The arithmetic was
+        /// right and the name was not, which is the worse of the two failures:
+        /// the next reader to "fix" the sign to match the name would break a
+        /// working law.
         static void Shove(float pusherMass, float targetMass, float approach,
-            float recoilFraction, float2 awayFromPusher,
+            float recoilFraction, float2 towardPusher,
             ref float2 pusherPush, ref float2 targetPush)
         {
             if (!Impact.ResolveBodyPush(pusherMass, targetMass, approach, recoilFraction,
                     out float targetDelta, out float pusherDelta))
                 return;
-            targetPush += -awayFromPusher * targetDelta;
-            pusherPush += awayFromPusher * pusherDelta;
+            targetPush += -towardPusher * targetDelta;
+            pusherPush += towardPusher * pusherDelta;
         }
 
         /// Arena AFTER bodies (D-C3): being pushed out of a body can drive a

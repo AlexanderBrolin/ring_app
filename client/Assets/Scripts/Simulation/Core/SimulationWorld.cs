@@ -130,10 +130,14 @@ namespace Ring.Simulation.Core
         readonly (int a, int b)[] _pairCandidates;
         int _pairCandidateCount;
         // app-88jb Т22: the reciprocals Accumulate hands back, indexed like
-        // _pushBodies and scattered through _pushSlot. They exist because the
-        // shared routine stays indexed by its OWN input -- teaching it the
-        // world's slot layout would be exactly the coupling that keeps it from
-        // also serving the client, which has no such layout.
+        // _pushBodies -- whose slot layout IS the displacement buffers' own
+        // (mobs first, then collectors), so CollectorPass scatters them without
+        // a map. They exist because the shared routine stays indexed by its OWN
+        // input -- teaching it the world's slot layout would be exactly the
+        // coupling that keeps it from also serving the client, which has no
+        // such layout. (An earlier wording named a `_pushSlot` array; ruling
+        // 118 removed it when the pair scan's input was frozen for the tick,
+        // and the reference outlived the field -- review round of Т22, M-3.)
         readonly float2[] _pushDisp;
         readonly float2[] _pushVel;
         // app-88jb Т22: how far the hard pass has already moved each collector
@@ -437,12 +441,21 @@ namespace Ring.Simulation.Core
                 if (_players[i].Alive)
                     WeaponSystem.Update(this, ref _players[i], in _sanitizedInputs[i], (byte)i);
             }
-            // Canonical tick order (spec Interfaces, Task 16/19/20): movement →
-            // weapon → mobs (Phase 6) → mob separation → projectiles → (waves,
-            // Phase 6+). Separation runs right after MobAiSystem so it sees this
-            // tick's post-movement positions; its Vel addition only shows up as
-            // motion on the next tick's MoveWithCollisions call (see
-            // SeparationSystem's doc comment).
+            // Canonical tick order (spec Interfaces, Task 16/19/20, app-88jb
+            // Т22): movement → weapon → mobs (Phase 6) → BODY SEPARATION →
+            // projectiles → (waves, Phase 6+). Separation runs right after
+            // MobAiSystem so it sees this tick's post-movement positions.
+            //
+            // ⚠ THE PASS IS NO LONGER MOBS-ONLY AND NO LONGER Vel-ONLY, and
+            // this comment said both until the review round of Т22 caught it
+            // (finding I-2). It covers three pair kinds now — mob↔mob,
+            // collector↔mob and collector↔collector — and its HARD half moves
+            // Pos WITHIN THIS TICK, because "bodies do not interpenetrate" is a
+            // statement about this tick's positions and a force cannot make it
+            // true. Only the SOFT pass keeps the old promise that its Vel
+            // addition shows up as motion on the next tick's MoveWithCollisions
+            // (see SeparationSystem's own doc, which carries the full
+            // renegotiation).
             MobAiSystem.Update(this);
             SeparationSystem.Apply(this, _players);
             ProjectileSystem.Update(this);

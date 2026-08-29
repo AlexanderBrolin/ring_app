@@ -54,9 +54,14 @@ namespace Ring.Simulation.Core
         /// death history that reshuffles the mob array).
         ///
         /// `bodyDisp`/`bodyVel` are the RECIPROCALS, indexed like `bodies`. The
-        /// server passes real spans and applies them to its mobs; the client
-        /// passes empty ones, because it has no mobs to move and CRITICAL RULE 3
-        /// puts their fate on the server regardless. Empty is a legal input, not
+        /// server passes real spans and applies them TO ITS MOBS AND TO NOTHING
+        /// ELSE — the collector slots are filled here and deliberately not read
+        /// (ruling 121: another collector resolves the same pair in its own
+        /// pass, and a reciprocal landing on it would both double the share and
+        /// hand it a shove derived from somebody else's velocity, which ruling
+        /// 113 forbids and the client cannot reproduce). The client passes empty
+        /// ones, because it has no mobs to move and CRITICAL RULE 3 puts their
+        /// fate on the server regardless. Empty is a legal input, not
         /// a degenerate one -- which is also why the two are separate spans
         /// rather than an out-parameter the client would have to invent.
         /// `skipIndex` is the collector's OWN slot when the span is a snapshot
@@ -78,6 +83,18 @@ namespace Ring.Simulation.Core
             {
                 if (i == skipIndex) continue;
                 PushableBody b = bodies[i];
+                // ⛔ A BODY WITHOUT A RADIUS IS NOT A BODY (review round of Т22,
+                // finding I-1). SeparationSystem.SnapshotBodies keeps a DEAD
+                // collector's slot — the reciprocals are indexed by slot and a
+                // map would be a second answer — and marks it with radius 0,
+                // on the stated grounds that "a body of radius 0 can never
+                // overlap". The gate is `(rA + rB) - dist > 0`, so zero
+                // guarantees that only against a SECOND zero: against a living
+                // 0.45 m collector a corpse overlapped at any distance under
+                // 0.45 m and shoved it off its line. Declined here rather than
+                // in the caller, because the CLIENT's span comes from the
+                // networking layer and may carry the same corpse.
+                if (b.Radius <= 0f) continue;
                 if (!Geometry.ResolveBodyPair(pos, radius, mass, tieA,
                         b.Pos, b.Radius, b.Mass, TieKey(b.Mass),
                         out float2 dA, out float2 dB, out float2 n, out float overlap))
@@ -185,10 +202,18 @@ namespace Ring.Simulation.Core
         /// any id space.
         ///
         /// ⚠ TWO COLLECTORS PRODUCE EQUAL KEYS, which is the idA == idB case
-        /// ResolveBodyPair's own doc calls out: the sign does not flip on an
-        /// argument swap, so the outcome depends on which body is passed first.
-        /// That is deterministic here rather than merely harmless -- the pair is
-        /// scanned once, in slot order, by both sides.
+        /// ResolveBodyPair's own doc calls out -- and the pair is DECLINED
+        /// there (ruling 121), rather than resolved in a direction the two
+        /// sides would have to agree on without any data to agree from.
+        ///
+        /// AN EARLIER WORDING OF THIS PARAGRAPH SAID EQUAL KEYS WERE HARMLESS
+        /// "because the pair is scanned once, in slot order, by both sides",
+        /// AND THAT WAS FALSE OF THIS VERY FILE (review round of Т22, finding
+        /// C-1): every live collector runs a pass of its own, so a
+        /// collector↔collector pair is scanned TWICE, once from each side, and
+        /// never in slot order. It is recorded rather than quietly deleted
+        /// because it was the only written argument for the safety of the case
+        /// -- and it argued from a shape the code did not have.
         static int TieKey(float mass) => (int)math.asuint(mass);
     }
 }

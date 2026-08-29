@@ -521,6 +521,23 @@ namespace Ring.Simulation.Tests
             out float bodySpeed, out float collectorSpeed)
         {
             SimConfig cfg = TestConfigs.OpenField();
+            // ⛔⛔ THE BODY IS IMMOBILIZED BY CONFIG, AND `Ai = Idle` BELOW IS
+            // NOT WHAT DOES IT (ruling 17/104, review round of Т22, finding
+            // I-4). Idle holds a mob for exactly ONE tick and then MobAiSystem
+            // puts it back into Chase, so until this round the RUN channel of
+            // this fixture measured the chaser's OWN LOCOMOTION -- it reaches
+            // 5.2 m/s under its own legs, more than the 4.0 m/s blow a running
+            // collector can land -- and the mutation Р442 forbids in as many
+            // words ("no branch for dash, slide or run") would have survived
+            // the whole suite: the run figure is held up by the legs, and the
+            // slide and dash figures are untouched by such a branch.
+            //
+            // ⚠ THE SAME DEFECT WAS FOUND AND FIXED ONCE ALREADY, in session
+            // 72's own PushedMob_KnocksBackTheMobBehindIt (mutation M31), and
+            // was left standing in this shared helper feeding three tests.
+            // Which is the argument for fixing it HERE rather than in each
+            // caller.
+            FreezeArchetype(ref cfg, type);
             var w = new SimulationWorld(7, cfg);
             float x = mode switch { MoveMode.Dash => 1.5f, MoveMode.Slide => 2.5f, _ => 12f };
             SpawnMobsAt(w, (type, new float2(x, offsetY)));
@@ -556,6 +573,34 @@ namespace Ring.Simulation.Tests
                     bodySpeed = s;
                     collectorSpeed = math.length(w.Player.Vel);
                 }
+
+                // ⚠ THE BLOW IS READ AND THEN CLEARED, so what the maximum
+                // above reports is ONE blow rather than a running total. With
+                // Accel zeroed the mob's own MoveTowards can no longer damp
+                // anything (its step is Accel * dt = 0), so a shove would be
+                // carried from tick to tick and every later contact would add
+                // to it -- the figure would converge on the collector's own
+                // speed and stop being the law's answer. The mob still MOVES:
+                // the positional half of the separation pushes it ahead exactly
+                // as it does in the game.
+                MobState body = w.Mobs[0];
+                body.Vel = float2.zero;
+                w.SetMobForTest(0, body);
+            }
+        }
+
+        /// Zeroes ONE archetype's own locomotion, which is the only thing that
+        /// actually freezes a mob (ruling 17/104). Written once here because
+        /// two fixtures below need it and a switch copied twice is a second
+        /// answer waiting to drift.
+        static void FreezeArchetype(ref SimConfig cfg, MobType type)
+        {
+            switch (type)
+            {
+                case MobType.Chaser: cfg.Chaser.MaxSpeed = 0f; cfg.Chaser.Accel = 0f; break;
+                case MobType.Gunner: cfg.Gunner.MaxSpeed = 0f; cfg.Gunner.Accel = 0f; break;
+                case MobType.Elite: cfg.Elite.MaxSpeed = 0f; cfg.Elite.Accel = 0f; break;
+                case MobType.Director: cfg.Director.MaxSpeed = 0f; cfg.Director.Accel = 0f; break;
             }
         }
 
@@ -574,13 +619,20 @@ namespace Ring.Simulation.Tests
         internal static float SidewaysPushOnOverlappedChaser()
         {
             SimConfig cfg = TestConfigs.OpenField();
+            // Same freeze, same reason as RunIntoBody above (finding M-10): the
+            // chaser accelerates at 30 m/s², i.e. a full 1.0 m/s per tick, and
+            // this fixture measures three ticks -- so the 1.99 m/s it used to
+            // report was the mob's own two ticks of acceleration to within a
+            // hundredth, not the projection's residue this method's own doc
+            // claimed it to be.
+            FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(7, cfg);
             SpawnMobsAt(w, (MobType.Chaser, new float2(0.5f, 0f)));
             var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(0, m);
 
             PlayerState p = w.Player;
             p.SlideTimer = cfg.Hero.SlideDuration;
-            p.SlideDir = new float2(0f, 1f);          // ВДОЛЬ, не В тело
+            p.SlideDir = new float2(0f, 1f);          // ALONG the body, not INTO it
             w.SetPlayerForTest(0, p);
 
             float best = 0f;
