@@ -31,6 +31,27 @@ namespace Ring.Simulation.Core
             if (!math.isfinite(s.AimHeight)) s.AimHeight = cfg.Hero.MuzzleHeight;
             s.AimHeight = math.clamp(s.AimHeight, 0f, cfg.Hero.MaxAimHeight);
 
+            // app-88jb Т26 (spec §3.6, finding D2-I21): the rewind depth a
+            // client asked for, brought into the arena's domain. THE CLAMP
+            // LIVES HERE AND NOT IN InputCodec for two reasons that point the
+            // same way. An authoritative server must clamp a depth that did
+            // NOT come from a client of ours — a modified client can put any
+            // of the eight wire values in those three bits, and this method is
+            // the one place every input passes through on its way into a tick.
+            // And the cap is a BALANCE number (Arena.RewindCapTicks, tuned per
+            // ADR-002's rule that game numbers live in ScriptableObjects),
+            // while the codec is shared by both sides of the wire and knows
+            // only the wire's own 0..7 domain.
+            //
+            // The clamp cannot silently zero the depth: SimConfigBuilder's
+            // validation refuses a config whose Arena.RewindCapTicks is below
+            // 1 or above SimulationWorld.TicksFromSeconds(0.2f), so the ceiling
+            // this line applies is always at least one tick of real rewind.
+            // The (int) cast is for the reader rather than the compiler —
+            // math.min(int, int) is what overload resolution picks either way,
+            // and saying so keeps a future byte-vs-int edit honest.
+            s.RewindTicks = (byte)math.min((int)s.RewindTicks, cfg.Arena.RewindCapTicks);
+
             // Stage 3 Task 20 (spec §3.8/§3.11, coordinator D-3): the loot
             // window closes the instant the player is dead, extracted,
             // dashing or sliding — regardless of what a client claims. Gated

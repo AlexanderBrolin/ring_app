@@ -150,13 +150,22 @@ namespace Ring.Simulation.Tests
             // second SampleInputs frame raises it, so this line watches a
             // value that actually changes across the set.
             Assert.AreEqual(expected.InventoryOpen, actual.InventoryOpen, $"{where}: InventoryOpen");
+            // app-88jb Т26, CARRIED FROM THE TASK THAT DECLARED IT: bits 5-7
+            // of the same byte 7 hold the rewind depth as a 3-bit number, and
+            // SampleInputs gives two of its three frames a different non-zero
+            // one, so this line watches a value that actually varies across
+            // every set this file feeds it. Without the line all the round
+            // trips below would keep passing while quietly dropping the field.
+            Assert.AreEqual(expected.RewindTicks, actual.RewindTicks, $"{where}: RewindTicks");
         }
 
         /// The field list `AssertSimInputEqual` above checks by hand. A field a
         /// future phase adds to `SimInput` must be added there too, otherwise
         /// every round trip in this file would keep passing while quietly
         /// dropping it (same guard, and the same reason, as
-        /// `InputCodecTests.WireFields_AreExactlyTheOnesSimInputDeclares`).
+        /// `InputCodecTests.EveryFieldOfSimInput_IsCarriedOnTheWire` — the
+        /// name this sentence carried until app-88jb Т26 pointed at no method
+        /// at all, a dangling reference rather than a renamed one).
         static readonly HashSet<string> SimInputFieldsCovered = new HashSet<string>
         {
             nameof(SimInput.MoveDir), nameof(SimInput.AimPoint), nameof(SimInput.AimHeight),
@@ -164,6 +173,8 @@ namespace Ring.Simulation.Tests
             nameof(SimInput.AimHeld), nameof(SimInput.SlideRequested),
             // Stage 3 Task 17 — see AssertSimInputEqual's own line for it.
             nameof(SimInput.InventoryOpen),
+            // app-88jb Т26 — see AssertSimInputEqual's own line for it.
+            nameof(SimInput.RewindTicks),
         };
 
         /// Three frames whose wire bytes are all different from one another:
@@ -173,6 +184,17 @@ namespace Ring.Simulation.Tests
         /// InventoryOpen (Т20's bit 4) rides the SECOND frame, the same
         /// "the specimen is the second element" convention the mutation
         /// discipline uses.
+        ///
+        /// THE REWIND DEPTH (app-88jb Т26, bits 5-7 of that same byte) takes
+        /// three DIFFERENT values across the set — 0, 5, 3 — rather than the
+        /// one non-zero the field strictly needs to stop being vacuous. Two
+        /// tests get something from that which a single specimen would not
+        /// give them: PendingInput_LatestFrameWinsNoEdgeCoalescing compares
+        /// frame 3 against frame 1 and now has a depth that must be
+        /// OVERWRITTEN rather than merely matched, and every wire assertion
+        /// below sees the three high bits carrying a real number instead of a
+        /// constant. 5 is the depth the design expects in play at 80 ms; 3 is
+        /// simply another legal value, chosen so no two frames agree.
         static SimInput[] SampleInputs(in SimConfig cfg)
         {
             float r = cfg.Arena.Radius;
@@ -194,6 +216,7 @@ namespace Ring.Simulation.Tests
                     FireHeld = false, DashRequested = true,
                     AimHeld = false, SlideRequested = true,
                     InventoryOpen = true,
+                    RewindTicks = 5,
                 },
                 new SimInput
                 {
@@ -202,6 +225,7 @@ namespace Ring.Simulation.Tests
                     AimHeight = cfg.Hero.MaxAimHeight * 0.02f,
                     FireHeld = true, DashRequested = true,
                     AimHeld = true, SlideRequested = true,
+                    RewindTicks = 3,
                 },
             };
         }

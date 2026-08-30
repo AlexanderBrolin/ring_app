@@ -19,13 +19,44 @@ namespace Ring.Networking.Protocol
     ///   [6]    AimHeight         — Quantize.Unit(h, cfg.Hero.MaxAimHeight) (byte);
     ///                              non-finite h falls back to cfg.Hero.MuzzleHeight
     ///                              first, mirroring SimInputSanitizer (see below)
-    ///   [7]    flags             — bit0 FireHeld, bit1 DashRequested,
+    ///   [7]    flags + depth     — bit0 FireHeld, bit1 DashRequested,
     ///                              bit2 AimHeld, bit3 SlideRequested,
-    ///                              bit4 InventoryOpen
+    ///                              bit4 InventoryOpen,
+    ///                              bits 5-7 RewindTicks, a 3-bit NUMBER
+    ///                              (0..6; the eighth value reads back as 6 —
+    ///                              see THE EIGHTH DEPTH below)
     /// Total 8 bytes. Spec §3.8 states "9 Б" for this payload — a round-up
     /// with margin, not a contract (task-25-brief §2); the actual layout
     /// above is 8 bytes, and `SizeBytes` — not the spec prose — is the
     /// number tests and callers use.
+    ///
+    /// THE EIGHTH DEPTH READS AS THE CAP (app-88jb Т26, spec §3.6/§3.7, Р82).
+    /// Bits 5-7 of byte 7 carry `SimInput.RewindTicks` as a NUMBER rather than
+    /// as three more flags: how many ticks into the past the server must look
+    /// at its targets to judge a shot against the picture the shooter saw.
+    /// Three bits offer eight values and only seven are legal (0..6), so the
+    /// eighth is DEFINED instead of rejected — it decodes to 6. That is the
+    /// same judgment `TryDecode` makes for a short span: bytes off the wire
+    /// are ordinary input, not a programming error, and an out-of-domain depth
+    /// is not worth failing a tick over.
+    ///
+    /// THE WRITER SATURATES, IT DOES NOT MASK. `Encode` sends 7 for anything
+    /// above 7 rather than writing `RewindTicks & 0b111`, because masking
+    /// WRAPS: a depth of 200 (0b1100_1000) keeps its low three bits and would
+    /// leave as 0 — "no rewind at all", the worst answer available and the one
+    /// answer indistinguishable from an honest zero. Saturation hands over the
+    /// maximum instead, which is the reading this file already gives every
+    /// out-of-range scalar through `Quantize`'s own saturate.
+    ///
+    /// THE ARENA CAP IS NOT APPLIED HERE, and that is a boundary rather than
+    /// an omission. `Arena.RewindCapTicks` is a balance number whose clamp
+    /// lives in `SimInputSanitizer` — the single place input is sanitized, and
+    /// the place an authoritative server also clamps a depth that did NOT come
+    /// from a client of ours. This codec is shared by both sides of the wire
+    /// and has no business knowing one arena's rewind budget; a second home
+    /// for one policy is a defect this epic has already had to remove more
+    /// than once. What lives here is only the WIRE domain: three bits, eighth
+    /// value reads as the seventh.
     ///
     /// ANGLE/MAGNITUDE SPLIT (decision, task-25-brief §2 item 1). MoveDir is
     /// encoded as angle + magnitude rather than as an implicitly-unit
@@ -109,6 +140,13 @@ namespace Ring.Networking.Protocol
         // grep against Encode/TryDecode before this task — nothing else in this
         // file has ever set or read them).
         const int InventoryOpenBit = 4;
+        // app-88jb Т26: bits 5-7 stop being spare and carry a 3-bit number.
+        // Named as a shift plus a mask, not as three bit indices, because that
+        // is what they are — see THE EIGHTH DEPTH on the class for the domain
+        // and for why the writer saturates instead of masking.
+        const int RewindTicksShift = 5;
+        const int RewindTicksMask = 0b111;    // three bits: eight values
+        const byte RewindTicksWireCap = 6;    // Р82: the eighth reads as this
 
         public static void Encode(in SimInput input, in SimConfig cfg, System.Span<byte> dst)
         {
@@ -162,6 +200,14 @@ namespace Ring.Networking.Protocol
             if (input.AimHeld) flags |= 1 << AimHeldBit;
             if (input.SlideRequested) flags |= 1 << SlideRequestedBit;
             if (input.InventoryOpen) flags |= 1 << InventoryOpenBit;
+            // Saturate rather than mask: `& RewindTicksMask` would send a
+            // depth of 200 as 0 (see the class doc). The arena cap is the
+            // sanitizer's business, not this method's — only the three bits
+            // are.
+            byte depth = input.RewindTicks > RewindTicksMask
+                ? (byte)RewindTicksMask
+                : input.RewindTicks;
+            flags |= (byte)(depth << RewindTicksShift);
             dst[7] = flags;
         }
 
@@ -232,6 +278,11 @@ namespace Ring.Networking.Protocol
                 AimHeld = (flags & (1 << AimHeldBit)) != 0,
                 SlideRequested = (flags & (1 << SlideRequestedBit)) != 0,
                 InventoryOpen = (flags & (1 << InventoryOpenBit)) != 0,
+                // Р82: the eighth value of a 3-bit field is legal on the wire
+                // and reads as the cap, so a client that sends 7 is understood
+                // rather than refused.
+                RewindTicks = (byte)math.min(
+                    (flags >> RewindTicksShift) & RewindTicksMask, RewindTicksWireCap),
             };
             return true;
         }

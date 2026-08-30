@@ -392,7 +392,11 @@ namespace Ring.Simulation.Tests
             ushort expectedAimX = Quantize.Aim(input.AimPoint.x, ConfigA.Arena.Radius);
             ushort expectedAimY = Quantize.Aim(input.AimPoint.y, ConfigA.Arena.Radius);
             byte expectedHeight = Quantize.Unit(input.AimHeight, ConfigA.Hero.MaxAimHeight);
-            const byte expectedFlags = 0b0000_1001; // bit0 FireHeld + bit3 SlideRequested
+            // bit0 FireHeld + bit3 SlideRequested; bit4 down, and bits 5-7
+            // (RewindTicks, app-88jb Т26) zero because this fixture leaves the
+            // depth at its default — which is what makes this vector still a
+            // pure FLAG vector after the byte grew a number in it.
+            const byte expectedFlags = 0b0000_1001;
 
             var dst = new byte[InputCodec.SizeBytes + 4];
             for (int i = 0; i < dst.Length; i++) dst[i] = 0xAA; // sentinel tail
@@ -405,7 +409,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)(expectedAimY & 0xFF), dst[4], "byte 4: AimPoint.y low byte (little-endian)");
             Assert.AreEqual((byte)(expectedAimY >> 8), dst[5], "byte 5: AimPoint.y high byte (little-endian)");
             Assert.AreEqual(expectedHeight, dst[6], "byte 6: AimHeight");
-            Assert.AreEqual(expectedFlags, dst[7], "byte 7: flags (bit0 FireHeld, bit1 DashRequested, bit2 AimHeld, bit3 SlideRequested)");
+            Assert.AreEqual(expectedFlags, dst[7],
+                "byte 7: bit0 FireHeld, bit1 DashRequested, bit2 AimHeld, "
+                + "bit3 SlideRequested, bit4 InventoryOpen, bits 5-7 RewindTicks");
 
             for (int i = InputCodec.SizeBytes; i < dst.Length; i++)
                 Assert.AreEqual((byte)0xAA, dst[i], $"byte {i}: must be untouched beyond SizeBytes");
@@ -474,6 +480,34 @@ namespace Ring.Simulation.Tests
             // the WRONG bit for InventoryOpen; only a raw-byte pin like this
             // one can.
             AssertSingleFlagByte(new SimInput { InventoryOpen = true }, 0b0001_0000, "InventoryOpen -> bit4");
+            // app-88jb Т26: the last three bits of the same byte stop being
+            // spare and start carrying RewindTicks — a 3-bit NUMBER rather
+            // than a flag, which is why each of its three bits is raised
+            // ALONE below (1, 2, 4) instead of a depth being spelled out.
+            // The pin is not decoration: both round-trip tests for the depth
+            // set it while every flag is down, so a writer and a reader that
+            // agree on the WRONG offset — the depth shifted to bit 4 instead
+            // of bit 5, say — survive them both, bit 4 being zero in those
+            // fixtures. Only a raw-byte case can tell the offsets apart, the
+            // same argument this test's own opening paragraph makes for the
+            // flags and Т20 made once more for bit 4.
+            AssertSingleFlagByte(new SimInput { RewindTicks = 1 }, 0b0010_0000, "RewindTicks = 1 -> bit5");
+            AssertSingleFlagByte(new SimInput { RewindTicks = 2 }, 0b0100_0000, "RewindTicks = 2 -> bit6");
+            AssertSingleFlagByte(new SimInput { RewindTicks = 4 }, 0b1000_0000, "RewindTicks = 4 -> bit7");
+            // The fourth case pins SATURATION, not a position — the one branch
+            // of the writer the three cases above cannot reach. A depth wider
+            // than the field is not a wire value at all, and Encode is required
+            // to hand over the maximum rather than mask: 200 is 0b1100_1000, so
+            // `RewindTicks & 0b111` would keep its low three bits and send 0 —
+            // "no rewind", the single answer indistinguishable from an honest
+            // zero. Every other fixture in this file and in ReconcileCodecTests
+            // stays inside 0..6, so without this line that branch has no
+            // witness and a masking writer survives the whole suite. (The arena
+            // cap is a different rule with a different home and its own test in
+            // DeterminismTests; what is pinned here is only the wire's own
+            // three bits.)
+            AssertSingleFlagByte(new SimInput { RewindTicks = 200 }, 0b1110_0000,
+                "RewindTicks = 200 saturates -> bits 5-7 set");
             AssertSingleFlagByte(new SimInput(), 0b0000_0000, "no flags -> zero byte");
         }
 
@@ -527,8 +561,105 @@ namespace Ring.Simulation.Tests
             // payload to grow, so a future editor reaching for "just add one
             // more byte" finds a red test immediately instead of only
             // discovering the constraint two tests away.
+            //
+            // app-88jb Т26 gives the same promise its SECOND reason: the
+            // rewind depth rides in the three spare bits of that same byte 7,
+            // and the whole point of the owner's decision on it is that the
+            // input payload does NOT grow to carry it. A third pin of the
+            // same constant would only be a copy of this one, so the reason
+            // is recorded here instead of in a test of its own.
             Assert.AreEqual(8, InputCodec.SizeBytes,
                 "InventoryOpen must fit inside byte 7's existing flags, not grow the payload");
+        }
+
+        [Test]
+        public void RewindTicks_RoundTripsZeroThroughSix()
+        {
+            // Test 42: all seven legal values travel and arrive intact.
+            SimConfig cfg = ConfigA;
+            System.Span<byte> buf = stackalloc byte[InputCodec.SizeBytes];
+            for (int k = 0; k <= 6; k++)
+            {
+                var input = new SimInput { RewindTicks = (byte)k, AimHeight = cfg.Hero.MuzzleHeight };
+                InputCodec.Encode(in input, in cfg, buf);
+                Assert.IsTrue(InputCodec.TryDecode(buf, in cfg, out SimInput back));
+                Assert.AreEqual((byte)k, back.RewindTicks, $"глубина {k} не пережила провод");
+            }
+        }
+
+        [Test]
+        public void RewindTicksSeven_ReadsAsSix_AndDoesNotThrow()
+        {
+            // Test 43 (Р82): three bits offer eight values and only seven are
+            // legal. The eighth is NOT a wire error — it reads as the cap and
+            // the decoder stays silent.
+            SimConfig cfg = ConfigA;
+            System.Span<byte> buf = stackalloc byte[InputCodec.SizeBytes];
+            var input = new SimInput { AimHeight = cfg.Hero.MuzzleHeight };
+            InputCodec.Encode(in input, in cfg, buf);
+            buf[7] |= 0b1110_0000;                       // all three bits set = 7
+
+            Assert.IsTrue(InputCodec.TryDecode(buf, in cfg, out SimInput back),
+                "декодер бросил на легальном байте");
+            Assert.AreEqual((byte)6, back.RewindTicks, "значение 7 прочитано не как кап");
+        }
+
+        [Test]
+        public void RewindTicks_AndFlags_DoNotPerturbEachOther()
+        {
+            // app-88jb Т26, mirroring InventoryOpenFlag_RoundTrips: the depth
+            // and the five flags share byte 7, so each side needs a witness
+            // that the other one does not eat it. Both round-trip tests above
+            // raise the depth with every flag DOWN, and every flag test in
+            // this file raises flags with the depth at ZERO — neither shape
+            // can see a writer that ORs the depth over the flag nibble or a
+            // reader that masks the flags out of the depth.
+            //
+            // Three cases and not one. The first catches a depth that wipes
+            // the flags, the third catches flags that wipe the depth, and the
+            // second is the premise without which the other two cannot tell
+            // real carriage from "both fields always read back at maximum".
+            var baseline = new SimInput
+            {
+                MoveDir = new float2(0.3f, -0.4f),
+                AimPoint = new float2(11f, -7f),
+                AimHeight = 1.5f
+            };
+
+            SimInput deep = baseline;
+            deep.FireHeld = true; deep.DashRequested = true; deep.AimHeld = true;
+            deep.SlideRequested = true; deep.InventoryOpen = true;
+            deep.RewindTicks = 6;
+            SimInput decodedDeep = RoundTrip(deep, ConfigA);
+            Assert.IsTrue(decodedDeep.FireHeld, "the maximum depth must not perturb FireHeld");
+            Assert.IsTrue(decodedDeep.DashRequested, "the maximum depth must not perturb DashRequested");
+            Assert.IsTrue(decodedDeep.AimHeld, "the maximum depth must not perturb AimHeld");
+            Assert.IsTrue(decodedDeep.SlideRequested, "the maximum depth must not perturb SlideRequested");
+            Assert.IsTrue(decodedDeep.InventoryOpen, "the maximum depth must not perturb InventoryOpen");
+            Assert.AreEqual((byte)6, decodedDeep.RewindTicks,
+                "the maximum legal depth must survive the wire with all five flags raised");
+
+            SimInput shallow = deep;
+            shallow.RewindTicks = 0;
+            SimInput decodedShallow = RoundTrip(shallow, ConfigA);
+            Assert.AreEqual((byte)0, decodedShallow.RewindTicks,
+                "premise: five raised flags must not read back as a nonzero depth");
+            Assert.IsTrue(decodedShallow.FireHeld, "a zero depth must not perturb FireHeld");
+            Assert.IsTrue(decodedShallow.DashRequested, "a zero depth must not perturb DashRequested");
+            Assert.IsTrue(decodedShallow.AimHeld, "a zero depth must not perturb AimHeld");
+            Assert.IsTrue(decodedShallow.SlideRequested, "a zero depth must not perturb SlideRequested");
+            Assert.IsTrue(decodedShallow.InventoryOpen, "a zero depth must not perturb InventoryOpen");
+
+            SimInput bare = baseline;
+            bare.RewindTicks = 6;
+            SimInput decodedBare = RoundTrip(bare, ConfigA);
+            Assert.IsFalse(decodedBare.FireHeld, "the depth must not raise FireHeld");
+            Assert.IsFalse(decodedBare.DashRequested, "the depth must not raise DashRequested");
+            Assert.IsFalse(decodedBare.AimHeld, "the depth must not raise AimHeld");
+            Assert.IsFalse(decodedBare.SlideRequested, "the depth must not raise SlideRequested");
+            Assert.IsFalse(decodedBare.InventoryOpen, "the depth must not raise InventoryOpen");
+            Assert.AreEqual((byte)6, decodedBare.RewindTicks,
+                "the maximum legal depth must survive the wire with every flag down");
         }
 
         static void AssertSingleFlagByte(in SimInput input, byte expected, string what)
@@ -649,10 +780,19 @@ namespace Ring.Simulation.Tests
             // round-trip case in InventoryOpenFlag_RoundTrips below — this
             // sentinel's own job stays narrow (a field was added, not
             // whether the wire carries it).
+            // app-88jb Т26 adds RewindTicks and makes the same decision in the
+            // same place: the rewind depth IS carried, in bits 5-7 of that
+            // same byte 7, with the arena clamp in SimInputSanitizer and the
+            // wire cases in RewindTicks_RoundTripsZeroThroughSix,
+            // RewindTicksSeven_ReadsAsSix_AndDoesNotThrow and
+            // RewindTicks_AndFlags_DoNotPerturbEachOther above. The name is
+            // added here only after those exist, which is the whole point of
+            // this sentinel refusing to be a formality.
             string[] expected =
             {
                 "MoveDir", "AimPoint", "FireHeld", "DashRequested",
-                "AimHeight", "AimHeld", "SlideRequested", "InventoryOpen"
+                "AimHeight", "AimHeld", "SlideRequested", "InventoryOpen",
+                "RewindTicks"
             };
             var actual = new System.Collections.Generic.List<string>();
             foreach (System.Reflection.FieldInfo f in typeof(SimInput).GetFields()) actual.Add(f.Name);

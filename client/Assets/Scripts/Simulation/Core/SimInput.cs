@@ -39,6 +39,48 @@ namespace Ring.Simulation.Core
         /// method's own doc explains why gating there, not only in
         /// LootOps.Validate, matters).
         public bool InventoryOpen;
+
+        /// app-88jb Т26 (spec §3.6/§3.7, owner decision Н4/Р355): how many
+        /// ticks into the past the authoritative server must look at its
+        /// targets before it judges this tick's shot, so that it judges it
+        /// against the picture the shooter was actually looking at. The domain
+        /// is SIMULATION TICKS, and the value is clamped to the arena cap
+        /// (Arena.RewindCapTicks) inside SimInputSanitizer rather than inside
+        /// InputCodec, because the server must clamp a depth that did NOT come
+        /// from a client of ours just as hard as one that did.
+        ///
+        /// WHY IT TRAVELS IN THE INPUT RATHER THAN OFF THE SOCKET. The depth a
+        /// shot needs depends on the connection that fired it, and reading it
+        /// out of socket state would make the evolution of the world a
+        /// function of the network — the one thing CRITICAL RULE 2 forbids.
+        /// Carried inside the input record it is ordinary data, the tick
+        /// consumes it like any other field, and the simulation stays the pure
+        /// (state, input, tick) -> state function. That is the owner's
+        /// standing decision, not a choice this task made; the server-side
+        /// sanity check that compares the claimed depth against a
+        /// round-trip-time estimate lives in Networking/Server and is a
+        /// separate task.
+        ///
+        /// A LEVEL, not an edge — like FireHeld/AimHeld/InventoryOpen and
+        /// unlike the two *Requested latches. SimInputFrame.ForTick spreads
+        /// one frame sample across the sub-ticks of that frame and silences
+        /// the two latches on every sub-tick but the zeroth; the depth must
+        /// NOT be silenced with them, because it describes the state of the
+        /// connection, which is one and the same on every sub-tick of a single
+        /// frame. ForTick needs no line of its own for it: the level behavior
+        /// falls out of the whole-struct copy that method already makes.
+        ///
+        /// A byte and not an int, deliberately: the wire budget for it is
+        /// three bits (InputCodec's byte 7, bits 5-7), the cap it is clamped
+        /// to is six, and an unsigned type makes a negative depth
+        /// unrepresentable instead of merely wrong.
+        ///
+        /// CARRIED IN FULL AS OF Т26. Wire field — InputCodec's bits 5-7 of
+        /// byte 7 (the writer saturates, and the eighth value reads back as
+        /// the wire cap); arena clamp — SimInputSanitizer.Sanitize; the client
+        /// measures it in NetworkSimBackend.MeasureRewindTicks, whose own doc
+        /// carries the two-counter argument for the formula.
+        public byte RewindTicks;
     }
 
     /// Distributes one frame sample over N sub-ticks: held values copy to every

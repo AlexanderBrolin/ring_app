@@ -682,6 +682,31 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Sanitize_ClampsRewindTicksToTheArenaCap()
+        {
+            // app-88jb Т26 (spec §3.6, finding D2-I21). The home of the clamp
+            // is SimInputSanitizer and not the codec: the server has to bring
+            // a rewind depth into the arena's domain even when it did not come
+            // from a client of ours, and 200 is exactly the hostile value the
+            // family of tests around this one exists for — the same subject as
+            // HostileInput_StateStaysFinite_AndDeterministic and as the
+            // AimHeight clamp directly above, whose fixture shape this test
+            // copies deliberately.
+            //
+            // The codec's own reading of an out-of-domain byte is a SEPARATE
+            // contract — three bits offer eight values, the eighth reads as
+            // the cap — and it is pinned where the wire lives, by
+            // InputCodecTests.RewindTicksSeven_ReadsAsSix_AndDoesNotThrow.
+            // Neither pin substitutes for the other: the arena cap never
+            // travels on the wire at all.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            SimInput over = w.SanitizeForTest(new SimInput { RewindTicks = 200 });
+            Assert.AreEqual((byte)cfg.Arena.RewindCapTicks, over.RewindTicks,
+                "глубина не заклампена капом арены");
+        }
+
+        [Test]
         public void Sanitizer_MatchesWorldBehaviour()
         {
             // Stage 2 Task 6 fix-round 1 (I-1, review): the world-vs-seam loop
