@@ -108,12 +108,18 @@ namespace Ring.Simulation.Core
         /// ARE ALIVE, and that set is rebuilt from the restored bodies by
         /// RestoreState -> PositionHistory.RederiveOccupancy.
         ///
-        /// WHAT Т25 STILL OWES is the ring's other half: the ROWS. They are
-        /// not in StateHash and not in WorldSave, so a restore rewinds the
-        /// bodies and leaves the recorded positions of the rolled-back future
-        /// in place. Inert today -- Write and PosAt are stubs, nothing writes
-        /// a row and nothing reads one -- and Т25 is the task whose whole
-        /// subject is putting the history into the hash and into the save.
+        /// THE OTHER HALF -- THE ROWS -- IS PAID (app-88jb Т25). They are folded
+        /// into StateHash and they ride SaveState/RestoreState by deep copy, at
+        /// one canonical position between the container slots and the waves, so
+        /// a restore now rewinds the recorded past along with the bodies
+        /// instead of leaving a rolled-back future standing in the ring.
+        /// ⭐ THE EIGHTH LYING COMMENT, AND IT WAS THIS ONE. Т25's audit listed
+        /// seven doc sites to correct and every one of them was inside
+        /// PositionHistory; this paragraph is the other side of the boundary
+        /// that class's own header states, and the header points straight at
+        /// it. A statement made in two files goes stale in two files -- said
+        /// out loud here because the audit's list was complete for one file and
+        /// incomplete for the claim.
         readonly PositionHistory _history;
         // Scratch buffer for SeparationSystem's per-tick pairwise impulses (Task
         // 20) — preallocated here so the hot path never allocates; recomputed
@@ -573,6 +579,18 @@ namespace Ring.Simulation.Core
             // the Director on this tick, not the next one. See
             // MatchFlowSystem's own doc for the rest of the ordering contract.
             Objectives.MatchFlowSystem.Update(this);
+            // app-88jb Т25 (spec §3.6): the rewind ring records the tick that
+            // just ended, and it is the LAST line of this method rather than
+            // any earlier one. The row for tick T must describe the world as T
+            // LEFT it -- that is what makes PosAt's "k == 0 means the live
+            // positions" true, and it is a real fork rather than a detail: a
+            // write placed before the movement phase would shift every rewound
+            // answer by exactly one tick, and RewindTests'
+            // HistoryRowOfTickT_HoldsThePositionAtTheEndOfTickT is the witness
+            // that would catch it (mutation M32).
+            // `_tick` was incremented at the top of this method, so it already
+            // names the tick being closed.
+            _history.Write(_tick, this);
         }
 
         /// One player's movement sub-step of TickAll (Stage 2 Task 4 — split out of the
@@ -2747,6 +2765,15 @@ namespace Ring.Simulation.Core
                 ContainerCount = _containerCount,
                 Containers = new ContainerState[_containers.Length],
                 ContainerSlots = new byte[_containerSlots.Length],
+                // app-88jb Т25: the rewind ring's own position in this
+                // initializer is HELD, not filled — its two arrays are
+                // allocated and copied by _history.SaveTo below, because their
+                // lengths are the ring's own dimensions and handing those out
+                // would give its shape a second home. Said here rather than
+                // left blank: this initializer is one of the three lists
+                // WorldSave's doc promises can be read side by side, and a
+                // silent gap at a canonical position is exactly what that
+                // promise exists to make impossible.
                 // Wave-cadence-per-zone (bd app-ggvz Т3): one WaveState per
                 // ring, same "fresh array here, filled by Array.Copy below"
                 // contract as Mobs/Projectiles/Pickups above. A plain
@@ -2769,6 +2796,12 @@ namespace Ring.Simulation.Core
             System.Array.Copy(_pickups, save.Pickups, _pickups.Length);
             System.Array.Copy(_containers, save.Containers, _containers.Length);
             System.Array.Copy(_containerSlots, save.ContainerSlots, _containerSlots.Length);
+            // app-88jb Т25 (coordinator RULING 146): both halves of the rewind
+            // ring, deep-copied, at their canonical position between the
+            // container slots and the waves. One call rather than two
+            // Array.Copy lines like the neighbors above, because the ring's
+            // layout stays inside PositionHistory (rule 2).
+            _history.SaveTo(save);
             System.Array.Copy(_waves, save.Waves, _waves.Length);
             // Stage 2 Task 5: Stats mirrors Players' array-copy pattern above.
             System.Array.Copy(_matchStats, save.Stats, _matchStats.Length);
@@ -2865,6 +2898,13 @@ namespace Ring.Simulation.Core
             _containerCount = save.ContainerCount;
             System.Array.Copy(save.Containers, _containers, _containers.Length);
             System.Array.Copy(save.ContainerSlots, _containerSlots, _containerSlots.Length);
+            // app-88jb Т25: the ring's ROWS and STAMPS come back here, at the
+            // same canonical position SaveState wrote them. This is the other
+            // half of the restore RederiveOccupancy above performs — that call
+            // rebuilds WHICH SLOTS ARE TAKEN from the restored bodies, this one
+            // brings back WHAT THOSE SLOTS RECORDED. Neither is derivable from
+            // the other, which is why the ring needed both.
+            _history.RestoreFrom(save);
             // The other half of SaveState's own no-aliasing contract: the
             // live array is FILLED from the save, never replaced by it — a
             // `_waves = save.Waves` would leave the world writing into the
@@ -2993,6 +3033,16 @@ namespace Ring.Simulation.Core
         /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
         internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
 
+        /// Test-only seam (app-88jb Т25): the rewind ring itself, so a test can
+        /// ask what a row holds. Nothing in the world exposes a row otherwise --
+        /// the ring is private state and its first PRODUCTION reader is Т27/Т28 --
+        /// and "observe the write through the outcome of a shot" is that later
+        /// task's test, not this one's. Same shape as GetProjectileForTest
+        /// above, except that PositionHistory is a class, so this hands back
+        /// the live object rather than a copy: a seam that cloned the ring
+        /// would answer questions about a snapshot nobody writes to.
+        internal PositionHistory HistoryForTest => _history;
+
         /// Canonical order (spec §3.3 and, since Stage 3, spec Р294; Task 3 —
         /// split rng into spreadRng/waveRng; Stage 2 Task 10 — multiplayer
         /// reorder, the one sanctioned golden re-pin of the stage-2 network
@@ -3001,7 +3051,18 @@ namespace Ring.Simulation.Core
         /// tick → spreadRng → waveRng → lootRng → nextEntityId → playerCount
         /// → players[0..n) → mobCount+mobs → projectileCount+projectiles
         /// → pickupCount+pickups → containerCount+containers+containerSlots
-        /// → wave → matchState → worldStats → stats[0..n) → inventories[0..n).
+        /// → history → wave → matchState → worldStats → stats[0..n)
+        /// → inventories[0..n).
+        ///
+        /// THE HISTORY STEP (app-88jb Т25, spec §3.6.1, coordinator RULING
+        /// 143) is one call into PositionHistory.Fold, at the position
+        /// WorldSave gives the same state. Its shape lives there rather than
+        /// here because the ring's index arithmetic has exactly one home; what
+        /// belongs in THIS list is only that the step exists and where it sits.
+        /// ⚠ It is the one step whose internal walk is not this method's walk:
+        /// it goes by TICK across the rewind window, oldest to newest, and only
+        /// then by live body. See PositionHistory.Fold's own doc, and
+        /// WorldSave's, which says the same thing from the save's side.
         ///
         /// THE CONTAINERS' STEP WAS RESERVED BY Т6 AND IS FILLED HERE, Т14
         /// (spec Р294). Two walks follow `_containerCount`, both bounded by
@@ -3061,6 +3122,10 @@ namespace Ring.Simulation.Core
                 for (int s = 0; s < _containers[i].SlotCount; s++)
                     h = StateHash64.Add(h, (int)_containerSlots[offset + s]);
             }
+            // The rewind ring (app-88jb Т25) — see this method's own doc for
+            // why the step is a single call and why its walk is the one walk
+            // here that is not shaped like this list.
+            h = _history.Fold(h, this);
             // Wave-cadence-per-zone (bd app-ggvz Т3, spec §3.2): THREE wave
             // states now, one per ring, folded in Zone's own declared order
             // (Outer -> Middle -> Core) at the SAME position in the sequence

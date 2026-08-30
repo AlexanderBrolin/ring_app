@@ -166,15 +166,23 @@ namespace Ring.Simulation.Tests
             // wrong identically twice passes every test that only asks
             // whether two runs match.
             //
-            // AND THE NEIGHBOUR ABOVE CANNOT CARRY THIS WEIGHT, which is why
-            // this is a fifth test rather than two more asserts on the fourth:
-            // in DeadBodysSlot_IsReused_ButNotItsPast exactly ONE mob is alive
-            // when the kill lands, so `_mobs[index] = _mobs[--_mobCount]`
+            // AND THE NEIGHBOR ABOVE CANNOT CARRY THIS WEIGHT, which is why
+            // this is a test of its own rather than two more asserts on
+            // DeadBodysSlot_IsReused_ButNotItsPast: there exactly ONE mob is
+            // alive when the kill lands, so `_mobs[index] = _mobs[--_mobCount]`
             // degenerates into `_mobs[0] = _mobs[0]`. After a self-assignment
             // the slot reads the same before and after the swap, and the two
             // orderings are indistinguishable. It takes a SECOND live body for
             // the readings to differ at all, and that is the whole of what
             // this fixture adds.
+            // ⚠ NEITHER NEIGHBOR IS NAMED BY AN ORDINAL HERE, and that is the
+            // repair rather than a matter of taste (coordinator ruling 149).
+            // This paragraph used to read "a fifth test rather than two more
+            // asserts on the fourth", and both numbers went stale the moment
+            // the fix-round inserted Validate_CapOfZeroTicks_Throws third --
+            // silently, because nothing recomputes prose. A name cannot go
+            // stale when a test is inserted above it, so the ordinal is not
+            // corrected, it is removed.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)),
@@ -253,6 +261,227 @@ namespace Ring.Simulation.Tests
                 "смерть отобрала у сборщика его слот истории");
             Assert.AreNotEqual(collectorSlot, w.Mobs[0].HistorySlot,
                 "слот мёртвого сборщика вернулся в оборот — моб занял его строку");
+        }
+
+        [Test]
+        public void TwoWorldsWithEqualPresentAndDifferentPast_DisagreeOnTheHash()
+        {
+            // ⭐ TEST 38 -- the witness of the CANCELED Н5 (the review's own
+            // counterexample). The present is aligned FIELD BY FIELD; only the
+            // past is left to differ.
+            //
+            // ⚠ `Ai = Idle` BELOW DOES NOT FREEZE THE MOB (ruling 17/104):
+            // UpdateChaser writes Chase over it on the very next tick. It is
+            // harmless here and no real freeze is needed, because this fixture
+            // never reads the mob's present -- it OVERWRITES it, wholesale,
+            // from the other world. What has to differ is the two mobs' PAST,
+            // and a four-meter head start give that whether they walk or
+            // stand: a frozen pair would sit at (2,0) and (6,0) for three ticks
+            // and disagree just as flatly.
+            SimConfig cfg = TestConfigs.Open();
+            var a = new SimulationWorld(7, cfg);
+            var b = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(a, (MobType.Chaser, new float2(6f, 0f)));
+            TestWorlds.SpawnMobsAt(b, (MobType.Chaser, new float2(6f, 0f)));
+            for (int i = 0; i < 2; i++)
+            {
+                var world = i == 0 ? a : b;
+                var m = world.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; world.SetMobForTest(0, m);
+            }
+            // A different past: in `a` the mob spent three ticks somewhere else.
+            var moved = a.Mobs[0]; moved.Pos = new float2(2f, 0f); a.SetMobForTest(0, moved);
+            for (int i = 0; i < 3; i++) { a.Tick(default); b.Tick(default); }
+            // The present is aligned by hand -- the worlds now differ ONLY in the past.
+            var same = b.Mobs[0]; a.SetMobForTest(0, same);
+
+            Assert.AreNotEqual(b.StateHash(), a.StateHash(),
+                "два мира с равным настоящим и разной историей дали ОДИН хеш");
+        }
+
+        [Test]
+        public void HistoryRowOfTickT_HoldsThePositionAtTheEndOfTickT()
+        {
+            // ⭐ TEST 37 -- the moment of the write is a REAL fork (M32): a
+            // write placed BEFORE movement would shift the whole rewind by
+            // exactly one tick, and every other test would stay green.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            var input = new SimInput { MoveDir = new float2(1f, 0f) };
+            w.Tick(input);
+            float2 endOfTick = w.Player.Pos;
+            w.Tick(input);
+
+            // ⚠ THE PLAN'S OWN TEXT CALLS A `PlayerHistorySlotForTest(0)` SEAM
+            // HERE, and this line is the one place these three tests part from
+            // it (coordinator ruling 148). The seam was dropped before it
+            // shipped: PlayerAt is public and PlayerState.HistorySlot is a
+            // public field, so it added no capability, and this very file
+            // already read the slot this way in two older fixtures -- a second
+            // spelling of one path is what rule 2 forbids.
+            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot,
+                w.CurrentTick - 1, w.Player.Pos, out PositionHistory.Record rec));
+            Assert.AreEqual(endOfTick.x, rec.Pos.x, 1e-5f,
+                "запись тика T содержит позицию НАЧАЛА тика, а не конца");
+        }
+
+        [Test]
+        public void SaveAndRestore_ReproduceTheSameRewoundOutcome()
+        {
+            // Test 39: the history is part of the save, and a restore
+            // reproduces the same outcome for a shot with k = 6.
+            // ⚠ THE FIXTURE MOVES -- correction from review round 3 (finding
+            // D-I4). In v2 the ten ticks between SaveState and RestoreState ran
+            // on ZERO input past an Idle mob, so the ring's rows for ticks
+            // 14-20 were bit-for-bit equal to the rows for ticks 4-10: a copy
+            // "by reference" produced the same hash and mutation M34 survived.
+            // Walking the collector makes the past genuinely different.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            var walk = new SimInput { MoveDir = new float2(1f, 0f) };
+            for (int i = 0; i < 10; i++) w.Tick(walk);
+            WorldSave save = w.SaveState();
+            ulong before = w.StateHash();
+
+            for (int i = 0; i < 10; i++) w.Tick(walk);
+            w.RestoreState(save);
+
+            Assert.AreEqual(before, w.StateHash(), "восстановление не вернуло историю");
+        }
+
+        [Test]
+        public void PosAtATickWithNoRow_DegradesToTheCurrentPosition()
+        {
+            // ⭐ THE WITNESS OF THE SECOND LINE OF PosAt's OWN TABLE
+            // (coordinator ruling 145), and that line is a BATTLE branch rather
+            // than a fallback. The row for tick T is written at the END of
+            // TickAll, so a round fired in the weapon phase of tick T finds no
+            // row stamped T and is answered right here -- which is also how the
+            // table's "k == 0 -> live positions" line gets executed, instead of
+            // by a branch of its own.
+            //
+            // TICK 0 IS THE QUESTION, and it is not an arbitrary number.
+            // TickAll increments the counter before it runs, so the first row
+            // the ring is ever handed is tick 1 and no row can ever carry tick
+            // 0 -- this is the "first ticks of the match" case of the table,
+            // stated at the one tick where it is unconditional. It is also the
+            // fixture that discriminates against the sentinel being zero: with
+            // NoTick == 0 a blank row would answer FOR tick 0, hand back a
+            // `default` record and, its Alive bit clear, report a MISS instead.
+            //
+            // Open(), not OpenField(): the collector spawns 159.16 m out on the
+            // ring, so `currentPos` is nowhere near the origin and a blank
+            // record's zero position cannot pass for the right answer. He is far
+            // outside the outer zone boundary, so no Director is born on top of
+            // what this fixture measures (lesson 590).
+            const int neverWrittenTick = 0;
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.Tick(default);
+            w.Tick(default);
+            float2 currentPos = w.Player.Pos;
+
+            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot,
+                neverWrittenTick, currentPos, out PositionHistory.Record rec),
+                "отмотка к тику, строки которого в кольце нет, обязана вырождаться в поведение " +
+                "без отмотки, а не в промах");
+            Assert.AreEqual(currentPos, rec.Pos,
+                "вырожденная ветка вернула не текущую позицию");
+        }
+
+        [Test]
+        public void PosAtATickTheCollectorDidNotSurvive_ReportsAMiss()
+        {
+            // ⭐ THE WITNESS OF THE THIRD LINE OF PosAt's TABLE (ruling 145): a
+            // record that IS there, under a stamp that DOES match, with the
+            // Alive bit clear -- "the target was dead at that moment".
+            //
+            // ⛔ THE POSITIVE ASSERTION COMES FIRST, AND IT IS NOT DECORATION.
+            // A test made of the IsFalse alone would be GREEN on today's stub,
+            // which answers false to every question ever asked -- a guard
+            // pointing the wrong way rather than a witness. The PAIR is what
+            // states the contract: the same slot, inside the same window,
+            // answers differently on two ticks, so the answer is read off the
+            // record and not off the caller.
+            //
+            // BOTH TICKS ARE INSIDE THE WINDOW, one tick apart against a ring
+            // of RewindCapTicks + 1 rows, so neither of them can fall through
+            // to the degenerate branch the test above covers.
+            //
+            // The collector's slot is never returned (PlayerState.HistorySlot's
+            // own doc), so the row he is killed out of stays his: `_players` is
+            // never compacted, the writer keeps walking his body every tick, and
+            // what it records from the kill on is FlagAlive clear -- which is
+            // exactly what the second question reads.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.Tick(default);
+            int aliveTick = w.CurrentTick;
+
+            w.KillPlayerNoDamage(0);
+            w.Tick(default);
+            int deadTick = w.CurrentTick;
+            Assert.IsFalse(w.PlayerAt(0).Alive, "фикстура не убила сборщика");
+
+            int slot = w.PlayerAt(0).HistorySlot;
+            float2 currentPos = w.Player.Pos;
+            Assert.IsTrue(w.HistoryForTest.PosAt(slot, aliveTick, currentPos, out _),
+                "тик, в котором сборщик был жив, обязан отдать историческую запись");
+            Assert.IsFalse(w.HistoryForTest.PosAt(slot, deadTick, currentPos, out _),
+                "тик, в котором сборщик был мёртв, обязан быть промахом");
+        }
+
+        [Test]
+        public void PosAtANegativeTick_DegradesInsteadOfThrowing()
+        {
+            // ⭐ THE WITNESS OF THE GUARD ITSELF (coordinator ruling 152), and
+            // it is a test of its own rather than two more asserts on
+            // PosAtATickWithNoRow_DegradesToTheCurrentPosition because that
+            // fixture cannot reach the guard at all: it asks about tick 0, and
+            // `0 % 7` is 0, a perfectly legal index.
+            // ⚠ NAMED, NOT NUMBERED, and deliberately: ruling 149 struck an
+            // ordinal out of this very file one round ago because a count goes
+            // stale the moment a test is inserted above it. "The thirteenth
+            // test" would have re-introduced the same defect in the same file. The guard only runs on a NEGATIVE tick, so only a
+            // negative tick can observe it -- without this test the line is
+            // production code no mutation could kill, which is exactly the
+            // defect ruling 145 wrote the two fixtures above to avoid.
+            //
+            // ⛔ -1 IS THE TICK THE CONTRACT NAMES. Spec §3.6 gives the
+            // projectile step an explicit `int historyTick` whose `-1` means
+            // "the present", and C# computes `-1 % 7` as -1 rather than 6, so
+            // an index built before the guard reaches into the ring at a
+            // negative offset. The caller is contracted never to send the
+            // sentinel down here -- it branches on it and reads the live body
+            // -- but Р378 ("PosAt NEVER THROWS: this is a combat path") is
+            // unconditional, and an unconditional promise needs a test that
+            // does the thing the contract forbids.
+            //
+            // ⚠ GREEN THE DAY IT IS WRITTEN, and that is stated rather than
+            // hidden: the guard already ships, so this test cannot fail today.
+            // What makes it a witness instead of decoration is mutation M35 --
+            // drop the `tick < 0 ||` clause and the first assertion below turns
+            // red with an IndexOutOfRangeException. Same shape and same
+            // justification as ruling 137, where a test was likewise written
+            // after the code and proved by repeating the mutation.
+            const int SentinelTick = -1;
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.Tick(default);
+            w.Tick(default);
+
+            PositionHistory ring = w.HistoryForTest;
+            int slot = w.PlayerAt(0).HistorySlot;
+            float2 currentPos = w.Player.Pos;
+            PositionHistory.Record rec = default;
+            bool answered = false;
+
+            Assert.DoesNotThrow(() => answered = ring.PosAt(slot, SentinelTick, currentPos, out rec),
+                "PosAt бросила на отрицательном тике — боевой путь обязан отвечать, а не падать");
+            Assert.IsTrue(answered,
+                "тик до начала матча обязан вырождаться в поведение без отмотки, а не в промах");
+            Assert.AreEqual(currentPos, rec.Pos,
+                "вырожденная ветка вернула не текущую позицию");
         }
     }
 }

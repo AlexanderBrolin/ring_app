@@ -52,6 +52,46 @@ namespace Ring.Simulation.Core
         public int ContainerCount;
         public ContainerState[] Containers;
         public byte[] ContainerSlots;
+
+        /// app-88jb Т25 (spec §3.6.1, coordinator RULING 146): the rewind
+        /// ring, BOTH halves of it -- the flat record array and the per-row
+        /// tick stamps -- between the container slots and the waves, the same
+        /// position the fold holds in SimulationWorld.StateHash. Rows without
+        /// stamps would answer historical positions to questions about the
+        /// wrong ticks, so the two travel together or not at all.
+        /// The ring's OCCUPANCY set is deliberately absent: it is an index over
+        /// HistorySlot, which Players/Mobs above already carry, and
+        /// RestoreState re-derives it rather than restoring a second copy of
+        /// one fact (PositionHistory.RederiveOccupancy's own doc).
+        /// ⚠ HISTORY IS THE FIRST ENTRY WHOSE ORDER IN THIS CLASS AND ITS ORDER
+        /// IN THE DIGEST ARE NOT THE SAME WALK, and this class's own contract
+        /// above is why that has to be said out loud rather than left for a
+        /// reader to reconcile. Every other field is folded the way it is
+        /// declared: a count, then its array, front to back. The ring is folded
+        /// BY TICK, oldest to newest across the window, and within a tick by
+        /// the world's live bodies rather than by slot -- so the POSITION of
+        /// this entry matches StateHash, while the shape of the walk inside it
+        /// does not, and only PositionHistory.Fold knows that shape.
+        ///
+        /// ⛔ internal, NOT public, AND THAT IS FORCED RATHER THAN CHOSEN.
+        /// PositionHistory is an internal class, so its nested Record is
+        /// internal in effect; a public field of that type in this public class
+        /// does not compile (CS0053, "inconsistent accessibility"). It costs
+        /// nothing today, and that is measured rather than assumed: `new
+        /// WorldSave` appears exactly ONCE in the whole of client/Assets, in
+        /// SimulationWorld.SaveState, and every other mention is either a
+        /// consumer of what SaveState returned or a comment.
+        /// ⚠ THE DAY AN OUTSIDE BUILDER APPEARS, THIS BECOMES ITS PROBLEM, and
+        /// RestoreState's own cross-checks already anticipate one ("a
+        /// hand-built WorldSave (Networking, Stage 2 Task 7+) could get
+        /// PlayerCount right and still hand in a short Players array"). Such a
+        /// builder would live in another assembly, and Ring.Simulation's single
+        /// InternalsVisibleTo names only Ring.Simulation.Tests -- so it would
+        /// need either a second one or a public surface of its own. That is a
+        /// decision for the task that brings the builder, not a surface to widen
+        /// now for a caller that does not exist.
+        internal PositionHistory.Record[] HistoryRows;
+        internal int[] HistoryRowTicks;
         public WaveState[] Waves;
         /// Stage 3 Т6: the match's flow state (Stage 3 Task 1's struct),
         /// saved right after the wave — one per match, not per player.
