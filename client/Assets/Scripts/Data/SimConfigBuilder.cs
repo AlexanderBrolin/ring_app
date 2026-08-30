@@ -982,6 +982,26 @@ namespace Ring.Data
             // It is a literal here and nowhere else on purpose: a named
             // constant somewhere would be a second home for a number whose
             // only reader is this rule.
+            // ⚠ THE LOWER BOUND IS NOT SYMMETRIC WITH THE UPPER ONE, and the
+            // asymmetry is the point rather than an oversight. Zero here is
+            // not "a very short window": it builds a ring of ONE row and
+            // switches lag compensation off entirely, and the only way to
+            // notice would be a playtest where dodging stops working. That is
+            // the same failure mode -- and the same remedy -- as
+            // Arena.RelaxIterations twenty lines above, whose own doc says
+            // "zero disables the hard body separation silently, so the builder
+            // rejects it (validation, not a clamp)".
+            // RewindPictureTicks below deliberately has NO lower bound,
+            // because zero is meaningful there: no picture time at all, the
+            // whole compensation goes to the projectile (spec §3.6's own
+            // "k = 0 -> both zeros" line). Two fields, two rules, because
+            // zero means two different things.
+            if (cfg.Arena.RewindCapTicks < 1)
+            {
+                errors.Add("Arena.RewindCapTicks must be at least 1 — zero builds a " +
+                    "one-row ring and disables lag compensation silently " +
+                    $"(got {cfg.Arena.RewindCapTicks})");
+            }
             if (cfg.Arena.RewindCapTicks > SimulationWorld.TicksFromSeconds(0.2f))
             {
                 errors.Add("Arena.RewindCapTicks must not exceed " +

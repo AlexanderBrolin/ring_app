@@ -6,24 +6,51 @@ namespace Ring.Simulation.Core
     /// spec §3.6). Capacity is RewindCapTicks + 1 = 7 rows -- the six ticks
     /// a shot may be rewound by, plus the tick being rewound FROM.
     ///
-    /// IT LIVES IN Core, NOT Combat (finding B-M4), for the same reason
-    /// WorldSave does: this is world state that survives a tick and rides
-    /// SaveState/RestoreState. Combat only ASKS it questions.
+    /// IT LIVES IN Core, NOT Combat (finding B-M4), because it is world
+    /// state and not a combat routine: it survives a tick, and the address it
+    /// hands out is carried by MobState/PlayerState and hashed with them.
+    /// Combat only ASKS it questions.
+    /// ⚠ THE ROWS THEMSELVES ARE IN NEITHER StateHash NOR WorldSave yet, and
+    /// the ring does NOT ride SaveState/RestoreState -- SimulationWorld's
+    /// `_history` doc states the same boundary from the other side. What a
+    /// restore does rebuild is the OCCUPANCY (RederiveOccupancy below); the
+    /// recorded positions of a rolled-back future stay standing. Inert while
+    /// Write is a stub, and Т25 is the task that puts the rows into the hash
+    /// and into the save.
     ///
-    /// EACH ROW CARRIES ITS OWN Tick AND ITS OWN POPULATION COUNT (findings
-    /// C2-I4/D2-I5). The population of each tick in the window is different
-    /// -- six ticks is long enough for a wave to spawn and for two bodies to
-    /// die -- so a single shared count would have to be the window's MAXIMUM,
-    /// and the entries past a shorter row's real population are not blank:
-    /// they hold whoever stood there on an older tick. A walk that trusted
-    /// one count would therefore read THE TAIL OF THE PREVIOUS TICK, which is
-    /// the same defect WorldLifecycleTests pins for the backpacks
-    /// (BackpackHash_IgnoresSwapRemoveDebrisPastTheCount) -- there it moved a
-    /// digest, here it would move a hit.
-    /// The per-row Tick is the other half of that: a row is only an answer
-    /// about the tick it was written for, and the first ticks of a match (and
-    /// any body younger than the window) leave rows that belong to no tick at
-    /// all. Without the stamp those rows would answer anyway, with garbage.
+    /// THERE IS NO PER-ROW POPULATION COUNT, AND THE SPEC ASKS FOR ONE.
+    /// Spec §3.6 names a count per row; that sentence describes the scheme
+    /// Р406 CANCELLED, in which a row was a run of live bodies packed back to
+    /// back and its length therefore had to be recorded. With a PERMANENT
+    /// SLOT a row has no live prefix at all: every body writes at its own
+    /// address and is read at its own address. "A walk that trusted one count
+    /// would read the tail of the previous tick" is a sentence about packing,
+    /// and nothing here is packed or walked, so the count has nothing to
+    /// count.
+    /// ⚠ Recorded as a divergence between spec §3.6 and decision Р406, not as
+    /// an omission in this class. Whether §3.6 is amended is the owner's call.
+    ///
+    /// WHAT ANSWERS STALENESS INSTEAD IS TWO MECHANISMS, AND NEITHER IS
+    /// REDUNDANT:
+    ///   * `_rowTick` -- a row answers only about the tick it was written
+    ///     for. Without the stamp the opening ticks of a match, and any body
+    ///     younger than the window, would be answered for anyway out of
+    ///     whatever the ring happened to hold.
+    ///   * `Record.FlagAlive` -- the body at that address was alive that tick.
+    /// ⭐ AND FlagAlive IS ENOUGH ONLY BECAUSE ReturnSlot CLEARS. A slot back
+    /// in circulation would otherwise carry the PREVIOUS tenant's FlagAlive
+    /// under a stamp that is already current, and the new tenant would be
+    /// found standing where the dead body stood. That is the whole reason
+    /// ClearRowsOf exists: a structural necessity, not a tested behavior --
+    /// see ReturnSlot's own note on why no test can observe it yet.
+    ///
+    /// ⚠ NOTHING IN THE ROW HALF OF THIS CLASS HAS A TEST WITNESS TODAY --
+    /// not `Clear`, not `NoTick`, not `_rowTick`, not `ClearRowsOf`. RULING
+    /// 131 exempted `Write` and `PosAt` from needing one; these four were
+    /// never covered by that exemption and are simply unobserved, because the
+    /// only thing that could observe a row is a reader, and the first reader
+    /// is Т27/Т28. Said out loud so the next reader does not mistake the
+    /// silence for coverage.
     ///
     /// PosAt NEVER THROWS: this is a combat path (Р378). Every question it
     /// cannot answer has a DEFINED ANSWER instead -- see its own table. A
@@ -141,11 +168,21 @@ namespace Ring.Simulation.Core
             return false;
         }
 
-        /// Handed out at spawn: THE LOWEST FREE SLOT. Lowest, and not "any
-        /// free one", because the answer has to be a pure function of the
-        /// occupancy set -- see _occupied's own doc. It also happens to keep
-        /// the numbers readable, the ring filling from the bottom rather than
-        /// wandering, but that is a side effect and not the reason.
+        /// Handed out at spawn: THE LOWEST FREE SLOT.
+        ///
+        /// WHAT RULING 133 ACTUALLY REQUIRES is only that the answer be a
+        /// pure function of the occupancy SET -- see _occupied's own doc for
+        /// why, and note that "the highest free slot" would satisfy that
+        /// requirement exactly as well. Lowest is chosen on top of it, for
+        /// two reasons of its own:
+        ///   * the ring fills from the bottom instead of wandering, so the
+        ///     slot a body holds is a small number a debugger or a fixture
+        ///     can be read against;
+        ///   * the collectors, who rent first and never give the slot back,
+        ///     therefore own exactly 0..playerCount-1, and every mob is
+        ///     numbered above them.
+        /// Neither is a side effect: they are the reason this rule and not
+        /// the other equally pure one.
         ///
         /// THROWS WHEN NOTHING IS FREE, and that is a backstop rather than a
         /// path this call takes -- the same shape and the same promise as
@@ -175,21 +212,32 @@ namespace Ring.Simulation.Core
                 "so this means the ring was built from different caps than the world.");
         }
 
-        /// Handed back at death -- for bodies that really leave the world's
-        /// arrays. A collector never gets here (PlayerState.HistorySlot's own
-        /// doc says why).
+        /// Handed back when a body LEAVES THE WORLD'S ARRAYS -- which is
+        /// usually a death (DamageMob) but not only: ClearMobsForTest takes
+        /// mobs off the arena without killing them and returns their slots
+        /// here too, and its own test is named ..._WithoutKillingThem. A
+        /// collector never reaches this method at all (PlayerState.HistorySlot's
+        /// own doc says why).
         public void ReturnSlot(int s)
         {
-            // THE PAST GOES BACK WITH THE SLOT. The next tenant must not be
-            // findable at the dead body's old positions, which is exactly what
-            // DeadBodysSlot_IsReused_ButNotItsPast is named after: the slot
-            // is reused, its history is not. Clearing here rather than at rent
-            // time keeps the invariant "a free slot holds nothing" true at
-            // every moment, instead of only just after a rent.
-            // A no-op today -- Т25 is the first writer, so every row is
-            // already `default` -- and written now anyway, because the rent
-            // side is what this task's tests exercise and a clear bolted on
-            // later would have no witness of its own either.
+            // THE PAST GOES BACK WITH THE SLOT, and this is the mechanism the
+            // class header calls a structural necessity: FlagAlive alone
+            // cannot tell a live tenant from its predecessor, because a row
+            // the current tick did not rewrite still carries the old tenant's
+            // Alive bit under a stamp that has already moved on. Clearing at
+            // RELEASE rather than at rent keeps the invariant "a free slot
+            // holds nothing" true at every instant instead of only just after
+            // a rent, which is what makes the FlagAlive read safe.
+            //
+            // ⚠ NO TEST OBSERVES THIS, and no test can yet. Nothing writes a
+            // row until Т25, so every row is already `default` and deleting
+            // this call would turn nothing red. In particular
+            // DeadBodysSlot_IsReused_ButNotItsPast is NOT the witness its own
+            // name suggests: its only past-tense assertion reads MobState.Pos,
+            // which SpawnMob assigns directly and which this call has no hand
+            // in. Written now regardless, because the invariant above has to
+            // hold before the first row is ever written, and a clear bolted on
+            // afterwards would be a fix for a bug that had already shipped.
             ClearRowsOf(s);
             _occupied[s] = false;
         }
@@ -231,10 +279,14 @@ namespace Ring.Simulation.Core
         /// the ring's own restore, and it arrives with Т25, the task that puts
         /// the rows into the save; today every row is `default`, because
         /// nothing writes one yet.
-        /// The slots it reads are NOT range-checked, the same contract
-        /// SimulationWorld.PlayerAt states for its own index: they are numbers
-        /// this ring itself issued through RentSlot and the save carried back
-        /// unchanged, never a value from a wire or a hand-built fixture.
+        /// The slots it reads are NOT range-checked. That is a contract this
+        /// doc states here, not one borrowed from a neighbour: they are
+        /// numbers this ring itself issued through RentSlot and the save
+        /// carried back unchanged, never a value off a wire. A hand-built
+        /// MobState/PlayerState pushed through a *ForTest seam breaks the
+        /// contract -- it carries HistorySlot 0, or whatever a reflective
+        /// sweep last wrote -- and that whole class of fixture is tracked as
+        /// app-41wd rather than guarded here.
         public void RederiveOccupancy(SimulationWorld w)
         {
             System.Array.Clear(_occupied, 0, _occupied.Length);

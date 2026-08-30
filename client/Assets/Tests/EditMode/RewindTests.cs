@@ -33,12 +33,62 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_CapOfZeroTicks_Throws()
+        {
+            // Fix-round (review M-10), and it overturns an earlier ruling of
+            // this task: rule 12 shipped with an upper bound only, on the
+            // grounds that a lower one had not been asked for. The convention
+            // had asked for it. Zero passes `0 <= 6` cheerfully, builds a ring
+            // of ONE row and switches lag compensation off ENTIRELY -- the
+            // failure is silent, and the only place it would ever surface is a
+            // playtest where dodging quietly stops mattering.
+            // The precedent is Arena.RelaxIterations in the same validator,
+            // whose own doc settles the shape: "zero disables the hard body
+            // separation silently, so the builder rejects it (validation, not
+            // a clamp)". Same reasoning, same remedy, one field over.
+            // ⚠ Arena.RewindPictureTicks gets NO such rule, and that asymmetry
+            // is deliberate: zero there is a meaningful setting -- no picture
+            // time, the whole compensation goes to the projectile.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            a.RewindCapTicks = 0;
+            // The picture half goes to zero WITH it, and not as decoration:
+            // left at its default 3 it would violate the "picture <= cap" rule
+            // as well, the builder would report two things at once, and the
+            // assertion below would no longer be able to say WHICH rule
+            // refused. Zero is a legal value for this field, so the fixture
+            // stays on one rule without stepping outside the domain.
+            a.RewindPictureTicks = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Arena.RewindCapTicks"));
+            Assert.That(ex.Message, Does.Not.Contain("Arena.RewindPictureTicks"),
+                "правило нижней границы обязано быть единственным нарушением этой фикстуры");
+        }
+
+        [Test]
         public void HistorySlot_SurvivesASwapRemoveOfANeighbor()
         {
             // ⭐ TEST 33 -- the witness of Р406. A mob dies in the MIDDLE of
             // the window, and the SURVIVOR's history must not shift: over six
             // ticks one array index has time to be three different mobs, a
             // slot does not.
+            //
+            // ⚠ THE TRAILING ASSERTION ALONE DOES NOT WITNESS THAT (fix-round,
+            // review I-7). "The survivor's slot is unchanged after the swap"
+            // is a statement about C# copying a value type: it holds for every
+            // field of MobState, and it holds even under the design Р406
+            // rejects, where the address is just the spawn-order index -- there
+            // the survivor would carry 1 before the swap and 1 after it, and
+            // the assert would pass while the address meant the wrong body.
+            //
+            // WHAT DISCRIMINATES IS THE PAIR BELOW, taken BEFORE the kill.
+            // Slots come from ONE allocator shared with the collectors, who
+            // rent first and never give a slot back, so every mob is numbered
+            // ABOVE them and no mob's address can coincide with its own place
+            // in `_mobs`. Under "address = array index" the first mob would
+            // carry 0 -- its own index, and the collector's slot -- and the
+            // second assertion fails on the spot. That is the claim Р406 is
+            // about, and it is the one the original form was missing.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)),
@@ -49,6 +99,15 @@ namespace Ring.Simulation.Tests
             }
             int survivorId = w.Mobs[1].Id;
             int survivorSlot = w.Mobs[1].HistorySlot;
+
+            Assert.AreNotEqual(w.Mobs[0].HistorySlot, survivorSlot,
+                "два живых моба получили один адрес истории");
+            for (int i = 0; i < 2; i++)
+            {
+                Assert.AreNotEqual(i, w.Mobs[i].HistorySlot,
+                    $"адрес истории моба {i} совпал с его индексом в массиве — это и есть " +
+                    "схема, отвергнутая Р406");
+            }
 
             // Kill the FIRST one: the swap with the tail moves the survivor
             // into slot 0.
@@ -143,6 +202,57 @@ namespace Ring.Simulation.Tests
                 "два живых тела делят один слот истории");
             Assert.AreEqual(deadSlot, w.Mobs[1].HistorySlot,
                 "слот покойника не переиспользован — новый жилец взял чужой номер");
+            // A SECOND INVARIANT, NOT A RESTATEMENT OF THE FIRST. The three
+            // asserts above are about MOBS sharing a row with each other; this
+            // one is about a mob sharing one with the COLLECTOR, and nothing
+            // else in the tree reads PlayerState.HistorySlot by value at all.
+            // What it guards is a plausible tidy-up rather than a typo: adding
+            // `_history.ReturnSlot(p.HistorySlot)` to KillPlayer "for
+            // consistency with DamageMob" kills no other test, and its
+            // consequence is that a dead collector frees slot 0, the next
+            // SpawnMob rents it, and a live mob addresses the collector's row.
+            // The collector's slot is issued once and never returned precisely
+            // because `_players` is never compacted -- see PlayerState.HistorySlot.
+            Assert.AreNotEqual(w.PlayerAt(0).HistorySlot, w.Mobs[1].HistorySlot,
+                "моб делит слот истории со сборщиком");
+        }
+
+        [Test]
+        public void DeadCollectorsSlot_IsNotReissued()
+        {
+            // Fix-round (review I-5), and the assertion above is NOT this
+            // test. That one says a mob must not be handed the slot of a LIVE
+            // collector, and it is satisfied by any allocator that keeps the
+            // two populations apart at all. This one is about the one rule
+            // that has no other guard in the tree: the collector's slot is
+            // rented once and NEVER RETURNED, not even when he dies.
+            //
+            // MEASURED, NOT ASSUMED: writing `_history.ReturnSlot(p.HistorySlot)`
+            // into KillPlayer "for consistency with DamageMob" leaves every
+            // other test in this file green -- including the live-collector
+            // assertion in the test above, because that fixture never kills
+            // anybody's collector. So the mutant needs a fixture in which one
+            // actually dies.
+            //
+            // AND A DEAD COLLECTOR IS STILL A BODY THE RING WRITES A ROW FOR.
+            // `_players` is never compacted -- KillPlayer clears Alive and
+            // leaves the body in place -- so from Т25 the writer walks him
+            // every tick to record FlagAlive = 0. A mob handed his address
+            // would share that row and the two would overwrite each other,
+            // which is why "he is dead, the slot is free" is exactly the
+            // wrong inference.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            int collectorSlot = w.PlayerAt(0).HistorySlot;
+
+            w.KillPlayerNoDamage(0);
+            Assert.IsFalse(w.PlayerAt(0).Alive, "фикстура не убила сборщика");
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+
+            Assert.AreEqual(collectorSlot, w.PlayerAt(0).HistorySlot,
+                "смерть отобрала у сборщика его слот истории");
+            Assert.AreNotEqual(collectorSlot, w.Mobs[0].HistorySlot,
+                "слот мёртвого сборщика вернулся в оборот — моб занял его строку");
         }
     }
 }

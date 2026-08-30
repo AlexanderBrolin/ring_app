@@ -319,10 +319,16 @@ namespace Ring.Simulation.Tests
                 // app-88jb Т24 (spec §3.6): the rewind slot is an ADDRESS,
                 // not a magnitude -- there is no "too large" value of it to
                 // clamp towards, only a valid one and an invalid one, and
-                // validity is owned by PositionHistory's free list rather
-                // than by a balance number. ApplyConfig leaves it alone on
-                // purpose: a hot-tweak changes numbers, and the ring is sized
-                // from caps ArenaTopologyMatches refuses to hot-tweak at all.
+                // validity is owned by PositionHistory's occupancy set rather
+                // than by a balance number. (RULING 133 replaced the free list
+                // this comment first named with that set, in the same commit
+                // that wrote the comment -- PositionHistory now says "THE
+                // ALLOCATOR IS A SET, NOT A LIST" in as many words.)
+                // ApplyConfig leaves the field alone on purpose: a hot-tweak
+                // changes numbers, and every cap the ring is sized from is one
+                // ArenaTopologyMatches refuses to hot-tweak at all --
+                // Arena.RewindCapTicks included, see
+                // HotTweak_RewindCapChange_Throws.
                 // Same form and same reasoning as the two entries above.
                 ["HistorySlot"] = float.PositiveInfinity,
             };
@@ -523,6 +529,32 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(3, c);
             var next = c;
             next.Arena.MaxMobs = c.Arena.MaxMobs + 1;
+            Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
+        }
+
+        [Test]
+        public void HotTweak_RewindCapChange_Throws()
+        {
+            // app-88jb Т24 fix-round (review I-4): RULING 134 put
+            // Arena.RewindCapTicks into ArenaTopologyMatches, and it was the
+            // ONE member of that comparator with no named witness — twenty-four
+            // others have one, so deleting the line passed all 1709 tests.
+            //
+            // WHAT THE MUTANT COSTS IS NOT COSMETIC, which is why the line is
+            // worth a test of its own. PositionHistory's rows are sized to
+            // RewindCapTicks + 1 in the world's constructor and are never
+            // resized. Let a hot-tweak of 6 -> 10 through and the config claims
+            // a ten-tick window while the ring still holds seven; from Т27/Т28
+            // every shot rewound deeper than the seventh tick reads a row
+            // belonging to another tick, and reads it SILENTLY — no throw, no
+            // counter, just hits landing where nobody stood.
+            // Same shape as the entity caps above, and for the same reason:
+            // the field sizes an array at construction, so the only correct
+            // answer to a change is a restart.
+            var c = TestConfigs.Default();
+            var w = new SimulationWorld(3, c);
+            var next = c;
+            next.Arena.RewindCapTicks = c.Arena.RewindCapTicks + 1;
             Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(next));
         }
 

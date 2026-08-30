@@ -646,9 +646,11 @@ namespace Ring.Simulation.Core
         /// topology — radius, obstacle count/positions/radii, wall count/endpoints/
         /// half-width, player cap, spawn ring fraction, the three per-match
         /// entity caps, (Stage 3 Task 4, owner decision R-19) the backpack's
-        /// two capacity numbers, and (Stage 3 Task 13, spec §3.7 Р264) the
-        /// item catalog itself (see ArenaTopologyMatches below for the full
-        /// field list) — must stay identical: a change there invalidates
+        /// two capacity numbers, (Stage 3 Task 13, spec §3.7 Р264) the
+        /// item catalog itself and (app-88jb Т24, RULING 134) the rewind
+        /// window Arena.RewindCapTicks, which sizes PositionHistory's rows at
+        /// construction (see ArenaTopologyMatches below for the full field
+        /// list) — must stay identical: a change there invalidates
         /// collision/spawn geometry or array sizing that isn't reconciled here,
         /// so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
@@ -675,7 +677,8 @@ namespace Ring.Simulation.Core
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
                     "changed (radius/obstacles/walls/player cap/spawn ring/entity caps/backpack " +
-                    "capacity/item catalog) — restart the world instead of hot-tweaking it.");
+                    "capacity/item catalog/rewind window) — restart the world instead of " +
+                    "hot-tweaking it.");
             }
 
             _config = next;
@@ -3136,12 +3139,19 @@ namespace Ring.Simulation.Core
             // ⚠ THE "LAST" HALF OF THAT CLAIM IS NO LONGER TRUE, and Т24 is
             // where it stopped being: PlayerState.HistorySlot is declared
             // after this pair and folded after it too, so the pair now closes
-            // nothing. What still holds -- and is the reason the wording is
-            // corrected rather than deleted -- is the RULE both placements
-            // follow: the fold mirrors the struct, and the collector's rewind
-            // slot is last in one because it is last in the other. (In HashMob
-            // the mob's pair does still close the fold: its HistorySlot went
-            // in beside SpawnZone, ahead of the tilt.)
+            // nothing.
+            // ⛔ AND THE CORRECTION MUST NOT BE "the fold mirrors the struct".
+            // RULING 129 examined that rule and rejected it, because this very
+            // method disproves it: SlideSpeedPenalty is declared 26th and
+            // folded 14th, DashSpeedCur 15th and 13th, and HashMob folds
+            // SpawnZone third out of a tenth-place declaration. The rule these
+            // helpers actually follow is that A FIELD IS FOLDED BESIDE WHAT IT
+            // QUALIFIES -- SpawnZone beside Type, SlideSpeedPenalty beside the
+            // dash speed it taxes. HistorySlot happens to be last in both the
+            // struct and the fold, and that is a coincidence of one field, not
+            // a law to derive the next placement from. (In HashMob the tilt
+            // pair does still close the fold: that HistorySlot went in beside
+            // SpawnZone, ahead of the tilt.)
             // Both are live
             // per-tick state that survives across ticks (TiltSystem's collector
             // pass integrates them, DamagePlayer adds into TiltVel), so a

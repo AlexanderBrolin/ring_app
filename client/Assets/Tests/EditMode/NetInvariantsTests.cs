@@ -77,6 +77,31 @@ namespace Ring.Simulation.Tests
             NetConfig net = DefaultNet();
             SimConfig sim = TestConfigs.Default();
             net.InterpBufferTicks = 0;
+            // TWO NUMBERS MOVE HERE BECAUSE TWO NUMBERS ARE NOW TIED, and that
+            // is a consequence of invariant #11 rather than a workaround for
+            // it. `AssertOnly` demands EXACTLY ONE violation, which is the
+            // whole point of it (lesson 129: "some error came back" would pass
+            // for a validator that reported the wrong rule). This fixture used
+            // to isolate #1 by moving one field, and it isolated it only for
+            // as long as `InterpBufferTicks` was tied to fields nobody read
+            // back — #3 and #4 state THEMSELVES against it, so they move with
+            // it and stay satisfied. app-88jb Т24 tied a SIMULATION field to
+            // it as well (#11: the server must rewind to the tick the client
+            // draws), and a simulation field does not follow along on its own:
+            // left at 3 against a buffer of 0 it reports a second, entirely
+            // TRUE violation.
+            // Suppressing #11 for this fixture was the wrong repair and was
+            // rejected: this validator's contract is to collect EVERY
+            // violation, pinned by EveryViolationIsReported_NotJustTheFirst
+            // below. So the fixture states the whole configuration it means --
+            // a client that does not interpolate is a server that does not
+            // rewind -- and #1 is again the only thing wrong with it.
+            // Zero is legal for RewindPictureTicks on both sides of that
+            // sentence: #11 is the only rule in this file that reads the
+            // field, and the builder's rule 12 bounds it from above only (and
+            // is not on this path at all -- a hand-built SimConfig never
+            // passes through SimConfigBuilder).
+            sim.Arena.RewindPictureTicks = 0;
 
             AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.InterpBufferTicks");
@@ -394,6 +419,103 @@ namespace Ring.Simulation.Tests
 
             CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "one tick is a legal, if extreme, fade duration — the rule is > 0");
+        }
+
+        [Test]
+        public void RewindPictureTicksDisagreesWithInterpBuffer_IsReported()
+        {
+            // Invariant #11 (app-88jb Т24 fix-round; spec §3.6, Н24/Р407).
+            // The server rewinds Arena.RewindPictureTicks to ask "where was
+            // the target"; the client draws Net.InterpBufferTicks behind the
+            // newest frame. Drift between them is not a rounding error — it is
+            // |difference| ticks of systematic uncompensated lag on every
+            // shot, i.e. exactly the defect lag compensation exists to remove,
+            // put back by configuration.
+            //
+            // THE SIMULATION SIDE IS THE ONE BROKEN HERE, deliberately.
+            // Raising Net.InterpBufferTicks instead would trip #3 and #4 as
+            // well (GhostConfirmTicks and LingerTicks are both stated against
+            // it), and AssertOnly demands exactly one violation — so a
+            // fixture that broke the network side would be testing three rules
+            // at once and pinning none of them. RewindPictureTicks appears in
+            // no other rule, so moving it isolates this one.
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            sim.Arena.RewindPictureTicks = net.InterpBufferTicks + 1;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Arena.RewindPictureTicks");
+        }
+
+        [Test]
+        public void RewindPictureTicksEqualToInterpBuffer_IsLegal()
+        {
+            // Positive witness (lesson 129), and it carries a claim the blanket
+            // AllInvariantsHold test above does not: that the two SHIPPED
+            // numbers actually agree. They live in different assets by design
+            // (Р52 keeps NetConfig out of SimConfig), so nothing but this
+            // invariant makes them equal, and nothing but this line notices
+            // the day one of them is retuned alone.
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+
+            Assert.AreEqual(net.InterpBufferTicks, sim.Arena.RewindPictureTicks,
+                "премиса: ArenaConfig и NetConfig приехали с разными числами — " +
+                "инвариант #11 обязан их связывать, а фикстура обязана его удовлетворять");
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "the shipped pair must satisfy #11: " + string.Join(" | ",
+                    NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
+        }
+
+        [Test]
+        public void RewindPictureTicksAndInterpBuffer_MayMoveTogether()
+        {
+            // #11 PINS AN EQUALITY, NOT THE NUMBER 3, and this is the only
+            // test that says so. The one above it stands on the SHIPPED pair,
+            // where both fields happen to be 3 — so it is satisfied by a rule
+            // written `RewindPictureTicks != 3`, or `!= InterpBufferTicks &&
+            // != 3`, or any other form that pins the current value instead of
+            // the relationship. This fixture moves the pair OFF that value and
+            // still demands silence, so a rule pinning a constant fails here
+            // and only here.
+            //
+            // THE SCENARIO IS THE ONE THE RULE'S OWN COMMENT NAMES: raising
+            // the interpolation buffer 3 -> 5. That is a legitimate retune —
+            // a lossier network wants a deeper buffer — and the whole point of
+            // #11 is that it must drag the server's rewind depth along with
+            // it, not forbid the move.
+            //
+            // THE TWO NEIGHBOURS ARE MOVED TO THEIR OWN BOUNDARY VALUES, and
+            // stated as RELATIONSHIPS rather than as numbers (this file's own
+            // header asks for exactly that). GhostConfirmTicks would in fact
+            // have survived untouched — its default 12 already exceeds 5 — but
+            // a fixture that leaned on that would break the day an unrelated
+            // default moves, and would then look like a failure of #11.
+            //   #1  InterpBufferTicks > 0                  -> 5
+            //   #3  GhostConfirmTicks > InterpBufferTicks  -> 6, first legal
+            //   #4  LingerTicks >= InterpBufferTicks + 2   -> 7, first legal
+            //   #11 RewindPictureTicks == InterpBufferTicks -> 5
+            // Nothing else in this validator reads any of the four (checked
+            // rule by rule), and nothing caps the pair from above at all: the
+            // only ceiling on InterpBufferTicks anywhere is a [Range] on the
+            // asset, which Р115 records as an Inspector hint enforced nowhere.
+            // Five is chosen to stay inside it regardless, so the fixture
+            // describes a configuration an operator could really dial in.
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            Assert.AreNotEqual(5, net.InterpBufferTicks,
+                "премиса: фикстура обязана уводить пару С дефолта, иначе она " +
+                "повторяет тест выше и мутанта на константу не различает");
+
+            net.InterpBufferTicks = 5;
+            sim.Arena.RewindPictureTicks = net.InterpBufferTicks;
+            net.GhostConfirmTicks = net.InterpBufferTicks + 1;
+            sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;
+
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "пара уехала вместе и осталась законной — #11 обязан пинить равенство, " +
+                "а не значение: " + string.Join(" | ",
+                    NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
         }
     }
 }

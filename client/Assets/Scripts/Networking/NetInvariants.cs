@@ -361,6 +361,41 @@ namespace Ring.Networking
                     + $"MatchMaxDurationSeconds={net.MatchMaxDurationSeconds}).");
             }
 
+            // #11 (app-88jb Т24 fix-round; spec §3.6, decision Н24/Р407). THE
+            // PICTURE THE SERVER PAYS FOR MUST BE THE PICTURE THE CLIENT DREW.
+            // `Arena.RewindPictureTicks` is how far back the server rewinds
+            // the world to answer "where was the target"; `InterpBufferTicks`
+            // is how far behind the newest frame the client actually renders.
+            // Let them drift and the server answers for a tick the client
+            // never showed, leaving |difference| ticks of systematic
+            // uncompensated lag on every shot — the exact error lag
+            // compensation exists to remove, reintroduced by configuration.
+            //
+            // THE SCENARIO IS REACHABLE, not theoretical: raising
+            // Net.InterpBufferTicks 3 -> 5 passes #1, #3 and #4 as soon as
+            // GhostConfirmTicks and Visibility.LingerTicks are raised with it,
+            // and nothing then ties Arena.RewindPictureTicks to the new value.
+            //
+            // IT IS NOT A DUPLICATED NUMBER (Р52). The two live in
+            // deliberately separate homes — NetConfig never enters SimConfig
+            // or SimConfigHash, because the simulation may not read a network
+            // knob and stay a pure function (CRITICAL RULE 2) — and this class
+            // exists precisely to state the rules that span two legitimate
+            // homes. Same shape as #4 above, which ties Visibility.LingerTicks
+            // to the same client-side number.
+            //
+            // The subject is the SIMULATION field, so the message opens with
+            // it: the balance asset is what an operator retunes, and the
+            // network buffer is the fixed side of the equation.
+            if (sim.Arena.RewindPictureTicks != net.InterpBufferTicks)
+            {
+                errors.Add("Arena.RewindPictureTicks must equal Net.InterpBufferTicks — the "
+                    + "server rewinds to the tick the client is drawing, and a mismatch is "
+                    + "systematic uncompensated lag on every shot (got "
+                    + $"RewindPictureTicks={sim.Arena.RewindPictureTicks}, "
+                    + $"InterpBufferTicks={net.InterpBufferTicks}).");
+            }
+
             return errors.ToArray();
         }
     }

@@ -146,8 +146,9 @@ namespace Ring.Simulation.Tests
         /// TWO CLAIMS, NOT ONE (bd app-fi3f, owner decision R-209, form
         /// R-210). This sweep used to demand bit equality of all 32 fields
         /// against the world, which is a claim `PlayerPrediction.Step` cannot
-        /// satisfy for the TEN the SERVER owns (nine until app-88jb Т7 added
-        /// `Tilt`): Step does not write them and
+        /// satisfy for the ELEVEN the SERVER owns (nine when R-209 landed, ten
+        /// from app-88jb Т7's `Tilt`, eleven from Т24's `HistorySlot`): Step
+        /// does not write them and
         /// the world does, so the two are equal only while nothing has moved
         /// them — i.e. only in a vacuum. Every scenario in this file happened
         /// to be one, so the false claim never failed; the first non-vacuum
@@ -159,9 +160,18 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 34 (32 until app-88jb Т7 declared
-        /// `Tilt`/`TiltVel`); nothing is skipped (there is no skip-list
-        /// anywhere in this suite, and this is not the place to start one).
+        /// The sweep still visits all 36; nothing is skipped (there is no
+        /// skip-list anywhere in this suite, and this is not the place to
+        /// start one).
+        /// ⚠ THE NUMBER IS RE-READ FROM `typeof(PlayerState).GetFields()`,
+        /// NEVER INCREMENTED FROM THE ONE ABOVE IT, and app-88jb Т24's
+        /// fix-round is where that stopped being a formality: this line said
+        /// 34 and had been wrong since Т22, which declared `SlideSpeedPenalty`
+        /// and left every count in this file untouched. Т24 then added
+        /// `HistorySlot`. 32 -> 34 (Т7's `Tilt`/`TiltVel`) -> 35 (Т22) -> 36
+        /// (Т24). The same miss, on the same field, is what RULING 125 had to
+        /// correct in `WorldLifecycleTests`' receipt; naming it here is how the
+        /// next reader stops inheriting it.
         ///
         /// Bitwise, not `==`. `==` on float calls NaN equal to nothing (two
         /// identically-NaN fields would read as a MISMATCH) and calls `-0f`
@@ -850,9 +860,11 @@ namespace Ring.Simulation.Tests
         /// WorldLifecycleTests' own header records that its PendingHashFields
         /// were TEMPORARY, carried a named addressee, and were removed by
         /// Т10/Т13. A skip-list here would be the first one in the project and
-        /// would say "we do not look at these ten fields" — while the honest
+        /// would say "we do not look at these eleven fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 34.
+        /// not have touched them. So the sweep still visits all 36 (see
+        /// `AssertPlayerStateBitEqual`'s own note on where both numbers come
+        /// from and why neither is ever incremented from memory).
         ///
         /// THE SHAPE IS HotTweakTests'. That file already sweeps these same
         /// fields with a per-field expectation map and a hard failure for any
@@ -985,16 +997,36 @@ namespace Ring.Simulation.Tests
                 // its own, this line moves to Mixed and this comment is where
                 // that gets written down.
                 ["Tilt"] = PredictionRole.Server,
-                // app-88jb Т24 (spec §3.6): the rewind slot. Server, and not
-                // by elimination -- PlayerPrediction.Step never names the
-                // field, and its only writer in the whole tree is the world's
-                // own constructor, which the client does not run. The value
-                // does reach the client, inside ReconcileData's wholesale copy
-                // of PlayerState, and that is exactly why it needs a line
-                // here rather than none: a field that arrives on the wire and
-                // is never written by prediction is the definition of Server
-                // (CRITICAL RULE 3), and leaving it unclassified would let a
-                // future Step start writing it with nothing to object.
+                // app-88jb Т24 (spec §3.6): the rewind slot. Server, and the
+                // claim rests on ONE fact only -- `PlayerPrediction.Step` does
+                // not mention the field, at all, anywhere. That is what the
+                // role means (CRITICAL RULE 3: "prediction did not move it"),
+                // and it is the whole of the evidence.
+                //
+                // ⚠ IT IS NOT "there is only one writer". The fix-round of Т24
+                // struck that sentence out of this comment, because it was
+                // false when written. Counted by reading the bodies rather
+                // than assumed: ONE writer decides the value --
+                // SimulationWorld's constructor, `HistorySlot =
+                // _history.RentSlot()` -- and FIVE more carry a whole
+                // PlayerState through, value and all: ApplyConfig's migration
+                // loop (`_players[i] = p`), RestoreState's
+                // `Array.Copy(save.Players, ...)`, both `SetPlayerForTest`
+                // overloads, and on the CLIENT
+                // `PlayerPredictionCore.BeginReconcile`, which assigns
+                // `_predicted = authoritativeState` straight off the wire.
+                // Six paths, and the classification survives every one of them
+                // precisely because none of them is Step: a field can have any
+                // number of copiers and still be Server, while a single line
+                // inside Step would end the role no matter how few writers
+                // there were.
+                //
+                // The value does reach the client, inside ReconcileData's
+                // wholesale copy of PlayerState (see PlayerState.HistorySlot's
+                // own doc for what that costs and why it is accepted), and
+                // that is exactly why the field needs a line here rather than
+                // none: leaving it unclassified would let a future Step start
+                // writing it with nothing to object.
                 ["HistorySlot"] = PredictionRole.Server,
             };
 
@@ -1002,11 +1034,12 @@ namespace Ring.Simulation.Tests
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 34 fields, which is a claim about ten of them that
+            // of ALL 36 fields, which is a claim about ELEVEN of them that
             // PlayerPrediction.Step could never satisfy — it does not write
-            // them, and the world does. (Nine until app-88jb Т7, whose
-            // PlayerState.Tilt is the tenth: TiltSystem's collector pass steps
-            // it every tick and Step never touches it.) Every scenario in this file is green
+            // them, and the world does. (Nine when R-209 landed; app-88jb Т7's
+            // PlayerState.Tilt was the tenth, stepped every tick by
+            // TiltSystem's collector pass; Т24's HistorySlot is the eleventh,
+            // written once by the world's constructor.) Every scenario in this file is green
             // on that claim for one reason only, and it is a fixture accident:
             // none of them ever stands anywhere the world would move a
             // server-owned field. The moment one does — Т38's own lag rig
@@ -1074,7 +1107,7 @@ namespace Ring.Simulation.Tests
 
             // --- the three premises, without which the sweep above is theatre
 
-            // 1. The scenario really is non-vacuum. Without this the ten
+            // 1. The scenario really is non-vacuum. Without this the eleven
             //    server-field assertions would be comparing zero to zero and
             //    would pass on a build where prediction DID move them.
             Assert.IsTrue(sawServerFieldMove,

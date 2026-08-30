@@ -172,7 +172,7 @@ namespace Ring.Simulation.Core
 
         /// app-88jb Т24 (spec §3.6, decisions Р406/Н6): this collector's row
         /// in PositionHistory. Collectors are rewound on exactly the same
-        /// terms as mobs (Н6/Р358) -- a round fired at a dodging player is
+        /// terms as mobs (Н6/Р358) -- a round fired at a dodging collector is
         /// the case the whole mechanism exists for -- so the address has to
         /// live in the state the victim is looked up through, same as
         /// MobState.HistorySlot.
@@ -284,9 +284,10 @@ namespace Ring.Simulation.Core
         /// AN ARRAY INDEX CANNOT BE THIS ADDRESS, which is the whole reason
         /// the field exists (findings A-C2/B/C-C2/D-C2). A mob is removed by
         /// swapping the tail into its place -- `_mobs[index] = _mobs[--_mobCount]`,
-        /// SimulationWorld.cs:1867 -- so across the six ticks of the rewind
-        /// window one index can have been three different mobs, and a shot
-        /// rewound against the index would ask where the WRONG body stood.
+        /// the last statement of DamageMob's death branch -- so across the six
+        /// ticks of the rewind window one index can have been three different
+        /// mobs, and a shot rewound against the index would ask where the
+        /// WRONG body stood.
         /// The slot rides INSIDE the struct through that very swap, which is
         /// also why it is stored here rather than in a side table: a hash
         /// table keyed by Id was rejected (Р406) because one table cannot
