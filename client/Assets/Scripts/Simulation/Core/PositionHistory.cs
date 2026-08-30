@@ -3,8 +3,15 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Core
 {
     /// Ring of per-body positions over the rewind window (app-88jb Т24,
-    /// spec §3.6). Capacity is RewindCapTicks + 1 = 7 rows -- the six ticks
-    /// a shot may be rewound by, plus the tick being rewound FROM.
+    /// spec §3.6). Capacity is RewindCapTicks + 1 = 7 rows.
+    /// ⚠ THE `+ 1` IS THE WIDTH OF THE CLOSED WINDOW, NOT A ROW FOR "THE TICK
+    /// BEING REWOUND FROM" (review finding A-4). Т24 wrote the second reading
+    /// and Т25 made it false: PosAt's own table says the row for tick T does
+    /// not exist while T is still running, because Write closes the tick. What
+    /// 7 counts is DISTINCT TICK NUMBERS -- `T-6 … T`, the six a shot may be
+    /// rewound by plus the one it is fired on -- and that span is exactly what
+    /// Fold walks once Write has closed T. Both statements cannot be true of a
+    /// ROW; both are true of a tick NUMBER, which is what the ring is keyed by.
     ///
     /// IT LIVES IN Core, NOT Combat (finding B-M4), because it is world
     /// state and not a combat routine: it survives a tick, and the address it
@@ -52,24 +59,61 @@ namespace Ring.Simulation.Core
     /// ClearRowsOf exists: a structural necessity, not a tested behavior --
     /// see ReturnSlot's own note on why no test can observe it yet.
     ///
-    /// WHAT THE ROW HALF IS WITNESSED BY, AND WHAT IT STILL IS NOT. Т25 gave
-    /// `Write`, `PosAt` and the fold their witnesses, and RULING 131's
-    /// exemption is spent: `HistoryRowOfTickT_HoldsThePositionAtTheEndOfTickT`
-    /// pins the moment of the write, the two `PosAtATick...` fixtures pin the
-    /// degenerate and the miss branch, and
-    /// `TwoWorldsWithEqualPresentAndDifferentPast_DisagreeOnTheHash` pins the
-    /// fold. `NoTick` is witnessed too, though indirectly and worth saying so:
-    /// the degenerate fixture asks about TICK 0, which no row can ever carry,
-    /// so a sentinel of zero would make a blank row answer for it.
-    /// ⚠ STILL UNOBSERVED: `Clear` and `ClearRowsOf`. No test kills a body and
-    /// then reads the row its slot is handed on to, which is the only question
-    /// either of them answers -- see ReturnSlot's own note, which now states
-    /// the REASON that is left rather than the one Т24 had.
+    /// WHAT THE ROW HALF IS WITNESSED BY, AS OF THE Т25 FIX-ROUND. RULING 131's
+    /// exemption is spent, and this list is an INVENTORY OF TODAY'S SUITE
+    /// rather than a promise that anything not named is covered -- the closed
+    /// form it used to have was itself a review finding (B-2), because a
+    /// reader planning Т27's tests would have read the silence as coverage.
+    ///   * the moment of the write -- HistoryRowOfTickT_HoldsThePositionAtTheEndOfTickT
+    ///   * the degenerate and the miss branch -- the two PosAtATick... fixtures
+    ///   * the negative-tick guard -- PosAtANegativeTick_DegradesInsteadOfThrowing
+    ///   * the fold, and the flag byte inside it --
+    ///     TwoWorldsWithEqualPresentAndDifferentPast_DisagreeOnTheHash and
+    ///     TwoWorldsDifferingOnlyInARecordedFlag_DisagreeOnTheHash
+    ///   * the flag axis itself (RULING 153) --
+    ///     HistoryRow_CarriesTheSlideAndInvulnerabilityOfTheTickItRecords and
+    ///     HistoryRowOfAMob_ReportsItAliveAtItsOwnSlot
+    ///   * `Clear`'s STAMP LOOP and the choice of `NoTick` -- the degenerate
+    ///     fixture asks about TICK 0, so a sentinel of zero would let a blank
+    ///     row answer for it and the question would come back a miss.
+    /// ⚠ STILL UNOBSERVED, AND NAMED RATHER THAN LEFT OUT: `ClearRowsOf`, and
+    /// the row-blanking and occupancy halves of `Clear` (both duplicate the
+    /// state a fresh array is already in, so nothing can tell them from the
+    /// constructor). No test kills a body and then reads the row its slot is
+    /// handed on to, which is the only question `ClearRowsOf` answers -- see
+    /// ReturnSlot's own note.
+    /// ⚠ AND THE PARAGRAPH THIS REPLACES CONTRADICTED ITSELF INSIDE FOUR LINES:
+    /// it called `NoTick` witnessed while calling `Clear` unobserved, when the
+    /// only operator that ever writes `NoTick` is Clear's own stamp loop.
     ///
-    /// PosAt NEVER THROWS: this is a combat path (Р378). Every question it
-    /// cannot answer has a DEFINED ANSWER instead -- see its own table. A
-    /// throw here would turn a body the server merely has no history for into
-    /// a dropped tick for everyone in the match.
+    /// PosAt NEVER THROWS ON A TICK: this is a combat path (Р378). Every
+    /// question about a tick that it cannot answer has a DEFINED ANSWER
+    /// instead -- see its own table, and the guard RULING 147 put in front of
+    /// the indexing. A throw here would turn a body the server merely has no
+    /// history for into a dropped tick for everyone in the match.
+    ///
+    /// ⛔ THE OTHER HALF OF THE ADDRESS IS NOT PROMISED FOR, AND THE PROMISE
+    /// USED TO READ AS IF IT WERE (coordinator RULING 154, review finding
+    /// A-1). `slot` is NOT range-checked, and on a matched stamp -- that is,
+    /// on the ordinary rewound question -- it goes straight into the ring.
+    /// A slot outside the arena's population has TWO failure modes, and the
+    /// quiet one is the worse:
+    ///   * it lands inside `_rows` anyway (a slot `d` past the end reads row
+    ///     `t+1`, slot `d`) and the call returns TRUE with ANOTHER BODY'S
+    ///     RECORD -- a plausible position under a raised FlagAlive, with
+    ///     nothing to tell the caller it was answered about the wrong body;
+    ///   * or it lands outside and throws, against the sentence above.
+    /// ⇒ This is a CONTRACT, not a guard, and the neighbor it copies is
+    /// RederiveOccupancy, which states the same one: slots are numbers this
+    /// ring itself issued through RentSlot and the save carried back
+    /// unchanged, never a value off a wire. A hand-built MobState/PlayerState
+    /// pushed through a *ForTest seam breaks it, and that whole class of
+    /// fixture is tracked as `app-41wd` rather than guarded here. Т25 is the
+    /// task that made the sentence above capable of being false -- until it,
+    /// the body was `record = default; return false;` and could neither throw
+    /// nor lie -- so it is the task that has to say so.
+    /// ⚠ `app-41wd`'s own description covers only the THROW; the silent-wrong-
+    /// record branch is new, and the task is extended by it.
     internal sealed class PositionHistory
     {
         /// "This row belongs to no tick." Zero cannot serve as the sentinel:
@@ -78,6 +122,13 @@ namespace Ring.Simulation.Core
         /// raid. int.MinValue is unreachable for a tick counter that starts
         /// at 0 and only ever increments.
         const int NoTick = int.MinValue;
+
+        /// "No row corresponds to this tick." Companion to NoTick, and it says
+        /// the same thing one level down: NoTick marks a ROW that belongs to no
+        /// tick, NoRow marks a TICK that can have no row. Both readers below
+        /// need the second, because a tick before the match began indexes
+        /// nothing at all.
+        const int NoRow = -1;
 
         // The ring's two dimensions, read by every index computation below:
         // row `t` occupies [(t % _capacityTicks) * _maxBodies + slot].
@@ -223,8 +274,9 @@ namespace Ring.Simulation.Core
         /// produced it, and a guard would be an unreachable branch.
         public void Write(int tick, SimulationWorld w)
         {
-            int row = (tick % _capacityTicks) * _maxBodies;
-            _rowTick[tick % _capacityTicks] = tick;
+            int rowIndex = RowIndex(tick);
+            int row = RowBase(rowIndex);
+            _rowTick[rowIndex] = tick;
             int playerCount = w.PlayerCount;
             for (int i = 0; i < playerCount; i++)
             {
@@ -289,12 +341,13 @@ namespace Ring.Simulation.Core
         /// the live positions -- which is what that line of the table promises.
         public bool PosAt(int slot, int tick, float2 currentPos, out Record record)
         {
-            if (tick < 0 || _rowTick[tick % _capacityTicks] != tick)
+            int rowIndex = tick < 0 ? NoRow : RowIndex(tick);
+            if (rowIndex == NoRow || _rowTick[rowIndex] != tick)
             {
                 record = new Record(currentPos, FlagAlive);
                 return true;
             }
-            record = _rows[(tick % _capacityTicks) * _maxBodies + slot];
+            record = _rows[RowBase(rowIndex) + slot];
             return (record.Flags & FlagAlive) != 0;
         }
 
@@ -311,13 +364,28 @@ namespace Ring.Simulation.Core
         /// WHAT IS FOLDED PER TICK IS `n`, THE NUMBER OF RECORDS THAT TICK
         /// CONTRIBUTES -- zero when the ring holds no row for it, PlayerCount +
         /// MobCount when it does -- and then, only if n > 0, the records
-        /// themselves in the world's own canonical order. StateHash's own doc
-        /// gives the reason a length goes in first: "a length is state in its
-        /// own right, and folding it in first makes two different-length worlds
-        /// distinguishable even when their common prefix matches". Here it is
-        /// not a constant: "the row for tick 5 is missing and the one for tick 6
-        /// is full" and the opposite arrangement produce streams of equal length
-        /// that differ only in content.
+        /// themselves in the world's own canonical order.
+        ///
+        /// ⛔ THE STEP IS KEPT BECAUSE Р409 SPELLS THE FORM OUT, NOT BECAUSE IT
+        /// DISCRIMINATES, and the honest version of that is worth more than the
+        /// argument that stood here (review finding A-3). The argument claimed
+        /// an unreachable configuration -- "the row for tick 5 is missing and
+        /// the one for tick 6 is full". Rows are written EVERY tick from the
+        /// first, and the stamp is compared for exact equality, so presence is
+        /// MONOTONE across the window: a tick is present exactly when
+        /// `1 <= t <= _tick` and `t > _tick - capacity`. That makes presence a
+        /// pure function of `_tick` -- which StateHash folds as its FIRST step,
+        /// before this one runs. By the Р114 test the ruling itself invokes to
+        /// reject the stamp, the discriminating power of THE WHOLE `n` STEP is
+        /// therefore zero, not merely the difference between folding an int and
+        /// folding a bool.
+        /// ⇒ Two consequences, both stated rather than left for the next
+        /// reader. The step costs `capacity` folds per digest and buys nothing
+        /// measurable; and a mutation that replaces it with anything of equal
+        /// arity survives the suite by construction, so no test here can be
+        /// pointed at as its witness. It stays because the plan's form is not
+        /// this task's to rewrite, and StateHash's own "a length goes in first"
+        /// convention reads consistently with it.
         /// ⚠ NEITHER THE STAMP NOR THE OCCUPANCY COUNT IS FOLDED, and the
         /// precedent is Р114/Т16, recorded in StateHash's own doc: the separate
         /// `statsCount` step was REMOVED because `_matchStats.Length` equals
@@ -343,11 +411,18 @@ namespace Ring.Simulation.Core
         /// of the tick. On tick 3 the window runs from -3, and those four steps
         /// fold a zero each without touching the ring: a tick from before the
         /// match contributed no records, and that is the honest number.
-        /// ⚠ THIS IS ALSO WHY THE FOLD CANNOT THROW ON A BAD SLOT. Rows are
-        /// only indexed for ticks the ring actually wrote, and a world that
-        /// never ticked wrote none -- so the reflective sweeps that push a
-        /// nonsense HistorySlot through a *ForTest seam and then hash never
-        /// reach a row at all.
+        /// ⚠ WHAT THE FIXED WIDTH DOES AND DOES NOT BUY IN SAFETY (review
+        /// finding A-2/B-6, which caught this claim promising more than it
+        /// proves). It buys ONE case: rows are indexed only for ticks the ring
+        /// actually wrote, so a world that has NEVER TICKED reaches no row at
+        /// all, and the reflective sweeps that push a nonsense HistorySlot
+        /// through a *ForTest seam and then hash are safe for that reason and
+        /// no other. It does NOT buy the general case: a world that HAS ticked
+        /// and then receives a body with a slot outside the population will
+        /// index with it, exactly as PosAt would, and StateHash is called once
+        /// per tick on the dev path. That is the same `app-41wd` exposure the
+        /// class header states for PosAt, in the other reader, and it is a
+        /// contract rather than a guard for the same reasons.
         ///
         /// COST IS BOUNDED BY POPULATION, NOT BY CAPACITY (RULING 144).
         /// Walking every slot of every row would be capacity * _maxBodies
@@ -361,12 +436,13 @@ namespace Ring.Simulation.Core
             int playerCount = w.PlayerCount, mobCount = w.MobCount;
             for (int t = tick - (_capacityTicks - 1); t <= tick; t++)
             {
-                bool present = t >= 0 && _rowTick[t % _capacityTicks] == t;
+                int rowIndex = t < 0 ? NoRow : RowIndex(t);
+                bool present = rowIndex != NoRow && _rowTick[rowIndex] == t;
                 int n = present ? playerCount + mobCount : 0;
                 h = StateHash64.Add(h, n);
                 if (n == 0) continue;
 
-                int row = (t % _capacityTicks) * _maxBodies;
+                int row = RowBase(rowIndex);
                 for (int i = 0; i < playerCount; i++)
                     h = FoldRecord(h, in _rows[row + w.PlayerAt(i).HistorySlot]);
                 for (int i = 0; i < mobCount; i++)
@@ -580,9 +656,33 @@ namespace Ring.Simulation.Core
             for (int i = 0; i < w.MobCount; i++) _occupied[w.Mobs[i].HistorySlot] = true;
         }
 
+        /// THE RING'S TWO INDEX FORMULAS, EACH WRITTEN ONCE (coordinator RULING
+        /// 156, review finding A-7). Before the fix-round the layout arithmetic
+        /// stood spelled out in three methods and the wrap was computed twice in
+        /// a row inside PosAt. The layer was never wrong -- the review's own
+        /// answer to "is there a second home" was no, and neither formula ever
+        /// left this class -- but three spellings of one formula INSIDE one
+        /// class is the same defect rulings 7, 16 and 121 closed BETWEEN
+        /// classes, and it is cheaper to close than to keep in step.
+        ///
+        /// SPLIT IN TWO RATHER THAN ONE, and that is a deliberate refinement of
+        /// the ruling's own wording. A single `RowBase(int tick)` cannot serve
+        /// both readers without computing the wrap twice -- `_rowTick` is keyed
+        /// by the row INDEX and `_rows` by the row BASE -- so removing the
+        /// double modulo, which the same ruling asks for, needs the index to be
+        /// nameable on its own. Each formula still has exactly one home.
+        ///
+        /// NEITHER TAKES A NEGATIVE TICK. Both readers resolve that case into
+        /// NoRow before calling, at their own moment and for their own stated
+        /// reason, so a third check in here would be a branch neither of them
+        /// could reach. ClearRowsOf below walks rows by index directly and
+        /// needs no wrap at all: it visits every row of one slot.
+        int RowIndex(int tick) => tick % _capacityTicks;
+        int RowBase(int rowIndex) => rowIndex * _maxBodies;
+
         void ClearRowsOf(int slot)
         {
-            for (int t = 0; t < _capacityTicks; t++) _rows[t * _maxBodies + slot] = default;
+            for (int t = 0; t < _capacityTicks; t++) _rows[RowBase(t) + slot] = default;
         }
     }
 }

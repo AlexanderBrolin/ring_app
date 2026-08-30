@@ -73,13 +73,20 @@ namespace Ring.Simulation.Core
         /// this entry matches StateHash, while the shape of the walk inside it
         /// does not, and only PositionHistory.Fold knows that shape.
         ///
-        /// ⛔ internal, NOT public, AND THAT IS FORCED RATHER THAN CHOSEN.
-        /// PositionHistory is an internal class, so its nested Record is
-        /// internal in effect; a public field of that type in this public class
-        /// does not compile (CS0053, "inconsistent accessibility"). It costs
-        /// nothing today, and that is measured rather than assumed: `new
-        /// WorldSave` appears exactly ONCE in the whole of client/Assets, in
-        /// SimulationWorld.SaveState, and every other mention is either a
+        /// ⛔ internal, NOT public. The COMPILER leaves no choice at this line
+        /// -- PositionHistory is an internal class, so its nested Record is
+        /// internal in effect, and a public field of that type in this public
+        /// class does not compile (CS0053, "inconsistent accessibility") -- but
+        /// calling that "forced rather than chosen" would hide where the choice
+        /// actually was (review finding A-6). It was made in Т24, by nesting
+        /// Record inside an internal class, at a moment when nothing outside
+        /// the ring held one; this task is the first to pay for it, and it pays
+        /// only in accessibility. The alternatives were never weighed here and
+        /// are not being weighed here: lifting Record out of PositionHistory,
+        /// or making the class public, are both changes to Т24's design.
+        /// It costs nothing today, and that is measured rather than assumed:
+        /// `new WorldSave` appears exactly ONCE in the whole of client/Assets,
+        /// in SimulationWorld.SaveState, and every other mention is either a
         /// consumer of what SaveState returned or a comment.
         /// ⚠ THE DAY AN OUTSIDE BUILDER APPEARS, THIS BECOMES ITS PROBLEM, and
         /// RestoreState's own cross-checks already anticipate one ("a

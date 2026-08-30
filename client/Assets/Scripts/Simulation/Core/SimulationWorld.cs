@@ -3041,6 +3041,21 @@ namespace Ring.Simulation.Core
         /// above, except that PositionHistory is a class, so this hands back
         /// the live object rather than a copy: a seam that cloned the ring
         /// would answer questions about a snapshot nobody writes to.
+        ///
+        /// ⚠ AND IT HANDS BACK THE WHOLE OBJECT, MUTABLE (review finding A-5).
+        /// Through this one property a fixture can reach Clear, Write, RentSlot
+        /// and RestoreFrom on the live world's own ring, none of which any test
+        /// has business calling. That width is real and is named here rather
+        /// than left to be discovered.
+        /// ⇒ It is not narrowed, and the reason is a precedent from this same
+        /// task: a read-only forwarder would be a SECOND SPELLING of PosAt on
+        /// the world, and RULING 148 removed the other seam of this task for
+        /// exactly that (`PlayerHistorySlotForTest` duplicated
+        /// `PlayerAt(i).HistorySlot`). Trading one duplication for another is
+        /// not a fix. What guards the width is the same thing that guards every
+        /// other `*ForTest` seam here: they are internal, the test assembly is
+        /// the only one that sees them, and misuse is a review finding rather
+        /// than a compile error.
         internal PositionHistory HistoryForTest => _history;
 
         /// Canonical order (spec §3.3 and, since Stage 3, spec Р294; Task 3 —

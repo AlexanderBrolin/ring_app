@@ -327,8 +327,20 @@ namespace Ring.Simulation.Tests
         [Test]
         public void SaveAndRestore_ReproduceTheSameRewoundOutcome()
         {
-            // Test 39: the history is part of the save, and a restore
-            // reproduces the same outcome for a shot with k = 6.
+            // Test 39: the history is part of the save, and a restore brings
+            // it back.
+            // ⚠ NEITHER THIS TEST NOR ITS NAME INVOLVES A SHOT (review finding
+            // B-3). The line here used to promise "the same outcome for a shot
+            // with k = 6", copied verbatim from a plan edition whose version of
+            // this test called PosAt; the body fires nothing, rewinds nothing
+            // and asserts on one digest. It is a witness of the SAVE, and of
+            // the deep copy inside it (mutation M34) -- not of a rewound
+            // outcome, which is Т27/Т28's test to write.
+            // ⛔ AND IT IS NOT A WITNESS OF THE FOLD EITHER: remove the fold
+            // step from StateHash and both digests collapse to equal, so this
+            // assertion passes trivially. TwoWorlds... above is the fold's
+            // witness. The NAME still over-promises; renaming it is not this
+            // round's call and is recorded for the coordinator.
             // ⚠ THE FIXTURE MOVES -- correction from review round 3 (finding
             // D-I4). In v2 the ten ticks between SaveState and RestoreState ran
             // on ZERO input past an Idle mob, so the ring's rows for ticks
@@ -387,6 +399,21 @@ namespace Ring.Simulation.Tests
                 "без отмотки, а не в промах");
             Assert.AreEqual(currentPos, rec.Pos,
                 "вырожденная ветка вернула не текущую позицию");
+            // ⭐ THE FLAG HALF OF THE DEGENERATE RECORD (coordinator RULING
+            // 153). The branch returns `true` BEFORE the flags are ever read,
+            // so nothing above can tell FlagAlive from a zero byte -- these two
+            // assertions are the whole of its witness, and without them the
+            // `FlagAlive` in `new Record(currentPos, FlagAlive)` is production
+            // code no mutation could kill.
+            Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagAlive,
+                "вырожденная ветка отдала запись без бита жизни — вызывающий прочтёт её как труп");
+            // AND THE OTHER TWO BITS MUST BE CLEAR, which is a contract rather
+            // than an accident (ruling 145): the signature takes a position and
+            // not a body, so this branch does not KNOW whether the target is
+            // sliding or invulnerable, and a raised bit here would be an
+            // invention. The caller reads both off the live body instead.
+            Assert.AreEqual(0, rec.Flags & (PositionHistory.FlagSliding | PositionHistory.FlagInvulnerable),
+                "вырожденная ветка соврала про подкат или неуязвимость — она их не знает");
         }
 
         [Test]
@@ -397,12 +424,16 @@ namespace Ring.Simulation.Tests
             // Alive bit clear -- "the target was dead at that moment".
             //
             // ⛔ THE POSITIVE ASSERTION COMES FIRST, AND IT IS NOT DECORATION.
-            // A test made of the IsFalse alone would be GREEN on today's stub,
-            // which answers false to every question ever asked -- a guard
-            // pointing the wrong way rather than a witness. The PAIR is what
-            // states the contract: the same slot, inside the same window,
-            // answers differently on two ticks, so the answer is read off the
-            // record and not off the caller.
+            // ⚠ "Today's stub" is what this paragraph used to say, and the stub
+            // was deleted by the very commit that made the test pass (review
+            // finding B-4). The reasoning survives the stub, restated for the
+            // tree as it is: a test made of the IsFalse alone would have been
+            // green against the Т24 body -- `record = default; return false;`
+            // -- which answered false to every question ever asked, so it would
+            // have been a guard pointing the wrong way rather than a witness.
+            // The PAIR is what states the contract, and it still does: the same
+            // slot, inside the same window, answers differently on two ticks,
+            // so the answer is read off the record and not off the caller.
             //
             // BOTH TICKS ARE INSIDE THE WINDOW, one tick apart against a ring
             // of RewindCapTicks + 1 rows, so neither of them can fall through
@@ -438,14 +469,16 @@ namespace Ring.Simulation.Tests
             // it is a test of its own rather than two more asserts on
             // PosAtATickWithNoRow_DegradesToTheCurrentPosition because that
             // fixture cannot reach the guard at all: it asks about tick 0, and
-            // `0 % 7` is 0, a perfectly legal index.
+            // `0 % 7` is 0, a perfectly legal index. The guard only runs on a
+            // NEGATIVE tick, so only a negative tick can observe it -- without
+            // this test the line is production code no mutation could kill,
+            // which is exactly the defect ruling 145 wrote the two fixtures
+            // above to avoid.
+            //
             // ⚠ NAMED, NOT NUMBERED, and deliberately: ruling 149 struck an
             // ordinal out of this very file one round ago because a count goes
             // stale the moment a test is inserted above it. "The thirteenth
-            // test" would have re-introduced the same defect in the same file. The guard only runs on a NEGATIVE tick, so only a
-            // negative tick can observe it -- without this test the line is
-            // production code no mutation could kill, which is exactly the
-            // defect ruling 145 wrote the two fixtures above to avoid.
+            // test" would have re-introduced the same defect in the same file.
             //
             // ⛔ -1 IS THE TICK THE CONTRACT NAMES. Spec §3.6 gives the
             // projectile step an explicit `int historyTick` whose `-1` means
@@ -482,6 +515,128 @@ namespace Ring.Simulation.Tests
                 "тик до начала матча обязан вырождаться в поведение без отмотки, а не в промах");
             Assert.AreEqual(currentPos, rec.Pos,
                 "вырожденная ветка вернула не текущую позицию");
+        }
+
+        [Test]
+        public void HistoryRow_CarriesTheSlideAndInvulnerabilityOfTheTickItRecords()
+        {
+            // ⭐⭐ THE WITNESS OF THE FLAG AXIS (coordinator RULING 153, review
+            // finding B-1, and it is the axis the field exists for at all).
+            // Until this fixture no test in the tree asserted on Record.Flags
+            // even once, and no fixture here ever slid or dashed -- input was
+            // `default` or a walk -- so both bit lines were production code
+            // nothing could kill. Spec §4.3 had ALREADY named the witness
+            // (its entry 35 is the Sliding bit); ruling 145 pulled its
+            // neighbors 34 and 36 forward and left 35 behind.
+            //
+            // WHAT IT COSTS TO BE WRONG, from spec finding C-I5 read backwards:
+            // a collector who was mid-slide `k` ticks ago is tested against a
+            // STANDING profile, so a round that visibly went over his head
+            // lands; and DashIframes is 0.2 s, which is EXACTLY the six-tick
+            // rewind cap, so a whole dodge fits inside the deepest rewind and a
+            // lost invulnerability bit awards a hit the victim had already
+            // earned away.
+            //
+            // ⛔ THE TIMERS ARE SET DIRECTLY, NOT DRIVEN THROUGH INPUT, and that
+            // is the safer of the two. A real slide is gated on a run-up and a
+            // real dash on stamina and cooldown, so an input-driven fixture that
+            // silently failed its gate would assert on a collector who never
+            // slid -- a green test witnessing nothing, which is the exact defect
+            // class this test exists to close. Setting the timer is the tree's
+            // own convention for the same reason (PlayerState.SlideTimer's doc
+            // counts seventeen fixtures doing it), and the two sanity
+            // assertions below make the fixture prove it worked before the
+            // record is asked anything.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            PlayerState p = w.Player;
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            p.SlideDir = new float2(1f, 0f);
+            p.IframeTimer = cfg.Hero.DashIframes;
+            w.SetPlayerForTest(0, p);
+
+            w.Tick(default);
+
+            Assert.Greater(w.Player.SlideTimer, 0f, "фикстура не подкатывается — тест ничего не меряет");
+            Assert.Greater(w.Player.IframeTimer, 0f, "фикстура не неуязвима — тест ничего не меряет");
+
+            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot, w.CurrentTick,
+                w.Player.Pos, out PositionHistory.Record rec),
+                "строка только что закрытого тика обязана существовать");
+            Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagSliding,
+                "подкат не записан в строку — отмотанный выстрел проверит подкатывающегося по стоячему профилю");
+            Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagInvulnerable,
+                "неуязвимость не записана в строку — отмотанный выстрел засчитает попадание по уклонившемуся");
+        }
+
+        [Test]
+        public void HistoryRowOfAMob_ReportsItAliveAtItsOwnSlot()
+        {
+            // ⭐ THE ONLY FIXTURE THAT ASKS PosAt ABOUT A MOB (RULING 153).
+            // Every other call in this file passes the COLLECTOR's slot, so the
+            // mob arm of Write -- the `FlagAlive` it hands every body in
+            // `_mobs` -- had no witness at all. Its failure mode is not subtle:
+            // with the bit gone PosAt reports a miss for every mob in every past
+            // tick, and PvE lag compensation is silently dead while every other
+            // test in the suite stays green.
+            //
+            // ⚠ `currentPos` IS A PLACE THE MOB HAS NEVER BEEN, deliberately. If
+            // the row were missing, the degenerate branch would answer `true`
+            // with whatever was passed in, and a fixture that passed the mob's
+            // real position could not tell that apart from a correct read. The
+            // sentinel makes the two answers differ by tens of meters.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            var m = w.Mobs[0]; m.Hp = 1e6f; w.SetMobForTest(0, m);
+            int mobSlot = w.Mobs[0].HistorySlot;
+
+            w.Tick(default);
+
+            Assert.AreNotEqual(w.PlayerAt(0).HistorySlot, mobSlot,
+                "фикстура спрашивает слот сборщика, а не моба — тест не про ту ветку");
+            var neverVisited = new float2(-500f, -500f);
+            Assert.IsTrue(w.HistoryForTest.PosAt(mobSlot, w.CurrentTick, neverVisited,
+                out PositionHistory.Record rec),
+                "строка моба отвечает промахом — PvE-отмотка мертва по построению");
+            Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagAlive,
+                "у моба не записан бит жизни");
+            Assert.AreEqual(w.Mobs[0].Pos.x, rec.Pos.x, 1e-5f,
+                "вместо строки моба вернулась вырожденная запись");
+        }
+
+        [Test]
+        public void TwoWorldsDifferingOnlyInARecordedFlag_DisagreeOnTheHash()
+        {
+            // ⭐ THE WITNESS OF THE FLAG BYTE INSIDE THE FOLD (RULING 153).
+            // TwoWorldsWithEqualPresentAndDifferentPast above pins the fold as a
+            // whole, but it differs in POSITIONS: drop the Flags step from
+            // FoldRecord and it stays green. This fixture differs in NOTHING BUT
+            // one recorded bit.
+            //
+            // HOW THE PRESENT IS KEPT IDENTICAL: invulnerability is the one of
+            // the three bits that moves no body. The collector of `a` carries
+            // i-frames through the recorded tick and `b`'s does not, so the two
+            // rows differ by exactly one byte while the two positions are equal;
+            // then the present is aligned field by field, exactly as the older
+            // fixture does it, which also erases the IframeTimer difference from
+            // HashPlayer. What is left to tell the two digests apart is the flag
+            // byte of one historical record, and nothing else.
+            SimConfig cfg = TestConfigs.Open();
+            var a = new SimulationWorld(7, cfg);
+            var b = new SimulationWorld(7, cfg);
+            PlayerState dodging = a.Player;
+            dodging.IframeTimer = cfg.Hero.DashIframes;
+            a.SetPlayerForTest(0, dodging);
+
+            a.Tick(default);
+            b.Tick(default);
+            Assert.AreEqual(b.Player.Pos, a.Player.Pos,
+                "неуязвимость сдвинула тело — фикстура различает не только флаг");
+            a.SetPlayerForTest(0, b.Player);
+
+            Assert.AreNotEqual(b.StateHash(), a.StateHash(),
+                "флаги записи не входят в хеш — два мира с разным прошлым подката дали ОДИН хеш");
         }
     }
 }
