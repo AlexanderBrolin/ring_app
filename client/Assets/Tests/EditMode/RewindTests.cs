@@ -638,5 +638,458 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(b.StateHash(), a.StateHash(),
                 "флаги записи не входят в хеш — два мира с разным прошлым подката дали ОДИН хеш");
         }
+
+        [Test]
+        public void ShotWithInputLag_IsBornAtTheMuzzle_AndCatchesUp()
+        {
+            // ⭐ THE POSITION AXIS OF THE CATCH-UP (app-88jb Т27, spec §3.6).
+            // The input half of the rewind depth moves the round FORWARD from
+            // the muzzle; it never births it in the past. The witness is a pair
+            // of worlds on ONE seed whose only difference is the depth the
+            // shooter's own input claims -- the spread is drawn from the same
+            // stream at the same point in both, so the two muzzle angles are
+            // equal and only the crank can separate the two positions.
+            //
+            // THE SECOND ASSERTION IS A SENTINEL FOR A CANCELED DESIGN (Р381,
+            // and spec §3.6 carries the account of what that edition got
+            // wrong): it had the round born at tick T - k and fast-forwarded,
+            // i.e. starting BEHIND the shooter. Anything that brings it back
+            // leaves the lagging round SHORT of the still one, which is what
+            // this line refuses.
+            //
+            // OpenField(), not Open(): Open() spawns the collector 159 m out on
+            // the ring, so an aim point at (30, 0) lies in -X from him and both
+            // assertions below -- written for +X -- would be red against
+            // CORRECT code. OpenField puts him at the origin and drops the zone
+            // boundaries with it, so no Director is born on top of what this
+            // fixture measures (lesson 590).
+            SimConfig cfg = TestConfigs.OpenField();
+            var slow = new SimulationWorld(7, cfg);
+            var fast = new SimulationWorld(7, cfg);
+            var noLag = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight, RewindTicks = 0 };
+            // Two ticks past the picture depth, so the picture half saturates
+            // and exactly two ticks are left for the input half.
+            var lagged = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)(cfg.Arena.RewindPictureTicks + 2) };
+
+            slow.Tick(noLag); fast.Tick(lagged);
+            Assert.AreEqual(1, slow.ProjectileCount);
+            Assert.AreEqual(1, fast.ProjectileCount);
+
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            Assert.AreEqual(slow.Projectiles[0].Pos.x + 2f * step,
+                fast.Projectiles[0].Pos.x, 0.05f,
+                "снаряд не прокручен на k_ввод шагов");
+            Assert.Greater(fast.Projectiles[0].Pos.x, slow.Projectiles[0].Pos.x,
+                "снаряд отброшен НАЗАД — это отменённая схема Р381");
+        }
+
+        [Test]
+        public void CatchUpSteps_AgeTheRound_ByDistanceNotByTicks()
+        {
+            // ⭐ THE Ttl AXIS, and it is the degenerate case spec §3.6 states
+            // for the lifetime: catch-up steps AGE the round. Without them a
+            // lagging shooter would be handed a longer-ranged weapon than
+            // everybody else -- the extra meters would be free, paid for by
+            // nobody's lifetime.
+            //
+            // FOUR SUBTRACTIONS ON THE BIRTH TICK, NOT ONE. At the arena cap
+            // the depth splits into a saturated picture half and three ticks of
+            // input half, and the birth tick spends those three catch-up steps
+            // PLUS the ordinary ProjectileSystem step every round gets. The
+            // expectation is written as that expression rather than as a
+            // number, so it follows the fixture's own cap and picture depth
+            // instead of restating them.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            var lagged = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            w.Tick(lagged);
+            float expected = cfg.Weapon.ProjectileLifetime
+                - (cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks + 1) * SimulationWorld.TickDt;
+            Assert.AreEqual(expected, w.Projectiles[0].Ttl, 1e-3f,
+                "Ttl не вычтен на догоняющих шагах");
+        }
+
+        [Test]
+        public void WallOnACatchUpStep_EndsTheRoundInThePast_SpawnBeforeEnd()
+        {
+            // ⭐⭐ THE DEGENERATE CASE THE WHOLE TASK IS MOST EXPOSED TO: the
+            // wall met on a CATCH-UP step, not on the ordinary one. Two things
+            // are witnessed here and the second is why the fixture had to move.
+            //
+            // ORDER OF EMITS (spec §3.6): the spawn is emitted BEFORE the
+            // catch-up runs, because the snapshot assembler opens its
+            // per-viewer subscription on the spawn and closes it on the ending.
+            // An ending that arrived first would address a set nobody is in.
+            //
+            // AND THE SWAP-REMOVE (coordinator RULING 172). A round that dies
+            // on a catch-up step is the LAST slot of the live set, so
+            // RemoveProjectileAt puts its own index past ProjectileCount; a
+            // catch-up loop that did not stop there would step a copy outside
+            // the live set, emit a SECOND ending for one round and, on its
+            // second removal, walk the count below zero. The two trailing
+            // assertions are that witness: nothing left in flight, exactly one
+            // ending on the wire.
+            //
+            // ⛔ AND THAT WITNESS ONLY EXISTS BECAUSE A CATCH-UP STEP IS LEFT
+            // UNEXECUTED (coordinator RULING 179, executor finding of the
+            // green round). The contact has to land BEFORE the last of the
+            // three catch-up steps, or the loop would end of its own accord on
+            // the very step that kills the round and dropping the `break`
+            // would change nothing observable -- the guard would read as
+            // witnessed while no assertion here could tell it from its own
+            // absence. With the contact on the SECOND step the third is the
+            // one that must not run: it would re-step a copy whose Pos the
+            // barrier arm never advanced, meet the same circle again, put a
+            // second ProjectileBlocked on the wire, and then call
+            // RemoveProjectileAt against an already empty set.
+            //
+            // ⛔ THE FIXTURE DEPARTS FROM THE PLAN'S, AND THE PLAN'S OWN NUMBER
+            // IS WHY (coordinator RULING 174). It stood the collector
+            // ObstacleRadius + 1.5 m from the obstacle center on the strength
+            // of a 0.78 m muzzle-to-wall gap, i.e. of a muzzle sitting at
+            // Weapon.MuzzleOffset. It does not: WeaponSystem.SpawnShot walks
+            // the round out by the fire cooldown's overshoot as well, and on
+            // the first shot of a match that overshoot is a whole tick, so the
+            // muzzle stands at 0.6 + 35/30 = 1.7666667 m. At the plan's spacing
+            // the round would have been born INSIDE the obstacle circle.
+            //
+            // THE SPACING IS ObstacleRadius + 3.6, AND BOTH HALVES OF THAT
+            // NUMBER ARE LOAD-BEARING (coordinator RULING 179). The collector
+            // stands 5.8 m from the obstacle's center, so the muzzle sits
+            // 1.8333333 m short of its edge and 1.7133333 m short of the
+            // CONTACT -- the solver adds the round's own 0.12 m radius to the
+            // circle. Against catch-up steps that end at 1.1666667 / 2.3333333
+            // / 3.5 m that puts the contact a little under halfway through the
+            // SECOND of the three.
+            //   * further out than the ordinary step (1.1666667 m), or the
+            //     round would meet the wall with no catch-up at all and this
+            //     test would have been green on the red phase -- the sentinel
+            //     the plan wrote and the reason RULING 174 moved it;
+            //   * nearer than the THIRD step, or the loop would end by itself
+            //     on the step that kills the round and the two trailing
+            //     assertions would witness nothing (see the RULING 172
+            //     paragraph above).
+            // An earlier spacing of ObstacleRadius + 4.5 satisfied only the
+            // first, and ObstacleRadius + 2.8 only the second. ⚠ Every number
+            // here is derived from the solver's own radius sum, not read off a
+            // run.
+            //
+            // ⛔ AND MaxRicochets IS STATED, WHICH THE PLAN DID NOT DO
+            // (coordinator Ruling 94's own rule, already obeyed by three
+            // fixtures elsewhere in the suite): the shared baseline ships ONE
+            // ricochet, and TryRicochet returns BEFORE the ProjectileBlocked
+            // this test waits for. A round reflecting off the obstacle would
+            // leave endAt at -1 forever, on correct code as much as on the
+            // stub. A test whose subject is a round DYING on a barrier states
+            // the zero itself.
+            //
+            // Quiet(), not Default(): the same twenty obstacles and the same
+            // walls, with waves pushed out of reach so no gunner wanders into
+            // the firing line (RULING 175). OpenField() cannot serve here -- it
+            // inherits Open(), which has no obstacles at all.
+            //
+            // ⚠ AND THE COLLECTOR STANDS IN THE CORE, so this tick also
+            // activates the Director (lesson 590's own hazard). It cannot reach
+            // what is measured here: the phase machine is the LAST step of
+            // TickAll, so the boss and his retinue are born after the round has
+            // already met the wall, and neither of them emits a projectile
+            // event. The fixture is single-tick precisely so that stays true.
+            SimConfig cfg = TestConfigs.Quiet();
+            cfg.Weapon.MaxRicochets = 0;
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            TestWorlds.RelocatePlayerForTest(w, 0,
+                obstacle - new float2(cfg.Arena.ObstacleRadius[0] + 3.6f, 0f));
+            var lagged = new SimInput { FireHeld = true, AimPoint = obstacle,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            w.Tick(lagged);
+
+            int spawnAt = -1, endAt = -1;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                // ⚠ The SIM kind is named ProjectileFired; ProjectileSpawned is
+                // a WIRE kind (SnapshotEventKind) and would not compile here.
+                SimEventKind k = w.GetEvent(i).Kind;
+                if (k == SimEventKind.ProjectileFired && spawnAt < 0) spawnAt = i;
+                if (k == SimEventKind.ProjectileBlocked && endAt < 0) endAt = i;
+            }
+            Assert.GreaterOrEqual(spawnAt, 0, "события спавна нет вовсе");
+            Assert.GreaterOrEqual(endAt, 0, "снаряд не встретил стену на догоне");
+            Assert.Less(spawnAt, endAt, "конец эмитится РАНЬШЕ спавна — подписка не откроется");
+            Assert.AreEqual(0, w.ProjectileCount,
+                "погибший на догоне снаряд остался на доске — догон шагает по снятой памяти");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
+                "у одного раунда два конца — догон не прервался на снятом снаряде");
+        }
+
+        [Test]
+        public void MobFiredRound_GetsNoRewindAtAll()
+        {
+            // ⛔ A SENTINEL, SAID OUT LOUD (lesson 427): this test is green on
+            // the day it is written and stays green after the feature lands.
+            // A mob has no client and no one-way delay, so its depth is zero --
+            // but nothing CHECKS that. Mobs spawn their rounds by calling
+            // SimulationWorld.SpawnProjectile straight from MobAiSystem,
+            // bypassing WeaponSystem entirely, and the catch-up lives in the
+            // collector's weapon phase; the zero is produced by the path being
+            // different, not by a rule (coordinator RULING 177). What can kill
+            // this test is therefore a STRUCTURAL mutation -- moving the
+            // catch-up into the mob path (M73) -- and not a damaged line.
+            //
+            // The witness itself is a distance: on its birth tick a gunner's
+            // round stands exactly ONE ordinary step out from its own muzzle,
+            // and the muzzle sits on the shooter's collision circle.
+            //
+            // ⚠ TWO THINGS THE FIXTURE HAS TO STATE. OpenField(), because
+            // Open() puts the collector on the spawn ring 159 m away and the
+            // gunner would never see him. And the gunner stands EXACTLY at
+            // PreferredRange: outside the tolerance band around it, UpdateGunner
+            // drives the mob into Reposition and returns, erasing the Fire state
+            // the seam just set, so a gunner placed further out would never
+            // fire at all.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(cfg.Gunner.PreferredRange, 0f)));
+            var g = w.Mobs[0]; g.Ai = MobAiState.Fire; g.FireCooldown = 0f; w.SetMobForTest(0, g);
+
+            // The collector claims the FULL depth -- it must not touch the
+            // mob's round.
+            var deepInput = new SimInput { RewindTicks = (byte)cfg.Arena.RewindCapTicks,
+                AimHeight = cfg.Hero.MuzzleHeight };
+            // The budget is a fixture EXPRESSION, not a magic number: the FSM
+            // may spend a tick or two before the shot goes out.
+            int budget = SimulationWorld.TicksFromSeconds(cfg.Gunner.FireInterval);
+            for (int i = 0; i < budget && w.ProjectileCount == 0; i++) w.Tick(deepInput);
+
+            Assert.AreEqual(1, w.ProjectileCount, "ганнер не выстрелил — фикстура не о том");
+            float step = cfg.Gunner.ProjectileSpeed * SimulationWorld.TickDt;
+            float traveled = math.distance(w.Projectiles[0].Pos, w.Mobs[0].Pos);
+            Assert.Less(traveled, cfg.Gunner.Radius + 2f * step,
+                "мобий снаряд прокручен догоняющими шагами — k не обнулён для мобов");
+        }
+
+        [Test]
+        public void TargetThatLeavesThreeTicksAfterTheShot_IsNotHit()
+        {
+            // ⛔ A SENTINEL, AND ITS ONLY WITNESS IS A MUTATION (lesson 427,
+            // the same shape the Т25 and Т26 rounds each ended up carrying).
+            // It is green against this task's stub -- a round with no catch-up
+            // at all reaches the target even later -- and green against the
+            // finished feature, because the rewind is spent ONCE, on the birth
+            // tick. What kills it is mutation M74: crank the round by the full
+            // input depth on EVERY tick of its flight, which is the canceled
+            // Р381 design, and the round arrives while the target is still on
+            // the line.
+            //
+            // ⚠ ON THIS TASK "THE TARGET LEFT" MEANS ITS BODY PHYSICALLY LEFT
+            // THE FIRING LINE. Asking where a body STOOD k ticks ago is the
+            // other half of the compensation and does not exist yet, so the
+            // fixture moves the body instead of rewinding it. The assertion
+            // core is unaffected by that; only the fixture is.
+            //
+            // THE ARITHMETIC IT IS BUILT ON. After N ticks a correct round has
+            // taken (N + k) steps from the muzzle, where k is the input half of
+            // the depth; the mutant has taken N * (1 + k). At the arena cap k is
+            // 3 and a step is 1.167 m, so with the target 13 m out and the
+            // muzzle at 1.767 m the correct round stands 9.93 m downrange when
+            // the target leaves, 2.5 m short of the 12.43 m contact circle --
+            // while the mutant crossed that circle during the THIRD tick, two
+            // ticks before the target moved.
+            //
+            // A SECOND COLLECTOR IS THE TARGET, not a mob, and that is what
+            // makes "the target left" a decision of the fixture rather than of
+            // an FSM: a collector handed no input does not move at all, and
+            // relocating him is one call.
+            SimConfig cfg = TestConfigs.OpenField();
+            // No cone: every number above is a straight line down +X, and a
+            // randomized muzzle angle would move the contact those numbers are
+            // built from -- the same statement, for the same reason, that the
+            // PvP damage fixtures make about themselves.
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            const float targetX = 13f;
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(targetX, 0f));
+
+            var idle = default(SimInput);
+            var inputs = new SimInput[2];
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            inputs[1] = idle;
+            w.TickAll(inputs);
+            Assert.AreEqual(1, w.ProjectileCount, "выстрела не было — фикстура ничего не мерит");
+
+            inputs[0] = idle;
+            for (int i = 0; i < 3; i++) w.TickAll(inputs);
+
+            // Three ticks on, and the round must still be SHORT of the target:
+            // that IS "the rewind is spent once". Under M74 it is not merely
+            // further along, it is already gone -- the count below is what says
+            // so first.
+            float contactX = targetX - cfg.Hero.Radius - cfg.Weapon.ProjectileRadius;
+            Assert.AreEqual(1, w.ProjectileCount,
+                "снаряд уже израсходован — отмотка потрачена не один раз, а каждый тик");
+            Assert.Less(w.Projectiles[0].Pos.x, contactX,
+                "снаряд дошёл до цели за три тика — отмотка тратится каждый тик");
+
+            // The target leaves the line of fire, and the round flies out its
+            // lifetime past the place he stood.
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(targetX, 50f));
+            for (int i = 0; i < 10; i++) w.TickAll(inputs);
+
+            Assert.AreEqual(cfg.Hero.MaxHp, w.PlayerAt(1).Hp, 1e-4f,
+                "ушедшая с линии цель поражена — отмотка потрачена больше одного раза");
+        }
+
+        [Test]
+        public void TwoCollectorsWithDifferentLag_EachGetTheirOwnCatchUp()
+        {
+            // ⭐ THE DEGENERATE CASE spec §3.6 NAMES BY NAME AND NOTHING IN THE
+            // TREE WITNESSED (coordinator RULING 176): two collectors firing on
+            // ONE tick with DIFFERENT depths. Two claims, not one -- the depth a
+            // round is cranked by comes from ITS OWN shooter's input, and the
+            // order the weapon phase and the backwards projectile pass run in
+            // does not swap the two rounds.
+            //
+            // THE ROUNDS ARE TOLD APART BY OwnerIndex AND CROSS-CHECKED BY
+            // GEOMETRY: the two shooters stand 80 m apart across the X axis, so
+            // a round attributed to the wrong shooter would sit tens of meters
+            // off its own line and the identity pair below says so. That pair
+            // is not decoration -- OwnerIndex alone would still read correctly
+            // if the CRANK, and not the attribution, went to the wrong slot.
+            //
+            // ⚠ THE TWO DEPTHS ARE THE EXTREMES OF THE DOMAIN: nothing at all
+            // for one shooter, the arena cap for the other, so the expected gap
+            // is the whole input half.
+            //
+            // NEITHER COLLECTOR STANDS AT THE ORIGIN (lesson 590), and
+            // OpenField() carries no zone boundaries at all, so no Director is
+            // born in the middle of what this fixture measures.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, -40f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 40f));
+
+            var inputs = new SimInput[2];
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = new float2(30f, -40f),
+                AimHeight = cfg.Hero.MuzzleHeight, RewindTicks = 0 };
+            inputs[1] = new SimInput { FireHeld = true, AimPoint = new float2(30f, 40f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            w.TickAll(inputs);
+
+            Assert.AreEqual(2, w.ProjectileCount, "оба сборщика обязаны выстрелить");
+            int still = -1, lagging = -1;
+            for (int i = 0; i < w.ProjectileCount; i++)
+            {
+                if (w.Projectiles[i].OwnerIndex == 0) still = i;
+                if (w.Projectiles[i].OwnerIndex == 1) lagging = i;
+            }
+            Assert.GreaterOrEqual(still, 0, "снаряда сборщика без задержки нет вовсе");
+            Assert.GreaterOrEqual(lagging, 0, "снаряда лагающего сборщика нет вовсе");
+            Assert.AreEqual(w.PlayerAt(0).Pos.y, w.Projectiles[still].Pos.y, 1f,
+                "снаряд приписан не тому стрелку — он летит по чужой линии");
+            Assert.AreEqual(w.PlayerAt(1).Pos.y, w.Projectiles[lagging].Pos.y, 1f,
+                "снаряд приписан не тому стрелку — он летит по чужой линии");
+
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            float stillTravel = math.distance(w.Projectiles[still].Pos, w.PlayerAt(0).Pos);
+            float laggingTravel = math.distance(w.Projectiles[lagging].Pos, w.PlayerAt(1).Pos);
+            float inputHalf = cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks;
+            Assert.AreEqual(inputHalf * step, laggingTravel - stillTravel, 0.05f,
+                "глубина отмотки взята не из ввода СВОЕГО стрелка");
+        }
+
+        [Test]
+        public void SpawnRefusedByTheCap_DoesNotCrankSomebodyElsesRound()
+        {
+            // ⭐⭐ THE AXIS THE GUARD IN WeaponSystem.SpawnShot EXISTS FOR, and
+            // nothing in the tree had it (coordinator RULING 180).
+            //
+            // ⛔ A SENTINEL, SAID OUT LOUD (lesson 427), the same shape tests
+            // 44b and the once-only test above already carry: it is green
+            // against this task's stub -- which called no catch-up at all, so
+            // nothing could be cranked by anybody's depth -- and green against
+            // the finished feature. Its ONLY witness is a mutation, and the
+            // mutation is a named one: drop `if (projectileId >= 0)` in
+            // WeaponSystem.SpawnShot and crank ProjectileCount - 1
+            // unconditionally.
+            // SimulationWorld.SpawnProjectile answers an ID, not a slot, and on
+            // a full array it answers -1 having spawned nothing. The catch-up
+            // addresses the fresh round as ProjectileCount - 1, so a caller
+            // that did not read that answer would hand the LAST LIVE round --
+            // somebody else's -- the depth of a shot that was never born.
+            //
+            // ⚠ THIS IS NOT A SECOND COPY OF WeaponTests.
+            // ProjectileCap_SkipsDeterministically, which already covers the
+            // refusal itself. That fixture floods the cap with ONE shooter at
+            // depth zero, so the catch-up it triggers is zero steps long and
+            // never reads the index at all -- dropping the guard there changes
+            // nothing whatever. What is witnessed here is the PAIR: a refusal
+            // AND a nonzero depth standing behind it, which is the only shape
+            // in which a missing guard corrupts anything.
+            //
+            // THE FIXTURE IS THE SMALLEST THING THAT MAKES THAT PAIR -- one
+            // projectile slot and two collectors firing on ONE tick. The weapon
+            // phase walks players by increasing index (SimulationWorld.TickAll,
+            // and the fixture above turns on the same ordering), so collector 0
+            // takes the only slot and collector 1 is refused; collector 1 is
+            // the one claiming the arena cap, so under a dropped guard his
+            // three catch-up steps would be spent on collector 0's round.
+            //
+            // THE NUMBER THAT SEPARATES THE TWO OUTCOMES. Collector 0 fires at
+            // depth zero, so his round owes no catch-up and ends the tick one
+            // ORDINARY step out from his own muzzle: 0.6 m of MuzzleOffset plus
+            // a whole tick of overshoot -- the first shot of a match leaves
+            // FireCooldown at -TickDt, so the pre-advance is a full 35/30 m --
+            // plus the projectile pass's own 35/30 m, i.e. 2.9333333 m. Under a
+            // dropped guard that same round would also have taken collector 1's
+            // three catch-up steps and stood at 6.4333333 m. The gap is 3.5 m
+            // against a tolerance of 0.05.
+            //
+            // OpenField(), and neither collector at the origin, for the two
+            // reasons the fixtures above state: Open() spawns them 159 m out on
+            // the ring, and a body at the origin activates the Director in the
+            // middle of the measurement (lesson 590).
+            SimConfig cfg = TestConfigs.OpenField();
+            // ONE slot, so the second shot of the tick is refused. Sized in the
+            // fixture rather than reached by a flood (the way WeaponTests gets
+            // to the same branch) because the refusal has to land on a SPECIFIC
+            // shooter -- the deep one -- and a flood cannot say which.
+            cfg.Arena.MaxProjectiles = 1;
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, -40f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 40f));
+
+            var inputs = new SimInput[2];
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = new float2(30f, -40f),
+                AimHeight = cfg.Hero.MuzzleHeight, RewindTicks = 0 };
+            inputs[1] = new SimInput { FireHeld = true, AimPoint = new float2(30f, 40f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            w.TickAll(inputs);
+
+            Assert.AreEqual(1, w.ProjectileCount, "слот один — снаряд обязан быть ровно один");
+            Assert.Greater(w.WorldStats.ProjectileSpawnsSkipped, 0,
+                "спавн никому не отказали — фикстура не о том");
+            // The premise of the measurement below: it reads the distance from
+            // collector 0, so the surviving round has to be his.
+            Assert.AreEqual((byte)0, w.Projectiles[0].OwnerIndex,
+                "слот занял не тот сборщик — оружейная фаза пошла не по индексу");
+
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            float muzzle = cfg.Weapon.MuzzleOffset
+                + SimulationWorld.TickDt * cfg.Weapon.ProjectileSpeed;
+            float traveled = math.distance(w.Projectiles[0].Pos, w.PlayerAt(0).Pos);
+            Assert.AreEqual(muzzle + step, traveled, 0.05f,
+                "снаряд прокручен чужой глубиной — снята охрана if (projectileId >= 0)");
+        }
     }
 }

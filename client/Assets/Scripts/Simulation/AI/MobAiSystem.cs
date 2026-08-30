@@ -381,6 +381,21 @@ namespace Ring.Simulation.AI
                 // own round's mob targets — the muzzle spawn point below sits ON
                 // this mob's own collision circle, so without the exclusion a
                 // gunner would wound itself at the moment it fires.
+                //
+                // ⛔ A MOB'S REWIND DEPTH IS ZERO, AND THAT IS A RULE RATHER
+                // THAN A DEFAULT (app-88jb Т27, spec §3.6, coordinator RULING
+                // 177). A mob has no client and no one-way delay, so there is
+                // no lag to compensate: its round takes no catch-up steps and
+                // is answered against no rewound picture. THE ZERO IS PRODUCED
+                // BY THIS PATH BEING A DIFFERENT ONE, not by a check — the
+                // catch-up lives in the collector's weapon phase
+                // (WeaponSystem.SpawnShot), and this call goes straight to the
+                // world, past WeaponSystem entirely. Written down because a
+                // quantity produced by the ABSENCE of a rule leaves nothing for
+                // the next reader to tell apart from an oversight, and because
+                // RewindTests.MobFiredRound_GetsNoRewindAtAll is a sentinel
+                // guarding exactly this: what kills it is moving the catch-up
+                // into this path, not damaging a line of it.
                 w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Id,
                     m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,

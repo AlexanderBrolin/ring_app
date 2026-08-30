@@ -285,11 +285,14 @@ namespace Ring.Simulation.Combat
 
         /// The shot itself: everything the authoritative sink owns and a
         /// predicting client must not (CR 3) — the round, the spread draw that
-        /// shapes it, and the shooter's own ShotsFired tally. Lifted out of the
-        /// former loop body of Update verbatim; `p` is passed `in` precisely
-        /// because not one line here writes to it, which is what makes skipping
-        /// the whole call on the prediction path incapable of moving the golden
-        /// hash — the compiler holds that claim, not a comment.
+        /// shapes it, the shooter's own ShotsFired tally, and, since app-88jb
+        /// Т27, the catch-up that spends the input half of his rewind depth on
+        /// the round (the call at the bottom carries its own reasoning).
+        /// Lifted out of the former loop body of Update verbatim; `p` is
+        /// passed `in` precisely because not one line here writes to it, which
+        /// is what makes skipping the whole call on the prediction path
+        /// incapable of moving the golden hash — the compiler holds that
+        /// claim, not a comment.
         ///
         /// The one thing that changed place is `stats.ShotsFired++`, which the
         /// old loop body ran just AFTER the recoil accumulation instead of just
@@ -352,9 +355,50 @@ namespace Ring.Simulation.Combat
             // the literal 0, which no live mob can ever match
             // (SimulationWorld._nextEntityId starts at 1), so ProjectileSystem's
             // friendly-fire exclusion is a no-op for a player's own shot.
-            w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos, vel3.xy, height, vel3.z,
+            int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos,
+                vel3.xy, height, vel3.z,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
             w.StatsRef(ownerIndex).ShotsFired++;
+            // app-88jb Т27 (spec §3.6, owner decision Н24/Р407): the round is
+            // born at the muzzle IN THE PRESENT and is then cranked forward by
+            // the INPUT half of this shooter's own rewind depth — the ticks his
+            // input really spent on the wire. The other half of that depth buys
+            // the question "where did the bodies stand", moves nothing, and is
+            // Т28's business; RewindSplit is where the boundary between the two
+            // is written. ⚠ The shooter himself is never rewound (Р411): the
+            // muzzle above stands where it stands, and only the round moves.
+            //
+            // AFTER THE SPAWN, NEVER BEFORE IT, and the order is the spec's own
+            // rather than a preference. SpawnProjectile emits ProjectileFired,
+            // which is where the snapshot assembler opens its per-viewer
+            // subscription to this round; a round that meets a wall on a
+            // catch-up step reaches its ENDING inside the call below, on this
+            // same tick, and an ending emitted ahead of the spawn would address
+            // a set nobody is in yet.
+            //
+            // GUARDED ON THE SPAWN HAVING ACTUALLY HAPPENED. SpawnProjectile
+            // answers an ID, not a slot, and it answers -1 WITHOUT spawning
+            // anything once the per-match projectile array is full. The fresh
+            // round's slot is the last one, because that call appends — so
+            // reading it unconditionally would crank somebody ELSE's round on a
+            // full array, which is a wrong outcome rather than a lost one.
+            //
+            // THE DEPTH NEEDS NO BOUND OF ITS OWN HERE: `input` is the
+            // SANITIZED input — SimulationWorld.TickAll hands Update its
+            // _sanitizedInputs entry, and SimInputSanitizer.Sanitize is where
+            // Arena.RewindCapTicks is applied to it — so what arrives is
+            // already inside the arena's domain.
+            //
+            // ⚠ AND THIS IS UNREACHABLE FROM THE PREDICTION PATH BY
+            // CONSTRUCTION, which is CRITICAL RULE 3's point here: SpawnShot
+            // runs only under `worldOrNull != null`, so AdvanceNoSpawn — the
+            // seam a predicting client drives — gains no call from this and
+            // still decides no game outcome.
+            if (projectileId >= 0)
+            {
+                ProjectileSystem.CatchUp(w, w.ProjectileCount - 1,
+                    RewindSplit.InputTicks(input.RewindTicks, in cfg.Arena));
+            }
         }
     }
 }
