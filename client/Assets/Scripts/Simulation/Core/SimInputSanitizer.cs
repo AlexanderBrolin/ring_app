@@ -4,13 +4,20 @@ namespace Ring.Simulation.Core
 {
     /// Public sanitization seam (Stage 2 Task 6 Interfaces, spec §3.1): lets
     /// client-side prediction (Task 30) sanitize raw input identically to the
-    /// authoritative world, instead of duplicating the formula. Verbatim
-    /// transfer of the body that used to live in SimulationWorld.Sanitize
-    /// (Stage 2 Task 4) — no coefficient, check order or condition changed;
+    /// authoritative world, instead of duplicating the formula. The body
+    /// ARRIVED here as a verbatim transfer of the one that used to live in
+    /// SimulationWorld.Sanitize (Stage 2 Task 4) — no coefficient, check
+    /// order or condition changed BY THAT MOVE — and it has grown a clause
+    /// since, twice: the inventory flag (Stage 3 Task 20) and the rewind
+    /// depth (app-88jb Т26). ⚠ The sentence used to claim the second half in
+    /// the present tense and was stale on both counts (Т26 fix-round, ruling
+    /// 171, found while review finding B-5 was being fixed one line below);
     /// `reference` stands in for the sanitizing player's own state (AimPoint
     /// fallback, Pos-relative AimPoint clamp) and `cfg` for the match's
-    /// balance config (Arena.Radius, Hero.MuzzleHeight/MaxAimHeight). Pure
-    /// function: no allocation, no state.
+    /// balance config (Arena.Radius, Arena.RewindCapTicks,
+    /// Hero.MuzzleHeight/MaxAimHeight — four fields, recounted against the
+    /// body in Т26's fix-round after review finding B-5 caught this list one
+    /// short of it). Pure function: no allocation, no state.
     public static class SimInputSanitizer
     {
         public static SimInput Sanitize(in SimInput raw, in PlayerState reference, in SimConfig cfg)

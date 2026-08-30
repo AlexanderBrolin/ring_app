@@ -70,8 +70,16 @@ namespace Ring.Networking.Protocol
         public ushort AimY;
         /// Byte 6 — `Quantize.Unit(AimHeight, Hero.MaxAimHeight)`.
         public byte AimHeight;
-        /// Byte 7 — FireHeld / DashRequested / AimHeld / SlideRequested /
-        /// InventoryOpen (Stage 3 Task 20).
+        /// Byte 7 — FIVE FLAGS AND A NUMBER, which is why the field's name is
+        /// the narrower half of what it holds (review finding B-4). Bits 0-4
+        /// are FireHeld / DashRequested / AimHeld / SlideRequested /
+        /// InventoryOpen (Stage 3 Task 20); bits 5-7 carry
+        /// `SimInput.RewindTicks` as a 3-bit unsigned NUMBER — how far into
+        /// the past the server must look at its targets to judge this shot
+        /// (app-88jb Т26, spec §3.6/§3.7). `InputCodec`'s layout doc stays the
+        /// one normative statement of both halves, including why the writer
+        /// saturates instead of masking and why the eighth value reads back
+        /// as 6.
         public byte Flags;
 
         public uint GetTick() => _tick;

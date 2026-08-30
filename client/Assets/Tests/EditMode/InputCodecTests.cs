@@ -11,12 +11,17 @@ using Is = UnityEngine.TestTools.Constraints.Is;
 
 namespace Ring.Simulation.Tests
 {
-    // Stage 2 Task 25 (spec §3.8, Р30/Р34/Р84): InputCodec packs the four
-    // SimInput fields that actually cross the wire (MoveDir, AimPoint,
-    // AimHeight, five flags as of Stage 3 Task 20 — recounted by grep
-    // against SimInput.cs, not quoted from the brief, per task-25-brief
-    // §2's own warning) into 8 bytes and back, using Quantize (Task 24)
-    // for every scalar mapping.
+    // Stage 2 Task 25 (spec §3.8, Р30/Р34/Р84): InputCodec packs the five
+    // SimInput quantities that actually cross the wire (MoveDir, AimPoint,
+    // AimHeight, five flags as of Stage 3 Task 20, and RewindTicks as a
+    // 3-bit number as of app-88jb Т26 — recounted by grep against
+    // SimInput.cs, not quoted from any brief, per task-25-brief §2's own
+    // warning) into 8 bytes and back, using Quantize (Task 24) for every
+    // scalar mapping.
+    // ⚠ THE COUNT WAS FOUR HERE UNTIL Т26'S FIX-ROUND, and the grep this
+    // note boasts of was the reason review finding B-3 could be stated as a
+    // fact rather than a suspicion: a comment that names HOW it was checked
+    // invites the recheck that catches it going stale.
     // Task 30's prediction-parity test depends on Decode(Encode(...))
     // reproducing the exact value the client is about to send (Р34), so the
     // contracts below are exercised directly, not assumed from Quantize's

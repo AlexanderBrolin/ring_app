@@ -12,11 +12,19 @@ namespace Ring.Simulation.Tests
     /// frame says nothing about.
     ///
     /// EVERY FIXTURE HERE IS A LOCAL WORLD, and that is not a shortcut — it is
-    /// where the two flags can be tested at all. The networked backend lives in
-    /// `Ring.Presentation.Net`, an assembly this test assembly does not
-    /// reference (its own `.asmdef`), so what is pinned below is the contract
-    /// both backends fill: a local world knows its whole roster, and a slot
-    /// that is KNOWN AND NOT ALIVE is a corpse rather than an absence.
+    /// where the two flags can be tested at all.
+    /// ⚠ THE REASON THIS PARAGRAPH USED TO GIVE WAS FALSE (app-88jb Т26
+    /// fix-round, ruling 169, arriving at review finding B-2 from the other
+    /// side). It said the networked backend lives in `Ring.Presentation.Net`,
+    /// "an assembly this test assembly does not reference (its own
+    /// `.asmdef`)" — and `Simulation.Tests.asmdef` has carried that reference
+    /// since `aac4d34` (2026-08-16), which is older than the last edit to this
+    /// file. What actually keeps a networked fixture out is the SHAPE of
+    /// `NetworkSimBackend`, whose constructor demands a live `NetworkManager`,
+    /// not the assembly graph. The conclusion is unchanged, and only it is
+    /// load-bearing: what is pinned below is the contract both backends fill —
+    /// a local world knows its whole roster, and a slot that is KNOWN AND NOT
+    /// ALIVE is a corpse rather than an absence.
     public class FramePresenceTests
     {
         /// Three seats in an open arena — the shape a real match has, and the

@@ -707,6 +707,34 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Sanitize_LeavesALegalRewindDepthAlone()
+        {
+            // app-88jb Т26 fix-round A (review finding B-1). The case above is
+            // the only sanitizer pin this repo has for RewindTicks and it feeds
+            // 200 — so far above the cap that the MUTATION
+            // `s.RewindTicks = (byte)cfg.Arena.RewindCapTicks` (a plain
+            // assignment instead of `math.min`) satisfies it exactly and kills
+            // nothing. This is the axis that mutation dies on: a depth BELOW
+            // the cap has to come back untouched, and an assignment of the cap
+            // would read as 6.
+            //
+            // It is a SEPARATE test rather than a second case inside the one
+            // above, because that one is named for the clamp and a legal depth
+            // is not clamped by anything; folding it in would make the name a
+            // lie. Green from its first day, like every characterizing test —
+            // the sanitizer is already right, and what makes this one a witness
+            // is the mutation, not a red run.
+            //
+            // TestConfigs.Open() carries the cap of 6 it inherits from
+            // Default(), so 2 is legal by construction.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            SimInput legal = w.SanitizeForTest(new SimInput { RewindTicks = 2 });
+            Assert.AreEqual((byte)2, legal.RewindTicks,
+                "легальная глубина ниже капа арены обязана пережить санитайзер без изменений");
+        }
+
+        [Test]
         public void Sanitizer_MatchesWorldBehaviour()
         {
             // Stage 2 Task 6 fix-round 1 (I-1, review): the world-vs-seam loop

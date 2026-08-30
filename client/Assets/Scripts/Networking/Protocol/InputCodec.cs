@@ -137,16 +137,39 @@ namespace Ring.Networking.Protocol
         const int AimHeldBit = 2;
         const int SlideRequestedBit = 3;
         // Stage 3 Task 20 (spec §3.8, coordinator: bits 4-7 free, verified by
-        // grep against Encode/TryDecode before this task — nothing else in this
-        // file has ever set or read them).
+        // grep against Encode/TryDecode before that task).
+        // ⚠ THE PERFECT TENSE THIS NOTE CARRIED — "nothing else in this file
+        // has ever set or read them" — EXPIRED THREE LINES BELOW, and saying
+        // so is the whole point of this correction (Т26 fix-round A, review
+        // finding B-6): app-88jb Т26 took bits 5-7 for the rewind depth, and
+        // the writer and the reader of them are both in this file now. What
+        // survives is the claim about BIT 4 alone, which is still true: this
+        // constant names its only writer and its only reader.
         const int InventoryOpenBit = 4;
         // app-88jb Т26: bits 5-7 stop being spare and carry a 3-bit number.
-        // Named as a shift plus a mask, not as three bit indices, because that
+        // Named as a shift plus a width, not as three bit indices, because that
         // is what they are — see THE EIGHTH DEPTH on the class for the domain
         // and for why the writer saturates instead of masking.
         const int RewindTicksShift = 5;
-        const int RewindTicksMask = 0b111;    // three bits: eight values
-        const byte RewindTicksWireCap = 6;    // Р82: the eighth reads as this
+        // ONE CONSTANT, TWO MEANINGS, WHICH IS PRECISELY WHY IT IS NOT TWO
+        // (fix-round A). 0b111 is the WIDTH of the field — the mask the reader
+        // takes the three bits out with — and it is also the LARGEST DEPTH the
+        // wire can carry, which is what the writer saturates at. It is public
+        // because the client that MEASURES a depth (`RewindDepthMeter`) has to
+        // stop at the same number rather than at a copy of it — one policy,
+        // one home, which is the rule THE ARENA CAP IS NOT APPLIED HERE states
+        // on the class for the other number of this field.
+        public const byte MaxRewindTicksOnWire = 0b111;
+        // Р82: the eighth wire value reads as this. The 6 is the VALIDATION
+        // ceiling on `Arena.RewindCapTicks` — `SimulationWorld
+        // .TicksFromSeconds(0.2f)`, the 200 ms of CRITICAL RULE 5 — carried
+        // here as a number rather than derived, which review finding A-REV-4
+        // raised as a silent-drift risk. It is not silent: the ceiling itself
+        // is pinned to 6 by
+        // `RewindTests.CapRule_IsWrittenInTicks_NotInSeconds`, so a change of
+        // `SimulationWorld.TickDt` reddens THAT test loudly before anything
+        // here could quietly start trimming a legal depth.
+        const byte RewindTicksWireCap = 6;
 
         public static void Encode(in SimInput input, in SimConfig cfg, System.Span<byte> dst)
         {
@@ -200,12 +223,12 @@ namespace Ring.Networking.Protocol
             if (input.AimHeld) flags |= 1 << AimHeldBit;
             if (input.SlideRequested) flags |= 1 << SlideRequestedBit;
             if (input.InventoryOpen) flags |= 1 << InventoryOpenBit;
-            // Saturate rather than mask: `& RewindTicksMask` would send a
-            // depth of 200 as 0 (see the class doc). The arena cap is the
+            // Saturate rather than mask: `& MaxRewindTicksOnWire` would send
+            // a depth of 200 as 0 (see the class doc). The arena cap is the
             // sanitizer's business, not this method's — only the three bits
             // are.
-            byte depth = input.RewindTicks > RewindTicksMask
-                ? (byte)RewindTicksMask
+            byte depth = input.RewindTicks > MaxRewindTicksOnWire
+                ? MaxRewindTicksOnWire
                 : input.RewindTicks;
             flags |= (byte)(depth << RewindTicksShift);
             dst[7] = flags;
@@ -282,7 +305,7 @@ namespace Ring.Networking.Protocol
                 // and reads as the cap, so a client that sends 7 is understood
                 // rather than refused.
                 RewindTicks = (byte)math.min(
-                    (flags >> RewindTicksShift) & RewindTicksMask, RewindTicksWireCap),
+                    (flags >> RewindTicksShift) & MaxRewindTicksOnWire, RewindTicksWireCap),
             };
             return true;
         }

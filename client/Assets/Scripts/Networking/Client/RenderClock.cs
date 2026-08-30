@@ -212,6 +212,25 @@ namespace Ring.Networking.Client
         /// interpolate between.
         public bool Started => _started;
 
+        /// Whether `Advance` has already placed render time for this epoch —
+        /// the state `_placed` records, made readable for the same reason
+        /// `Started` is (app-88jb Т26 fix-round A, ruling 166; review finding
+        /// A-REV-2).
+        ///
+        /// A CONSUMER THAT ASKS "WHICH TICK IS ON SCREEN" MUST GATE ON THIS
+        /// AND NOT ON `Started`. The two are decided in different calls: the
+        /// start by an arriving snapshot in `OnSnapshot`, the placement by the
+        /// first `Advance` that follows it. In between, `Started` already
+        /// reads true while `RenderTick` still reads 0 — a tick that has never
+        /// been on any screen. Reading it there is harmless for a consumer
+        /// that only interpolates (there is nothing to draw yet either way),
+        /// and wrong for one that reports the moment as a measurement.
+        ///
+        /// It implies `Started`, so a caller that needs both wants only this
+        /// one: `Advance` returns before the placement branch while the clock
+        /// is not started.
+        public bool Placed => _placed;
+
         /// WHICH WAY THE CLOCK IS CORRECTING RIGHT NOW, as a sign: `+1` while
         /// it is running fast to catch a target ahead of it, `-1` while it is
         /// running slow, `0` while it is not correcting (Stage 2 Task 48 — the

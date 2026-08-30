@@ -902,13 +902,19 @@ namespace Ring.Presentation.Net
                 // the panel's label says so.
                 RoundTripMs = (int)_nm.TimeManager.RoundTripTime,
                 RenderTick = _clock.RenderTick,
-                // The clock's own "am I running" flag, public since before
-                // this task and left out of the first snapshot by oversight
-                // (fix-round 1, F-2). Without it the panel printed `render 0`
-                // and a `behind` the size of the server's tick number for as
-                // long as the clock was still waiting for its second distinct
-                // tick.
-                HasRenderTick = _clock.Started,
+                // The clock's own readiness, and it is PLACEMENT rather than
+                // START (Т26 fix-round, ruling 170; the same distinction
+                // ruling 166 drew for the rewind measurement). This field was
+                // added because the panel printed `render 0` and a `behind`
+                // the size of the server's tick number while the clock waited
+                // for its second distinct tick (fix-round 1, F-2) — and
+                // `Started` left exactly that symptom alive in a smaller
+                // window, because the clock starts in `OnSnapshot` and does
+                // not carry a render time until the first `Advance` after it.
+                // A panel that reports a moment as a measurement wants the
+                // stricter flag; a dash for one frame is honest where a zero
+                // is not.
+                HasRenderTick = _clock.Placed,
                 // Clamped into the `int` the panel prints rather than cast
                 // blind: the queue stores the wire's `uint`, and an
                 // out-of-range cast in C# produces an unspecified number
@@ -1128,78 +1134,87 @@ namespace Ring.Presentation.Net
         /// read the network would stop being the pure function CRITICAL RULE 2
         /// requires. Inside the record it is plain data.
         ///
-        /// TWO DIFFERENCES, EACH ENTIRELY INSIDE ITS OWN TICK COUNTER — and
-        /// that is the whole design of this method, not a detail of it:
+        /// THE ARITHMETIC IS NOT IN THIS METHOD — THIS METHOD IS THE WIRING
+        /// (fix-round A, ruling 164). `RewindDepthMeter.Measure`, at the foot
+        /// of this file, holds the formula, the three gates and the wire
+        /// ceiling, and documents each of them. What is left here is the one
+        /// job that needs a live `NetworkManager`: deciding WHICH six numbers
+        /// the formula is fed. The split is not cosmetic — the arithmetic now
+        /// has a witness (`RewindDepthTests`) and the six expressions below
+        /// still have none, which is the whole subject of the last paragraph.
         ///
-        ///     (LocalTick - ClientStateTick) + (NewestTick - RenderTick)
-        ///      \____ FishNet's counter ____/   \____ world counter ____/
+        /// THE FIRST BRACKET READS `PlayerPredictionCore.LastReconciledTick`,
+        /// AND THE PROPERTY IT NO LONGER READS IS THE POINT (fix-round A,
+        /// ruling 163; review finding A-REV-1, Critical). This method used to
+        /// take `PredictionManager.ClientStateTick` directly, and that made the
+        /// first bracket identically zero for the life of the process, without
+        /// a symptom. The package assigns that property in exactly two places,
+        /// both inside `ReconcileToStates` — `PredictionManager.cs:647` sets
+        /// it, `:726` clears it back to `TimeManager.UNSET_TICK`
+        /// unconditionally before the method returns — while this handler
+        /// hangs on `OnPreTick`, which the same tick loop raises STRICTLY
+        /// EARLIER and outside that call stack: `TimeManager.cs:726` against
+        /// the `ReconcileToStates()` on `:739`. So the gate written to cover
+        /// the window before the first reconcile was in fact open on every
+        /// tick forever, and what left this process was `InterpBufferTicks` —
+        /// a configuration constant wearing the clothes of a measurement.
         ///
-        /// The obvious form, "predicted tick minus the tick on screen", is a
-        /// SUBTRACTION ACROSS TWO UNRELATED COUNTERS and would produce
-        /// garbage. `RenderClock.RenderTick` and this class's `CurrentTick`
-        /// count WORLD ticks (both say so themselves); client prediction runs
-        /// on `TimeManager.LocalTick`, which is FishNet's own counter with no
-        /// fixed offset to the world's. `MatchServer` carries the scar of that
-        /// exact mistake being made once already. The identity that rescues
-        /// the formula is elementary: `predicted - onScreen` equals
-        /// `(predicted - authoritative) + (authoritative - onScreen)`, and each
-        /// bracket now lives in one counter. Only tick COUNTS are added across
-        /// the seam, never tick ADDRESSES, and a count means the same thing on
-        /// both sides because both advance by `SimulationWorld.TickDt`.
+        /// `LastReconciledTick` IS THAT SAME NUMBER, LATCHED WHILE IT IS
+        /// ALIVE. `PerformReconcile` hands `data.GetTick()` to
+        /// `PlayerPredictionCore.BeginReconcile`, and on the owning client
+        /// that tick IS `ClientStateTick`: the package stamps it in
+        /// `NetworkBehaviour.Prediction.cs:1468` (`Reconcile_Reader_Remote`,
+        /// `uint tick = IsOwner ? PredictionManager.ClientStateTick : ...`,
+        /// applied on `:1479`). BOTH DOORS ARE SHUT, and the second one needs
+        /// saying because it is the one nobody looks at. Besides the remote
+        /// path there is a LOCAL one: `CreateReconcile` on a pure client fills
+        /// its record from `TimeManager.LocalTick`
+        /// (`PlayerNetworkController.cs:225`), and if that tick reached the
+        /// core as written, `LastReconciledTick` would track `LocalTick` and
+        /// the bracket would be zero again through a different entrance. It
+        /// does not reach it. The package stamps the
+        /// local history entry itself — `Reconcile_Client_AddToLocalHistory`
+        /// overwrites the tick with `TimeManager.LocalTick` (`:1285-1291`) and
+        /// files it — and then `Reconcile_Client` (`:1319`) looks that entry
+        /// up by `reconcileTick = PredictionManager.ClientStateTick`
+        /// (`:1330-1333`), abandons the index unless `lrTick == reconcileTick`
+        /// (`:1351-1352`), and only in that case hands `localReconcile.Tick`
+        /// to `Reconcile_Reader_Local` (`:1364`, applied on `:1498`). The
+        /// equality is the guarantee: whichever door the reconcile came
+        /// through, the tick the core latches is `ClientStateTick`.
         ///
-        /// THE HONEST SEAM, NAMED RATHER THAN HIDDEN: "authoritative" is not
-        /// one channel but two — reconciliation of this collector against the
-        /// queue of snapshots for everyone else. Both trail the server's
-        /// present by roughly the same amount, but they are not obliged to
-        /// agree tick for tick, so the sum carries a joint error of about one
-        /// tick. That error is inside the arena cap and inside the server's own
-        /// sanity check on the claimed depth, which is where it is caught.
+        /// THE NULL CHECKS ARE THE ONES THAT CAN FIRE, AND NO OTHERS.
+        /// `_snapshots` and `_clock` are built by `Configure`, which this
+        /// handler can run before, so they are tested. `_controller` is
+        /// already tested by the only caller (`TimeManager_OnPreTick`, first
+        /// line) and `Core` is a `readonly` field initialized with the
+        /// controller itself, so a second test here would be a test of
+        /// nothing.
         ///
-        /// THREE READINESS GATES, EACH FOR ITS OWN REASON, ALL DEGENERATING TO
-        /// ZERO — "no rewind", which is an honest answer, unlike a guess:
-        ///   - `HasNewestTick`, because `NewestTick` reads 0 before the first
-        ///     frame and 0 is an ordinary tick value, not a sentinel;
-        ///   - `Started`, because the clock does not run until it has seen two
-        ///     distinguishable ticks;
-        ///   - `ClientStateTick != UNSET_TICK`, because that property is
-        ///     assigned only inside a performed reconcile. Before the first one
-        ///     it holds FishNet's unset marker, which is literally 0, so
-        ///     `LocalTick - ClientStateTick` would not be "how far prediction
-        ///     ran ahead" but THE AGE OF THE PROCESS — and the clamp would turn
-        ///     that into maximum depth on every early shot, which the server's
-        ///     sanity check would then spend its time trimming. The gate reads
-        ///     the package's own constant rather than a literal zero so that it
-        ///     keeps meaning "unset" if FishNet ever moves the marker.
-        /// Neither difference is allowed below zero either: a snapshot stall
-        /// can leave the render clock ahead of the newest accepted tick.
-        ///
-        /// NO EDITMODE WITNESS EXISTS FOR THIS METHOD, and saying so is part of
-        /// the record. Every number it reads comes from a live
-        /// `NetworkManager` — `TimeManager`, `PredictionManager` and a
-        /// connection's spawned objects — and this project deliberately keeps
-        /// network runtime out of its test assembly (`ReconcileCodecTests`
-        /// explains that choice at length). What IS pinned by tests is
-        /// everything downstream: the three bits on the wire, the arena clamp
-        /// in the sanitizer, and the round trip in between.
+        /// WHAT IS WITNESSED AND WHAT IS NOT, MEASURED RATHER THAN ASSUMED
+        /// (review finding B-2). The ARITHMETIC is covered: `RewindDepthTests`
+        /// drives `RewindDepthMeter` through all three gates, both floors and
+        /// the wire ceiling. The WIRING — the six expressions below, which are
+        /// the entire subject of the paragraphs above — has NO EditMode
+        /// witness, and the reason is the SHAPE of this method, not the origin
+        /// of its numbers. An earlier version of this doc claimed the
+        /// opposite, that "every number it reads comes from a live
+        /// `NetworkManager`"; that was false, and believing it is what let the
+        /// Critical through. `RenderClock` and `SnapshotQueue` are plain
+        /// `public sealed class`es the EditMode suite already builds by hand,
+        /// and `Ring.Simulation.Tests` references both `Ring.Presentation.Net`
+        /// and `FishNet.Runtime`. What has no witness is a private instance
+        /// method on a class whose constructor takes a `NetworkManager` — and,
+        /// inside it, the LIVENESS of `LastReconciledTick`, which no EditMode
+        /// test can reach at all. Its only witness is the Ф4 lag gate under
+        /// 80 ms RTT and 5% loss (CR 7).
         byte MeasureRewindTicks()
         {
             if (_snapshots == null || _clock == null) return 0;
-
-            long predictionLead = 0;
-            var pm = _controller.PredictionManager;
-            if (pm != null && pm.ClientStateTick != FishNet.Managing.Timing.TimeManager.UNSET_TICK)
-                predictionLead = (long)_nm.TimeManager.LocalTick - pm.ClientStateTick;
-
-            long interpolationLag = 0;
-            if (_snapshots.HasNewestTick && _clock.Started)
-                interpolationLag = (long)_snapshots.NewestTick - _clock.RenderTick;
-
-            if (predictionLead < 0) predictionLead = 0;
-            if (interpolationLag < 0) interpolationLag = 0;
-
-            long depth = predictionLead + interpolationLag;
-            int cap = _cfg.Arena.RewindCapTicks;
-            return (byte)(depth > cap ? cap : depth);
+            return RewindDepthMeter.Measure(
+                _nm.TimeManager.LocalTick, _controller.Core.LastReconciledTick,
+                _snapshots.HasNewestTick, _snapshots.NewestTick,
+                _clock.Placed, _clock.RenderTick);
         }
 
         /// One render frame. Everything that has to happen every frame happens
@@ -3163,6 +3178,136 @@ namespace Ring.Presentation.Net
             _nm.Log($"NetworkSimBackend: {kind} block refused — {error}. The rest of the frame is "
                 + "still walked; a refusal here is ordinary traffic on an untrusted path (Р82), not "
                 + "a reason to abandon the datagram.");
+        }
+    }
+
+    /// HOW FAR INTO THE PAST A SHOOTING CLIENT ASKS THE SERVER TO LOOK, AS
+    /// ARITHMETIC AND NOTHING ELSE (app-88jb Т26, spec §3.6/§3.7; lifted out
+    /// of `NetworkSimBackend.MeasureRewindTicks` by fix-round A, ruling 164).
+    /// The server judges a shot against the picture that was on the shooter's
+    /// screen when the trigger was pulled; this function answers how many
+    /// ticks back that picture stands.
+    ///
+    /// IT SITS IN THIS FILE, BESIDE ITS CALLER, ON A PRECEDENT RATHER THAN A
+    /// PREFERENCE. `PlayerPredictionCore` lives in
+    /// `PlayerNetworkController.cs` next to the `NetworkBehaviour` that drives
+    /// it and holds every decision that class makes with no FishNet in it —
+    /// which is exactly why `ReconcileCodecTests` pins those decisions with no
+    /// network runtime at all. This is the same move applied to one formula,
+    /// so it takes the same shape: no new production file, no new component,
+    /// one `static` type in the namespace its caller already occupies.
+    ///
+    /// TWO DIFFERENCES, EACH ENTIRELY INSIDE ITS OWN TICK COUNTER — and that
+    /// is the whole design, not a detail of it:
+    ///
+    ///     (localTick - lastReconciledTick) + (newestTick - renderTick)
+    ///      \_____ FishNet's counter _____/   \____ world counter ____/
+    ///
+    /// The obvious form, "predicted tick minus the tick on screen", is a
+    /// SUBTRACTION ACROSS TWO UNRELATED COUNTERS and would produce garbage.
+    /// `RenderClock.RenderTick` and `NetworkSimBackend.CurrentTick` count
+    /// WORLD ticks (both say so themselves); client prediction runs on
+    /// `TimeManager.LocalTick`, which is FishNet's own counter with no fixed
+    /// offset to the world's. `MatchServer` carries the scar of that exact
+    /// mistake having been made once already. The identity that rescues the
+    /// formula is elementary — `predicted - onScreen` equals
+    /// `(predicted - authoritative) + (authoritative - onScreen)` — and after
+    /// it each bracket lives in ONE counter. Only tick COUNTS cross the seam
+    /// between them, never tick ADDRESSES, and a count means the same thing on
+    /// either side because both counters advance by `SimulationWorld.TickDt`.
+    ///
+    /// THE HONEST SEAM, NAMED RATHER THAN HIDDEN: "authoritative" is not one
+    /// channel but two — reconciliation of the shooter's own copy against the
+    /// queue of snapshots that carries everyone else. Both trail the server's
+    /// present by roughly the same amount, but they are not obliged to agree
+    /// tick for tick, so the sum carries a joint error of about one tick. That
+    /// error is inside the arena cap and inside the server's own sanity check
+    /// on the claimed depth, which is where it is caught.
+    ///
+    /// THREE GATES, EACH FOR ITS OWN REASON, EACH SILENCING ITS OWN BRACKET —
+    /// zero here reads "no rewind", which is an honest answer where a guess
+    /// would not be:
+    ///   * `lastReconciledTick != 0`, because zero means `BeginReconcile` has
+    ///     never run. THE ZERO IS A LITERAL AND NOT `TimeManager.UNSET_TICK`,
+    ///     which is a deliberate reversal of what the old inline version did.
+    ///     The value now comes from a field of OURS
+    ///     (`PlayerPredictionCore.LastReconciledTick`), so the sentinel that
+    ///     governs is C#'s `default(uint)` — "never written" — and not the
+    ///     package's marker for "unset". The two numbers coincide today
+    ///     (`TimeManager.cs:312`, `UNSET_TICK = 0`); binding our field's
+    ///     default to a constant the package is free to move would be an
+    ///     invented dependency, and this function is deliberately FishNet-free
+    ///     besides. Ungated, the subtraction reports THE AGE OF THE PROCESS
+    ///     and saturates every early shot.
+    ///   * `hasNewestTick`, because `newestTick` reads 0 before the first
+    ///     accepted frame and 0 is an ordinary tick value, not a sentinel —
+    ///     hence a flag of its own rather than a comparison.
+    ///   * `clockPlaced`, because `RenderClock` STARTS on the second distinct
+    ///     snapshot and is PLACED one call later, by the first `Advance`;
+    ///     between those two moments it reports a render tick that has never
+    ///     been on any screen. ONE gate covers both states rather than two:
+    ///     `Advance` returns early while the clock is not started, so
+    ///     placement implies start.
+    ///
+    /// EACH BRACKET IS FLOORED AT ZERO SEPARATELY, AND NOT THE SUM. A stalled
+    /// snapshot stream leaves the render clock past the newest accepted tick,
+    /// and a reconcile is free to stand ahead of the local tick this frame
+    /// samples; either way a negative bracket would SUBTRACT FROM a perfectly
+    /// live one on the other side of the plus sign. Flooring only the sum
+    /// would let that happen and would look correct while doing it.
+    ///
+    /// THE CEILING BELONGS TO THE WIRE, AND THE ARENA CAP IS ABSENT ON
+    /// PURPOSE (fix-round A, ruling 165; review finding A-REV-3). Saturation
+    /// is at `InputCodec.MaxRewindTicksOnWire`, the largest number three bits
+    /// carry. `Arena.RewindCapTicks` is a BALANCE number whose single home is
+    /// `SimInputSanitizer` — `InputCodec`'s own class doc says so, in the
+    /// paragraph that forbids the codec the same clamp — and applying it here
+    /// as well was a second home for one policy. It was measurably free of
+    /// EFFECT, which is why it survived review once: validation holds the cap
+    /// in 1..6, so a saturated 7 on the wire reads back as 6 and the
+    /// sanitizer's `min` lands on the cap either way. It was not free of COST:
+    /// a client that pre-clamps can never show a server-side sanity check an
+    /// inflated claim, and that check is the point of Р374 (Т29).
+    ///
+    /// ⚠ WHAT THIS FUNCTION CANNOT ANSWER, AND THE PROJECT HAS ALREADY PAID
+    /// FOR THE OMISSION (fix-round A, ruling 164; review finding A-REV-1,
+    /// Critical). Lifting the arithmetic out closes the ARITHMETIC and NOT THE
+    /// WIRING. Nothing in here can tell whether `lastReconciledTick` is a live
+    /// quantity or a constant the caller hands over — which is exactly how the
+    /// defect this fix-round exists for survived a review, a green suite and a
+    /// merge: the source of the first bracket was a property FishNet clears
+    /// before the handler that read it ever runs, so the bracket was
+    /// identically zero while the formula read as correct. Liveness is a
+    /// property of the CALLER, no EditMode test witnesses it, and none can
+    /// (see `MeasureRewindTicks` for why the shape of that method forbids it).
+    /// Its only witness is the Ф4 lag gate under 80 ms RTT and 5% loss (CR 7),
+    /// so a green `RewindDepthTests` says nothing whatever about the depth
+    /// that actually leaves the process.
+    public static class RewindDepthMeter
+    {
+        public static byte Measure(
+            uint localTick,
+            uint lastReconciledTick,
+            bool hasNewestTick,
+            uint newestTick,
+            bool clockPlaced,
+            int renderTick)
+        {
+            long predictionLead = 0;
+            if (lastReconciledTick != 0)
+                predictionLead = (long)localTick - lastReconciledTick;
+
+            long interpolationLag = 0;
+            if (hasNewestTick && clockPlaced)
+                interpolationLag = (long)newestTick - renderTick;
+
+            if (predictionLead < 0) predictionLead = 0;
+            if (interpolationLag < 0) interpolationLag = 0;
+
+            long depth = predictionLead + interpolationLag;
+            return depth > InputCodec.MaxRewindTicksOnWire
+                ? InputCodec.MaxRewindTicksOnWire
+                : (byte)depth;
         }
     }
 }

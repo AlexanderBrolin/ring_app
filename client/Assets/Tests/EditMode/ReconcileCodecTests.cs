@@ -388,7 +388,8 @@ namespace Ring.Simulation.Tests
                 Assert.AreEqual((ushort)(wire[4] | (wire[5] << 8)), data.AimY,
                     "bytes 4..5 are AimPoint.y, little-endian");
                 Assert.AreEqual(wire[6], data.AimHeight, "byte 6 is AimHeight");
-                Assert.AreEqual(wire[7], data.Flags, "byte 7 is the flag set");
+                Assert.AreEqual(wire[7], data.Flags,
+                    "byte 7 is the flags AND the rewind depth");
 
                 // Premise: these bytes really do discriminate. A fixture whose
                 // angle and magnitude happened to be equal would pass a swap.
