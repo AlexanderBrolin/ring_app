@@ -28,6 +28,15 @@ namespace Ring.Simulation.Combat
     /// (2.6 against the lightest 70 kg is 0.037 under a threshold of 0.06),
     /// which is deliberate: the mechanic ships with the knob that turns it on,
     /// and the growth epic (app-vb5u) is what turns it.
+    ///
+    /// TWO ENTRY POINTS SINCE app-88jb Т27, NOT ONE, and the sentence this doc
+    /// opens with describes only the first. Update below is the per-tick pass
+    /// over every live round. CatchUp is the other: it drives a SINGLE freshly
+    /// spawned round through the extra steps its shooter's one-way delay owes
+    /// it, from inside the weapon phase, before that pass runs at all. Both go
+    /// through one shared body (StepProjectile), so a round born to a lagging
+    /// shooter meets the world under exactly the rules every other round meets
+    /// it under.
     internal static class ProjectileSystem
     {
         // HitRingWall (Stage 2 Task 46) splits off the arena's outer boundary,
@@ -54,10 +63,21 @@ namespace Ring.Simulation.Combat
             for (int i = w.ProjectileCount - 1; i >= 0; i--)
             {
                 // app-88jb Т27: the whole of one round's tick now lives in the
-                // callable step below, and this loop is the only caller there
-                // is today. -1 is the sentinel the contract gives that
-                // parameter -- the present, no history read at all -- and this
-                // pass is exactly the pass it has always been.
+                // callable step below, and it has TWO callers -- this loop,
+                // which walks every live round once, and CatchUp further down
+                // this file, which walks ONE freshly spawned round several
+                // times from inside the weapon phase. -1 is the sentinel the
+                // contract gives that parameter -- the present, no history read
+                // at all -- and this pass is exactly the pass it has always
+                // been.
+                //
+                // ITS ANSWER IS DROPPED HERE AND READ THERE, and that asymmetry
+                // is the contract rather than dead weight. "The round still
+                // occupies slot i" is what a caller needs before stepping the
+                // SAME index again, and this loop never does: it runs backwards
+                // precisely so a swap-remove lands on a slot already visited,
+                // which makes the removal the iteration's own business. CatchUp
+                // re-enters one index repeatedly and therefore has to read it.
                 StepProjectile(w, i, dt, in config, heroRadius, candidates, -1);
             }
         }
@@ -660,9 +680,50 @@ namespace Ring.Simulation.Combat
         /// pierce does NOT stop this loop: it leaves the round in its slot on
         /// purpose, and the rest of the catch-up is still owed to it.
         ///
-        /// THE FOUR VALUES Update HOISTS ABOVE ITS OWN LOOP ARE RE-READ FROM
-        /// `w` HERE, and the difference is deliberate rather than an oversight
-        /// of the lift. Update pays for its SimConfig copy once per TICK and
+        /// ⚠ WHICH MOMENT A CATCH-UP STEP LOOKS AT, SAID PLAINLY BECAUSE IT IS
+        /// NOT THE PAST. This runs inside the WEAPON phase, and
+        /// SimulationWorld.TickAll runs MobAiSystem, SeparationSystem and
+        /// ProjectileSystem AFTER that phase rather than before it. So every
+        /// step below sees collectors where they stand at the end of THIS
+        /// tick's movement and mobs where they stood at the end of the PREVIOUS
+        /// tick, and it sees that same frozen mixture on all of its steps. For
+        /// a step standing in for tick T - k those positions lie k ticks in the
+        /// FUTURE, not behind it: the half of the compensation spent here pays
+        /// the round for travel that really happened on the wire, and the
+        /// subtracting half -- asking where a body STOOD -- is Т28's and does
+        /// not exist yet. The mixture is simply the freshest picture this tick
+        /// has to offer, and calling it "the past" would be a lie.
+        ///
+        /// ⚠ AND A CATCH-UP STEP CAN KILL FROM INSIDE THE WEAPON PHASE, which
+        /// nothing could do before this task: until Т27 every kill happened in
+        /// Update above, AFTER the phase, so the order collectors are walked in
+        /// decided nothing. The phase loop tests `_players[i].Alive` on each
+        /// iteration and SimulationWorld.KillPlayer clears that flag at once,
+        /// so a round cranked for collector 0 can kill collector 1 before
+        /// collector 1's own weapon phase is reached -- and collector 1 then
+        /// does not fire this tick at all. The reverse is impossible: collector
+        /// 0 has already fired by the time collector 1 shoots. DamageMob
+        /// swap-removes a dying mob just as immediately, so a later collector
+        /// can likewise lose the mob he was about to shoot.
+        ///   THE REACH IS NARROW AND IS STATED RATHER THAN GLOSSED. It needs an
+        /// input half above zero, i.e. a one-way delay deeper than the arena's
+        /// picture depth -- past 100 ms one way at the shipped
+        /// RewindPictureTicks of 3, which is more than twice the 80 ms round
+        /// trip CRITICAL RULE 7's playtest gate runs at -- and it needs a
+        /// victim already wounded enough to die inside the meters that half can
+        /// cover: three steps of ProjectileSpeed * TickDt, which is 5.25 m at
+        /// the balance asset's own ProjectileSpeed of 52.5 (WeaponConfig.cs's
+        /// C# default is the older 35, so the source matters here). At the
+        /// gate's own latency it does not happen at all.
+        ///
+        /// THE FOUR VALUES Update HOISTS ABOVE ITS OWN LOOP ARE GATHERED AGAIN
+        /// HERE instead of being threaded in, and the difference is deliberate
+        /// rather than an oversight of the lift. Three of them really are
+        /// re-read from `w` -- the SimConfig copy, the hero radius taken off it
+        /// and the candidate scratch; the fourth, `dt`, comes from no world at
+        /// all, because SimulationWorld.TickDt is a static constant and Update
+        /// reads it from that same place.
+        ///   Update pays for its SimConfig copy once per TICK and
         /// then steps every live round with it, so the copy is the thing worth
         /// hoisting there; this runs once per SHOT, a rate at which that
         /// argument does not apply. Threading the four in as parameters would

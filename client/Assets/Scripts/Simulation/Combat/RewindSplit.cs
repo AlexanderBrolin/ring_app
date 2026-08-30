@@ -27,16 +27,28 @@ namespace Ring.Simulation.Combat
     /// the weapon to learn it; writing it out in both would be one number with
     /// two sources.
     ///
-    /// ⚠ WHAT A WITNESS OF THESE TWO METHODS COVERS, AND WHAT IT DOES NOT --
-    /// said here rather than left for a reader to infer from the word
-    /// "covered". Testing them directly puts the ARITHMETIC OF THE DIVISION
-    /// under a witness: that the picture half saturates at the arena's depth,
-    /// that the input half is the remainder, and that the two add back up to
-    /// `k`. It puts NONE of the second half under one: that the number reaches
-    /// a projectile at all, that it is spent ONCE on the birth tick instead of
-    /// on every tick of flight, and that it comes from the input of the round's
-    /// OWN shooter are facts about WeaponSystem and ProjectileSystem, and their
-    /// witnesses are the RewindTests fixtures that drive a real Tick.
+    /// ⚠ WHAT THE WITNESSES OF THESE TWO METHODS COVER, AND WHAT THEY DO NOT
+    /// -- said here rather than left for a reader to infer from the word
+    /// "covered". THE ARITHMETIC OF THE DIVISION IS CALLED DIRECTLY, by three
+    /// tests in RewindTests: the saturation of the picture half at the arena's
+    /// depth with the remainder going to the round, the shallow case where the
+    /// picture half takes the WHOLE of `k` and the round is owed nothing, and
+    /// the identity that the two halves add back up to `k` over the entire
+    /// domain.
+    ///   The shallow one is why "the consumers cover it anyway" was not an
+    /// option. Replace the min below by its right operand and a shallow `k`
+    /// yields a NEGATIVE step count -- and a `for` loop declines a negative
+    /// bound exactly the way it declines a zero one, so seen through
+    /// WeaponSystem's call that mutant is indistinguishable from the truth. A
+    /// fixture driving a real Tick cannot tell them apart at all; only a direct
+    /// call can.
+    ///
+    /// WHAT THOSE THREE DO NOT COVER is the whole of the second half: that the
+    /// number reaches a projectile at all, that it is spent ONCE on the birth
+    /// tick instead of on every tick of flight, and that it comes from the
+    /// input of the round's OWN shooter are facts about WeaponSystem and
+    /// ProjectileSystem, and their witnesses are the RewindTests fixtures that
+    /// drive a real Tick.
     ///
     /// DOMAIN, STATED SO NEITHER METHOD NEEDS A CLAMP OF ITS OWN. `k` reaches
     /// a caller already inside [0, Arena.RewindCapTicks]:
@@ -44,8 +56,25 @@ namespace Ring.Simulation.Combat
     /// its way into a tick and applies that cap there, and SimInput.RewindTicks
     /// is a byte, so a negative depth is unrepresentable rather than merely
     /// wrong. On the config side SimConfigBuilder refuses a picture depth
-    /// deeper than the cap, and ArenaConfig's own [Range] keeps it off the
-    /// negative side. Both results therefore land in [0, k] by construction.
+    /// deeper than the cap. Both results therefore land in [0, k] by
+    /// construction.
+    ///
+    /// ⚠ THE FLOOR UNDER THE PICTURE DEPTH IS NetInvariants RULE #11, NOT
+    /// ArenaConfig's [Range], and the difference is the difference between a
+    /// gate and a decoration. [Range] is an inspector attribute: it shapes a
+    /// slider and refuses nothing a script, a test or a hand-edited asset
+    /// assigns, and a runtime clamp of RewindPictureTicks exists nowhere in the
+    /// tree. What holds the floor is rule #11 -- it demands
+    /// Arena.RewindPictureTicks == Net.InterpBufferTicks, while rule #1 of the
+    /// same validator rejects an InterpBufferTicks of zero or less
+    /// -- and it holds it where holding matters, at SERVER START, since
+    /// ServerBootstrap fails the process on every violation the validator
+    /// reports.
+    ///   That is load-bearing for this file rather than a filing note. At
+    /// RewindPictureTicks = 0 the min below answers zero for every `k`, the
+    /// whole of every shooter's depth would be spent cranking his round, and
+    /// the weapon would be the canceled Р381 hitscan again -- reached by
+    /// configuration instead of by code.
     internal static class RewindSplit
     {
         /// THE QUESTION HALF: how many ticks of `k` are spent asking where the

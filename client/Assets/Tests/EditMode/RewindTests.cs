@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -63,6 +64,96 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("Arena.RewindCapTicks"));
             Assert.That(ex.Message, Does.Not.Contain("Arena.RewindPictureTicks"),
                 "правило нижней границы обязано быть единственным нарушением этой фикстуры");
+        }
+
+        // ---- app-88jb Т27: the split itself, called directly ---------------
+        //
+        // ⭐ THE ARITHMETIC OF THE DIVISION, AND IT IS ASKED OF RewindSplit
+        // ITSELF rather than of a world (coordinator RULING 181). The three
+        // tests below take no SimulationWorld at all — they stand with the
+        // config-rule units at the head of this file for that reason — and they
+        // witness ONLY the arithmetic: that the number reaches a round, that it
+        // is spent once, and that it comes from the round's own shooter are
+        // witnessed by the Т27 fixtures at the foot of this file, which drive a
+        // real Tick.
+        //
+        // ⛔ THE SHALLOW CASE CANNOT BE REACHED THROUGH A CONSUMER AT ALL, and
+        // that is why a direct call is not a convenience here. Replace
+        // PictureTicks' min by its right operand and a `k` under the picture
+        // depth yields a NEGATIVE step count; ProjectileSystem.CatchUp's `for`
+        // declines a negative bound exactly the way it declines zero, so
+        // through WeaponSystem that mutant produces the identical world. Only
+        // the call below can tell the two apart.
+        //
+        // The fixture is TestConfigs.Default() and every expectation is written
+        // out of its own Arena — the tests follow the baseline's cap and
+        // picture depth instead of restating them as 6 and 3.
+
+        [Test]
+        public void PictureHalf_SaturatesAtTheArenaDepth_AndTheRestGoesToTheRound()
+        {
+            // Above the arena's picture depth the question stops getting
+            // deeper: a shooter lagging worse than the interpolation buffer is
+            // shown no further back than anybody else, and every tick past that
+            // point belongs to the round.
+            ArenaSimConfig arena = TestConfigs.Default().Arena;
+            Assert.Greater(arena.RewindCapTicks, arena.RewindPictureTicks,
+                "премисса фикстуры: у базовой конфигурации нет глубины сверх картинки, " +
+                "насыщать нечем");
+
+            for (int k = arena.RewindPictureTicks + 1; k <= arena.RewindCapTicks; k++)
+            {
+                Assert.AreEqual(arena.RewindPictureTicks, RewindSplit.PictureTicks(k, in arena),
+                    $"картинка не насытилась на глубине {k} — вопрос забирает больше, " +
+                    "чем ему отпущено ареной");
+                Assert.AreEqual(k - arena.RewindPictureTicks, RewindSplit.InputTicks(k, in arena),
+                    $"на глубине {k} снаряду досталась не вся оставшаяся половина");
+            }
+        }
+
+        [Test]
+        public void DepthShallowerThanThePicture_LeavesTheRoundNoCatchUpAtAll()
+        {
+            // ⭐⭐ THE AXIS A MUTANT KILLS AND A WORLD CANNOT, for the reason
+            // this section's opening note sets out: under the picture depth the
+            // question takes the WHOLE of `k` and the round is owed nothing. This is also the ordinary case
+            // of a healthy connection — most shooters spend their entire depth
+            // here and take no catch-up step at all.
+            ArenaSimConfig arena = TestConfigs.Default().Arena;
+            Assert.Greater(arena.RewindPictureTicks, 0,
+                "премисса фикстуры: при нулевой картинке мелкой глубины не существует");
+
+            for (int k = 0; k < arena.RewindPictureTicks; k++)
+            {
+                Assert.AreEqual(k, RewindSplit.PictureTicks(k, in arena),
+                    $"мелкая глубина {k} не ушла в картинку целиком");
+                Assert.AreEqual(0, RewindSplit.InputTicks(k, in arena),
+                    $"на глубине {k} снаряду отпущены догоняющие шаги, которых нет: " +
+                    "деление отдаёт вопросу не min, а саму глубину картинки");
+            }
+        }
+
+        [Test]
+        public void TwoHalves_AddBackUpToTheDepth_AcrossTheWholeDomain()
+        {
+            // The conservation law of the split, over the whole domain a
+            // sanitized input can carry: nothing of the depth is invented and
+            // nothing is lost between the two halves. Neither half may go
+            // negative either — a negative input half is exactly the shape
+            // DepthShallowerThanThePicture_LeavesTheRoundNoCatchUpAtAll
+            // refuses, and this sweep says it holds nowhere in the domain
+            // rather than only under the picture depth.
+            ArenaSimConfig arena = TestConfigs.Default().Arena;
+
+            for (int k = 0; k <= arena.RewindCapTicks; k++)
+            {
+                int picture = RewindSplit.PictureTicks(k, in arena);
+                int input = RewindSplit.InputTicks(k, in arena);
+                Assert.AreEqual(k, picture + input,
+                    $"половины глубины {k} не сходятся обратно в неё: {picture} + {input}");
+                Assert.GreaterOrEqual(picture, 0, $"картинка ушла в минус на глубине {k}");
+                Assert.GreaterOrEqual(input, 0, $"половина снаряда ушла в минус на глубине {k}");
+            }
         }
 
         [Test]
@@ -650,12 +741,21 @@ namespace Ring.Simulation.Tests
             // stream at the same point in both, so the two muzzle angles are
             // equal and only the crank can separate the two positions.
             //
-            // THE SECOND ASSERTION IS A SENTINEL FOR A CANCELED DESIGN (Р381,
-            // and spec §3.6 carries the account of what that edition got
-            // wrong): it had the round born at tick T - k and fast-forwarded,
-            // i.e. starting BEHIND the shooter. Anything that brings it back
-            // leaves the lagging round SHORT of the still one, which is what
-            // this line refuses.
+            // ⚠ THE SECOND ASSERTION IS A RESTATEMENT AND NOT A SECOND
+            // WITNESS, and saying so is the whole point of this paragraph
+            // (coordinator RULING 190). The canceled design it names -- Р381,
+            // which had the round born at tick T - k and fast-forwarded, i.e.
+            // starting BEHIND the shooter -- is refused by the FIRST line
+            // already: at a tolerance of 0.05 against a gap of two whole steps
+            // that line admits nothing standing less than (2 * step - 0.05) m
+            // ahead of the still round, and NUnit reaches the line after it
+            // only when it passed. It therefore cannot fail on its own, and
+            // whatever kills it kills the first assertion first.
+            //   IT STAYS ALL THE SAME, as a decision rather than an oversight
+            // (the same ruling): it costs one comparison, and it is the one
+            // line in this file that tells the next reader WHICH scheme was
+            // canceled and which way its mistake pointed. Spec §3.6 carries the
+            // full account of what that edition got wrong.
             //
             // OpenField(), not Open(): Open() spawns the collector 159 m out on
             // the ring, so an aim point at (30, 0) lies in -X from him and both
@@ -712,6 +812,63 @@ namespace Ring.Simulation.Tests
                 - (cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks + 1) * SimulationWorld.TickDt;
             Assert.AreEqual(expected, w.Projectiles[0].Ttl, 1e-3f,
                 "Ttl не вычтен на догоняющих шагах");
+        }
+
+        /// THE PREMISE OF EVERY "MET ON A CATCH-UP STEP" FIXTURE IN THIS FILE,
+        /// ASSERTED RATHER THAN ASSUMED (coordinator RULING 185). Each of them
+        /// stands a collector short of something round -- an obstacle, or
+        /// another collector -- and needs the contact to land on a catch-up
+        /// step that is NEITHER the round's ordinary step NOR the LAST of the
+        /// catch-up. Both halves are load-bearing and both rest on balance
+        /// numbers that have already moved once inside this epic (Т23 raised
+        /// the ProjectileSpeed ceiling to 300, and the window these fixtures
+        /// are correct in is narrow):
+        ///   * nearer than the ordinary step and the round meets the obstacle
+        ///     with no catch-up at all -- the fixture drops back to the
+        ///     sentinel RULING 174 moved it away from, and it would have been
+        ///     green through the whole red phase;
+        ///   * on the LAST catch-up step and the loop ends by itself on the
+        ///     step that resolves the contact -- dropping the RULING 172 break
+        ///     would then change nothing observable, and a guard would read as
+        ///     witnessed while no assertion could tell it from its own absence.
+        /// Left implicit, both go blind IN SILENCE: the tests stay green and
+        /// stop witnessing. Hence an assertion, and a message that says which
+        /// half went.
+        ///
+        /// EVERY NUMBER IS DERIVED, NONE IS READ OFF A RUN. The muzzle is
+        /// MuzzleOffset plus the first shot's whole tick of fire-cooldown
+        /// overshoot (WeaponSystem.SpawnShot); the contact is where the
+        /// solver's padded circle -- the target's own radius plus the round's
+        /// -- meets the line; and the step is ProjectileSpeed * TickDt because
+        /// these fixtures fire from the HIP (no AimHeld), which leaves VelZ at
+        /// zero and makes the shot's whole speed horizontal. `toTargetCenter`
+        /// is measured off the world by every caller, so a fixture is checked
+        /// where it actually put its shooter rather than where it meant to.
+        ///
+        /// Answers the 1-based catch-up step the contact falls on, which the
+        /// ricochet fixture spends on arithmetic of its own.
+        static int AssertContactLandsOnAMiddleCatchUpStep(in SimConfig cfg,
+            float toTargetCenter, float targetRadius)
+        {
+            int steps = cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks;
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            float muzzle = cfg.Weapon.MuzzleOffset
+                + SimulationWorld.TickDt * cfg.Weapon.ProjectileSpeed;
+            float contact = toTargetCenter - muzzle
+                - (targetRadius + cfg.Weapon.ProjectileRadius);
+            int contactStep = (int)math.ceil(contact / step);
+
+            Assert.Greater(contactStep, 1,
+                $"фикстура перестала свидетельствовать RULING 172: баланс уехал, контакт лежит " +
+                $"в {contact} м от дула при шаге {step} м, и его достаёт ОБЫЧНЫЙ шаг — " +
+                "препятствие встречается до догона, а тест снова сторожит порядок эмитов, " +
+                "который существовал и до Т27");
+            Assert.Less(contactStep, steps,
+                $"фикстура перестала свидетельствовать RULING 172: баланс уехал, контакт лежит " +
+                $"в {contact} м от дула при шаге {step} м, то есть на ПОСЛЕДНЕМ из {steps} " +
+                "догоняющих шагов — цикл догона кончился бы сам, и снятие break не дало бы " +
+                "ни одного лишнего шага, который эти ассерты могли бы увидеть");
+            return contactStep;
         }
 
         [Test]
@@ -778,6 +935,14 @@ namespace Ring.Simulation.Tests
             // first, and ObstacleRadius + 2.8 only the second. ⚠ Every number
             // here is derived from the solver's own radius sum, not read off a
             // run.
+            //   ⛔ AND THE SPACING NO LONGER CARRIES THAT REASONING ALONE
+            // (coordinator RULING 185). Both halves above are true only inside
+            // a narrow band of ProjectileSpeed, and this test used to lose them
+            // in complete silence if the balance left it — so the fixture now
+            // asserts its own premise through
+            // AssertContactLandsOnAMiddleCatchUpStep, which derives the contact
+            // and the step it falls on from the config and names which half
+            // went when it goes.
             //
             // ⛔ AND MaxRicochets IS STATED, WHICH THE PLAN DID NOT DO
             // (coordinator Ruling 94's own rule, already obeyed by three
@@ -805,6 +970,8 @@ namespace Ring.Simulation.Tests
             float2 obstacle = cfg.Arena.ObstaclePos[0];
             TestWorlds.RelocatePlayerForTest(w, 0,
                 obstacle - new float2(cfg.Arena.ObstacleRadius[0] + 3.6f, 0f));
+            AssertContactLandsOnAMiddleCatchUpStep(in cfg,
+                math.distance(w.PlayerAt(0).Pos, obstacle), cfg.Arena.ObstacleRadius[0]);
             var lagged = new SimInput { FireHeld = true, AimPoint = obstacle,
                 RewindTicks = (byte)cfg.Arena.RewindCapTicks };
             w.Tick(lagged);
@@ -958,12 +1125,20 @@ namespace Ring.Simulation.Tests
             // order the weapon phase and the backwards projectile pass run in
             // does not swap the two rounds.
             //
-            // THE ROUNDS ARE TOLD APART BY OwnerIndex AND CROSS-CHECKED BY
-            // GEOMETRY: the two shooters stand 80 m apart across the X axis, so
-            // a round attributed to the wrong shooter would sit tens of meters
-            // off its own line and the identity pair below says so. That pair
-            // is not decoration -- OwnerIndex alone would still read correctly
-            // if the CRANK, and not the attribution, went to the wrong slot.
+            // THE ROUNDS ARE TOLD APART BY OwnerIndex, AND THE y-PAIR BELOW IS
+            // THE PREMISE OF THE MEASUREMENT rather than a witness of its own
+            // (coordinator RULING 190). The two shooters stand 80 m apart
+            // across the X axis, so that pair says the round the OwnerIndex
+            // scan matched to a shooter really is traveling along THAT
+            // shooter's line -- which is exactly what makes the two travels
+            // below distances from the right origins.
+            //   ⚠ IT DOES NOT CATCH A CRANK SENT TO THE WRONG SLOT, and the
+            // claim that it did was wrong. Both shots run down +X, so cranking
+            // either round by anybody's depth moves x and leaves y where it
+            // was; under a swapped depth both y checks stay green. What catches
+            // that is the LAST assertion, the difference of the two travels --
+            // and mutation M72, which takes the depth from the neighboring
+            // shooter, killed this test through that line and no other.
             //
             // ⚠ THE TWO DEPTHS ARE THE EXTREMES OF THE DOMAIN: nothing at all
             // for one shooter, the arena cap for the other, so the expected gap
@@ -1090,6 +1265,178 @@ namespace Ring.Simulation.Tests
             float traveled = math.distance(w.Projectiles[0].Pos, w.PlayerAt(0).Pos);
             Assert.AreEqual(muzzle + step, traveled, 0.05f,
                 "снаряд прокручен чужой глубиной — снята охрана if (projectileId >= 0)");
+        }
+
+        [Test]
+        public void BodyOnACatchUpStep_EndsTheRound_SpawnBeforeEnd()
+        {
+            // ⭐⭐ THE MOST COMMON ENDING A CATCH-UP HAS IN A REAL MATCH, and
+            // until now the only ending witnessed on one was a BARRIER
+            // (coordinator RULING 186). Five sites in StepProjectile lower
+            // `stillInSlot`; the wall fixture covers one of them, and this
+            // covers the arm the whole rewind exists for -- a round meeting a
+            // BODY. The three things witnessed are the wall fixture's three,
+            // for the same reasons its doc gives at length: the round leaves
+            // the board, the round reports exactly ONE ending, and the spawn is
+            // emitted before that ending so the snapshot assembler's per-viewer
+            // subscription is open when the ending addresses it.
+            //
+            // A SECOND COLLECTOR IS THE BODY, not a mob, and that choice is
+            // the one TargetThatLeavesThreeTicksAfterTheShot_IsNotHit already
+            // makes: a collector handed no input does not move at all, so "the
+            // target stands exactly there" is a decision of the fixture instead
+            // of an outcome of an FSM. It also keeps the tick single -- MobAiSystem
+            // runs AFTER the weapon phase, so a mob would be measured from
+            // where it stood last tick and the fixture would have to say so.
+            //
+            // ⚠ THE PIERCE CANNOT INTERFERE AND GETS NO FIXTURE OF ITS OWN
+            // HERE, which is a decision rather than a gap: at the shipped
+            // numbers the rule refuses every body in the game (2.6 against the
+            // lightest 70 kg is 0.037 under a threshold of 0.06), it needs a
+            // STRICT overkill besides -- 12 damage against 100 Hp is not one --
+            // and app-vb5u is the epic that turns the knob. A fixture raising
+            // that threshold would be witnessing Т20's rule, not Т27's.
+            //
+            // OpenField(), and the shooter is at the origin only because this
+            // fixture carries no zones at all -- Open() would put both
+            // collectors 159 m out on the ring, and a zoned arena would
+            // activate the Director in the middle of the measurement (lesson
+            // 590).
+            SimConfig cfg = TestConfigs.OpenField();
+            // No cone: the premise below is a straight line down +X, and a
+            // randomized muzzle angle would move the contact it is computed
+            // from -- the same statement, for the same reason, that
+            // TargetThatLeavesThreeTicksAfterTheShot_IsNotHit makes about
+            // itself.
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            // Close enough that the contact falls on the SECOND of the three
+            // catch-up steps -- asserted below, not trusted.
+            const float targetX = 4.05f;
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(targetX, 0f));
+            AssertContactLandsOnAMiddleCatchUpStep(in cfg,
+                math.distance(w.PlayerAt(0).Pos, w.PlayerAt(1).Pos), cfg.Hero.Radius);
+
+            var inputs = new SimInput[2];
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            inputs[1] = default(SimInput);
+            w.TickAll(inputs);
+
+            int spawnAt = -1, endAt = -1;
+            for (int i = 0; i < w.EventCount; i++)
+            {
+                SimEventKind k = w.GetEvent(i).Kind;
+                if (k == SimEventKind.ProjectileFired && spawnAt < 0) spawnAt = i;
+                if (k == SimEventKind.ProjectileHitPlayer && endAt < 0) endAt = i;
+            }
+            Assert.GreaterOrEqual(spawnAt, 0, "события спавна нет вовсе");
+            Assert.GreaterOrEqual(endAt, 0, "снаряд не встретил тело на догоне");
+            Assert.Less(spawnAt, endAt, "конец эмитится РАНЬШЕ спавна — подписка не откроется");
+            Assert.AreEqual(0, w.ProjectileCount,
+                "погибший на теле снаряд остался на доске — догон шагает по снятой памяти");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileHitPlayer),
+                "у одного раунда два конца — догон не прервался на снятом снаряде");
+            Assert.Less(w.PlayerAt(1).Hp, cfg.Hero.MaxHp,
+                "цель не получила урона — конец пришёлся не на неё");
+        }
+
+        [Test]
+        public void RicochetOnACatchUpStep_KeepsTheRoundAndTheRestOfItsSteps()
+        {
+            // ⭐⭐ THE OTHER HALF OF StepProjectile's CONTRACT, and nothing in
+            // the tree asserted it (coordinator RULING 186): `true` does NOT
+            // mean "nothing was hit". A ricochet resolves a contact and leaves
+            // the round in its slot on purpose, so the catch-up owes it the
+            // REST of its steps -- a loop that stopped on any contact would
+            // quietly hand a lagging shooter a shorter-ranged bounce than
+            // everybody else, which is different physics rather than a smaller
+            // bug.
+            //
+            // ⛔ AND THIS FIXTURE DOES NOT STATE MaxRicochets, WHERE THE WALL
+            // FIXTURE STATES ZERO. It runs on the shared baseline's own value,
+            // which is ONE -- a documented deviation from the game number of 2
+            // that TestConfigs states and ConfigTests guards, not the shipped
+            // number itself. That is the point: the branch under test is the
+            // one a real match takes.
+            //
+            // A SECOND CONTACT AT t = 0 IS IMPOSSIBLE, checked in TryRicochet's
+            // body before this fixture was built: it seats the round at the
+            // contact plus one Geometry.Skin ALONG THE NORMAL, i.e. just
+            // outside the padded circle, precisely so the next step does not
+            // answer t = 0 with the outward normal and extinguish the round on
+            // its own touchdown point.
+            //
+            // ⚠ THE PIERCE GETS NO WITNESS ON THE CATCH-UP, AND THAT IS A
+            // DECISION: at the shipped numbers it refuses every body in the
+            // game (2.6 against the lightest 70 kg is 0.037 under a threshold
+            // of 0.06), app-vb5u is the epic that turns that knob, and a
+            // fixture raising the threshold would be witnessing Т20's rule
+            // rather than Т27's.
+            //
+            // THE ARITHMETIC. The contact lands on the SECOND of three catch-up
+            // steps (asserted, not assumed), the reflection is head-on off a
+            // circle the round flies straight at, so the round leaves at
+            // ProjectileSpeed * RicochetRetention back down -X, and TWO steps of
+            // that damped speed are still owed to it on this tick: the third
+            // catch-up step and the ordinary ProjectileSystem one. A catch-up
+            // that broke on the ricochet would spend only the ordinary one and
+            // leave the round a whole damped step short of where the last
+            // assertion looks.
+            //
+            // Quiet(), not Default(), and Т19's own reason: the same twenty
+            // obstacles and the same walls with the waves pushed out of reach,
+            // so no gunner wanders into the firing line. The collector stands
+            // in the core and this tick therefore activates the Director; it
+            // cannot reach what is measured here, because the phase machine is
+            // the LAST step of TickAll and the fixture is single-tick.
+            SimConfig cfg = TestConfigs.Quiet();
+            // No cone, so the shot meets the circle head-on and the reflection
+            // is exactly -X: the expected position below is an arithmetic
+            // consequence of the fixture rather than a number off a run.
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(7, cfg);
+            float2 obstacle = cfg.Arena.ObstaclePos[0];
+            TestWorlds.RelocatePlayerForTest(w, 0,
+                obstacle - new float2(cfg.Arena.ObstacleRadius[0] + 3.6f, 0f));
+
+            // The two TryRicochet gates this fixture does not otherwise state.
+            // The counter is the whole subject; the speed floor would silently
+            // turn this into the wall fixture if the balance ever crossed it.
+            Assert.Greater(cfg.Weapon.MaxRicochets, 0,
+                "премисса фикстуры: базовая конфигурация запрещает рикошет, и контакт " +
+                "погасил бы раунд — это фикстура стены, а не эта");
+            Assert.GreaterOrEqual(cfg.Weapon.ProjectileSpeed * cfg.Weapon.RicochetRetention,
+                cfg.Weapon.RicochetMinSpeed,
+                "премисса фикстуры: гашёная скорость упала ниже порога рикошета, и контакт " +
+                "погасил бы раунд");
+            int contactStep = AssertContactLandsOnAMiddleCatchUpStep(in cfg,
+                math.distance(w.PlayerAt(0).Pos, obstacle), cfg.Arena.ObstacleRadius[0]);
+
+            var lagged = new SimInput { FireHeld = true, AimPoint = obstacle,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks };
+            w.Tick(lagged);
+
+            Assert.AreEqual(1, w.ProjectileCount,
+                "отскочивший раунд снят с доски — догон прервался там, где снаряд остался в слоте");
+            Assert.AreEqual(1, w.Projectiles[0].Ricochets,
+                "отскока не случилось — фикстура мерит не то");
+            Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileBlocked),
+                "отскок эмитил конец раунда — рикошет обязан молчать до Т30");
+            Assert.Less(w.Projectiles[0].Vel.x, 0f, "снаряд не развернулся");
+
+            int steps = cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks;
+            float back = cfg.Weapon.ProjectileSpeed * cfg.Weapon.RicochetRetention
+                * SimulationWorld.TickDt;
+            float contactX = obstacle.x - cfg.Arena.ObstacleRadius[0] - cfg.Weapon.ProjectileRadius;
+            float expectedX = contactX - Geometry.Skin - (steps - contactStep + 1) * back;
+            Assert.AreEqual(expectedX, w.Projectiles[0].Pos.x, 0.05f,
+                "остаток догоняющих шагов раунду не сохранён — догон прервался на рикошете, " +
+                "и отскочивший снаряд лагающего стрелка отлетел на целый шаг меньше");
         }
     }
 }
