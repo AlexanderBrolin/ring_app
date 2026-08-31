@@ -82,6 +82,145 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(HitZones.Overlaps(top + 5f, bodyHeight, r, top));
         }
 
+        // ── app-88jb Т14 fix-round (Rulings 191/192): DIRECT tests of
+        // HitZones.Resolve. The class is internal on purpose and this assembly
+        // already calls Overlaps/StackTop directly; until this round the
+        // resolver itself was exercised only through world shots, which cannot
+        // reach the axes below (lesson 620). ──
+
+        [Test]
+        public void Resolve_ContactHeight_LiesInsideTheWinnersBand()
+        {
+            // Ruling 191 (review finding A-1), the DIRECT half of the witness
+            // pair -- the world half lives in HitPartsTests. One long climbing
+            // chord past the Director's flank, wide of his legs and inside his
+            // torso circle: the torso circle is entered while the height is
+            // still below the torso band, and the first point where circle and
+            // band hold AT ONCE is where the raw height crosses the band's
+            // bottom. A resolver that reports the circle entry instead hands
+            // back a contact height in a belt the winning part does not
+            // occupy -- and that number is the moment arm and the spark point.
+            SimConfig cfg = TestConfigs.Default();
+            HitPart[] parts = cfg.Director.Parts;
+            HitPart legs = parts[0];
+            HitPart torso = parts[1];
+            float projR = cfg.Weapon.ProjectileRadius;
+            var p0 = float2.zero;
+            var p1 = new float2(10f, 0f);
+            var target = new float2(6.3f, 2f);       // 2 m off the chord's line
+            const float hStart = 0.5f, hEnd = 2f;    // climbs 0.15 m per meter
+
+            // Premises, asserted as geometry: the lateral miss lies BETWEEN
+            // the legs and torso circles (only the torso is in play), and the
+            // torso circle is entered below its own band while the crossing
+            // of that band still happens inside the circle.
+            float lateral = math.abs(target.y);
+            Assert.Greater(lateral, legs.Radius + projR,
+                "луч задевает круг ног — тест перестал быть о единственном кандидате");
+            Assert.Less(lateral, torso.Radius + projR,
+                "луч не входит в круг корпуса — кандидатов нет вовсе");
+            float torsoPad = torso.Radius + projR;
+            float half = math.sqrt(torsoPad * torsoPad - lateral * lateral);
+            float sIn = target.x - half;
+            float hIn = hStart + (hEnd - hStart) * sIn / p1.x;
+            Assert.Less(hIn, torso.Bottom,
+                "вход в круг корпуса лежит уже в его полосе — окно дефекта закрыто");
+            float sCross = p1.x * (torso.Bottom - hStart) / (hEnd - hStart);
+            Assert.Less(sCross, target.x + half,
+                "полоса корпуса достигается уже вне его круга — контакта нет и тест не о высоте");
+
+            bool resolved = HitZones.Resolve(parts, p0, p1, projR, target, hStart, hEnd,
+                HitZones.StackTop(parts), out HitZone zone, out float mult,
+                out float hitHeight, out float t);
+
+            Assert.IsTrue(resolved, "единственный кандидат с пересечённой полосой не разрешён в попадание");
+            Assert.AreEqual(torso.Zone, zone, "зона не корпусная, хотя пересечён только его круг");
+            Assert.That(hitHeight, Is.InRange(torso.Bottom, torso.Top),
+                "высота контакта вне полосы победителя — контакт объявлен там, где части нет");
+            Assert.AreEqual((torso.Bottom - hStart) / (hEnd - hStart), t, 1e-5f,
+                "t контакта не совпадает с первым одновременным попаданием в круг и полосу");
+            Assert.AreEqual(torso.DamageMult, mult, 1e-6f, "множитель не от победителя");
+        }
+
+        [Test]
+        public void Resolve_TieOfEqualEntries_KeepsTheLowerPart()
+        {
+            // Ruling 192 (review finding A-3): the REAL source of a tie is the
+            // clamp `tEnter = max(root, 0)` in Geometry.SegmentCircleInterval
+            // -- a step that BEGINS inside two parts' circles yields zero for
+            // both (no body carries equal radii, so equal radii produce no
+            // ties in this game). A guard, not a witness (lesson 427): green
+            // on today's code and on the fixed one; what it pins is the strict
+            // `<`, which keeps the LOWER part on an exact tie.
+            //
+            // The chord starts inside both circles and DESCENDS through the
+            // legs/torso seam, so both parts pass their gates and both first
+            // contacts sit at t = 0 -- the seam height is inside both CLOSED
+            // bands at the step's very start.
+            SimConfig cfg = TestConfigs.Default();
+            HitPart[] parts = cfg.Chaser.Parts;
+            HitPart legs = parts[0];
+            HitPart torso = parts[1];
+            float projR = cfg.Weapon.ProjectileRadius;
+            var target = float2.zero;
+            var p0 = new float2(0.2f, 0f);
+            var p1 = new float2(-0.3f, 0f);
+            float seam = legs.Top;                 // == torso.Bottom, builder rule 2
+            float hStart = seam;
+            float hEnd = seam - 0.1f;              // descending across the seam
+
+            // Premise of the tie: the whole step lies inside BOTH circles, so
+            // the interval clamp answers zero for both parts.
+            Assert.Less(math.length(p0 - target), legs.Radius + projR,
+                "старт шага вне круга ног — тай нулевых входов не воспроизводится");
+            Assert.Less(math.length(p1 - target), legs.Radius + projR,
+                "конец шага вне круга ног — шаг перестал целиком лежать внутри кругов");
+            Assert.AreEqual(torso.Bottom, legs.Top,
+                "полосы ног и корпуса не смежны — фикстура не о шве");
+
+            bool resolved = HitZones.Resolve(parts, p0, p1, projR, target, hStart, hEnd,
+                HitZones.StackTop(parts), out HitZone zone, out _, out _, out float t);
+
+            Assert.IsTrue(resolved, "шаг внутри обоих кругов не разрешён в попадание");
+            Assert.AreEqual(legs.Zone, zone, "при тае равных входов победила не нижняя часть");
+            Assert.AreEqual(0f, t, 1e-6f, "тай нулевых входов дал ненулевой t контакта");
+        }
+
+        [Test]
+        public void Resolve_EmptyOrAbsentStack_RefusesTheHit()
+        {
+            // Ruling 192: a body that declares no hit volume presents nothing
+            // to hit. Unreachable through SimConfigBuilder (its own rule
+            // refuses an empty stack) -- what this guards is the hand-built
+            // fixture, for which a miss is the honest answer rather than an
+            // exception.
+            SimConfig cfg = TestConfigs.Default();
+            float projR = cfg.Weapon.ProjectileRadius;
+            var p0 = float2.zero;
+            var p1 = new float2(2f, 0f);
+            var target = new float2(1f, 0f);
+
+            Assert.IsFalse(HitZones.Resolve(System.Array.Empty<HitPart>(), p0, p1, projR,
+                    target, 1f, 1f, 2.7f, out HitZone zone, out _, out _, out _),
+                "пустой стек частей разрешён в попадание");
+            Assert.AreEqual(HitZone.None, zone, "пустой стек вернул небезразличную зону");
+            Assert.IsFalse(HitZones.Resolve(null, p0, p1, projR,
+                    target, 1f, 1f, 2.7f, out zone, out _, out _, out _),
+                "отсутствующий стек частей разрешён в попадание");
+            Assert.AreEqual(HitZone.None, zone, "отсутствующий стек вернул небезразличную зону");
+        }
+
+        [Test]
+        public void StackTop_OfNullOrEmptyStack_IsZero()
+        {
+            // Ruling 192: the crown of a body that has no parts is zero, not a
+            // NullReferenceException on the hot path -- StackTop's own
+            // contract, until now exercised by no test on either arm.
+            Assert.AreEqual(0f, HitZones.StackTop(null), "крона отсутствующего стека не ноль");
+            Assert.AreEqual(0f, HitZones.StackTop(System.Array.Empty<HitPart>()),
+                "крона пустого стека не ноль");
+        }
+
         [Test]
         public void GunnerHeadshot_IsOneshot()
         {

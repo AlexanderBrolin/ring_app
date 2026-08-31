@@ -279,8 +279,11 @@ namespace Ring.Simulation.Tests
         // one quantity is what the spec itself rejects in §3.2), so the
         // [Range] attribute states it to the Inspector and the rule below
         // states it to everything else. An attribute alone is enforced by the
-        // Editor UI and by nothing at runtime, which is the same gap
-        // SwingLeadFactor's own rule closes above.
+        // Editor UI and by nothing at runtime -- the same gap the
+        // SwingLeadFactor bound in SimConfigBuilder.ValidateMob closes for
+        // that field (its witness is ConfigTests.
+        // Validate_SwingLeadFactorOutOfRange_Throws, not anything in this
+        // file).
         //
         // BOTH HALVES GET A WITNESS (ruling 120). The attribute travels to
         // MobConfig too, so a rule that only checked the weapon would leave
@@ -319,6 +322,22 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Gunner.ProjectileSpeed"));
+        }
+
+        [Test]
+        public void Validate_MobProjectileSpeedExactlyAtTheCeiling_IsLegal()
+        {
+            // Т14/Т23 fix-round (Ruling 195, review finding B-2): the OTHER
+            // branch of the mob half of rule 13. The boundary's legality was
+            // witnessed only on the Weapon copy of the rule -- a separate
+            // ReqAtMost call against a separate field -- so the mutation "the
+            // mob call's ceiling -> 150" survived the whole suite: the mob
+            // refusal test above sends 301, which 150 refuses just as loudly.
+            // Exactly the weapon twin's shape, on the SECOND archetype the way
+            // this file's own convention requires.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.ProjectileSpeed = 300f;                      // SECOND archetype
+            Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
         }
     }
 }

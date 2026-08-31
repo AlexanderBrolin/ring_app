@@ -46,6 +46,12 @@ namespace Ring.Simulation.Tests
     ///    Ruling 82; the epic's own precedents for the pair are
     ///    ImpactConfigTests.Validate_CocoonDampingExactlyOne_IsLegal from Т1
     ///    and the exact-equality half of validation rule 5 from Т13).
+    ///
+    /// THE Т14/Т23 FIX-ROUND ADDS ONE MORE WORLD TEST (Ruling 191):
+    /// ClimbingShot_EnteringTheTorsoCircleBelowItsBand_LandsOnTheLegs, of the
+    /// same Open()-fires-from-origin shape as the seven above -- it witnesses
+    /// that the winning part is the FIRST CONTACT (circle and band at once),
+    /// never the earliest circle entry; its direct twin lives in HitZoneTests.
     public class HitPartsTests
     {
         [Test]
@@ -495,6 +501,94 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
                 "накренённое тело перестало попадаться — части поехали за креном");
             Assert.AreEqual(HitZone.Head, e.Zone, "зона поехала вслед за креном");
+        }
+
+        [Test]
+        public void ClimbingShot_EnteringTheTorsoCircleBelowItsBand_LandsOnTheLegs()
+        {
+            // Ruling 191 (review finding A-1) -- the WORLD half of the witness
+            // pair; the direct half lives in HitZoneTests. A climbing round
+            // aimed past the Director's flank enters his wide TORSO circle
+            // while its height is still inside the LEGS band, and only later
+            // -- still climbing, still short of the torso's band -- touches
+            // the legs circle itself. The first point where a part's circle
+            // and its own band are satisfied AT ONCE belongs to the legs; a
+            // resolver that awards the earliest CIRCLE entry instead reads
+            // the blow as Body, with the torso's multiplier and a contact
+            // height in a belt the torso does not occupy.
+            //
+            // THE DIRECTOR, NOT THE GUNNER, on the shared fixture's own
+            // numbers: his legs/torso radii differ by 0.66 m, so the two
+            // circle entries are far enough apart to land in one tick-step
+            // with room to spare; the gunner's 0.15 m gap is not.
+            //
+            // EVERY PREMISE IS ASSERTED, NOT ASSUMED (lesson 622, the same
+            // discipline ShotAtHeadHeight_ButAtShoulderHalfWidth_Misses
+            // above carries): the target is frozen AND PROBED to stay put,
+            // the ray crosses the legs circle (or Legs could never win and
+            // the witness would be blind), the head circle stays out of
+            // play, the two multipliers differ, the legs circle is entered
+            // inside the legs' own band and the torso circle is entered
+            // BELOW the torso's band -- the exact window the defect lives in.
+            SimConfig cfg = TestConfigs.Open();
+            cfg.Director.MaxSpeed = 0f; cfg.Director.Accel = 0f;   // frozen, probed below
+            var w = new SimulationWorld(7, cfg);
+            HitPart legs = cfg.Director.Parts[0];
+            HitPart torso = cfg.Director.Parts[1];
+            HitPart head = cfg.Director.Parts[cfg.Director.Parts.Length - 1];
+            var shooter = float2.zero;
+            var body = new float2(6.125f, 1f);
+            // The aim runs straight down +X, so the body's own y IS the
+            // lateral miss; the climb is 0.2 m per flat meter (FireAimed3D's
+            // contract: height is linear in flat distance).
+            var aim = new float2(10f, 0f);
+            const float muzzleH = 0.5f;
+            const float targetH = 2.5f;
+            TestWorlds.SpawnMobsAt(w, (MobType.Director, body));
+
+            Assert.AreNotEqual(legs.DamageMult, torso.DamageMult,
+                "множители ног и корпуса совпадают — подмена зоны не видна ни событием, ни уроном");
+            float2 ray = math.normalize(aim - shooter);
+            float lateral = math.abs(ray.x * (body.y - shooter.y) - ray.y * (body.x - shooter.x));
+            float projR = cfg.Weapon.ProjectileRadius;
+            Assert.Less(lateral, legs.Radius + projR,
+                "луч не пересекает круг НОГ — Legs недостижим, и свидетель слеп");
+            Assert.Greater(lateral, head.Radius + projR,
+                "луч задевает круг головы — свидетель перестал быть спором ног и корпуса");
+            // Entry points along the ray and the heights the round holds
+            // there -- the window premises, asserted as geometry.
+            float sAxis = math.dot(body - shooter, ray);
+            float slope = (targetH - muzzleH) / math.length(aim - shooter);
+            float legsPad = legs.Radius + projR;
+            float torsoPad = torso.Radius + projR;
+            float sLegsIn = sAxis - math.sqrt(legsPad * legsPad - lateral * lateral);
+            float hLegsIn = muzzleH + slope * sLegsIn;
+            float sTorsoIn = sAxis - math.sqrt(torsoPad * torsoPad - lateral * lateral);
+            float hTorsoIn = muzzleH + slope * sTorsoIn;
+            Assert.Less(hLegsIn, legs.Top,
+                "вход в круг ног лежит выше их полосы — правда не Legs, фикстура не об окне дефекта");
+            Assert.Less(hTorsoIn, torso.Bottom,
+                "вход в круг корпуса лежит уже в его полосе — окно дефекта закрыто, фикстура не о нём");
+
+            // The freeze is probed, not narrated: three idle ticks would move
+            // a live body, a frozen one must not. (After the blow the impact
+            // shove is free to move him -- the premise only has to hold until
+            // the round arrives.)
+            TestWorlds.IdleTicks(w, 3);
+            Assert.AreEqual(0f, math.distance(w.Mobs[0].Pos, body), 1e-6f,
+                "цель не заморожена — оба входа в круги уехали бы вместе с ней");
+
+            TestWorlds.FireAimed3D(w, shooter, muzzleH: muzzleH, targetXY: aim, targetH: targetH);
+            TestWorlds.RunUntilProjectilesDie(w);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
+                "снаряд вовсе не попал — фикстура не об окне дефекта");
+            Assert.AreEqual(HitZone.Legs, e.Zone,
+                "победитель выбран по входу в КРУГ, а не по первому совпадению круга и полосы");
+            Assert.AreEqual(hLegsIn, e.Height, 0.03f,
+                "высота контакта взята не у первого совпадения круга и полосы победителя");
+            Assert.AreEqual(cfg.Weapon.Damage * legs.DamageMult, e.Amount, 1e-3f,
+                "урон не умножен на множитель части-победителя");
         }
     }
 }

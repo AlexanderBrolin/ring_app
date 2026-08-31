@@ -2362,6 +2362,17 @@ namespace Ring.Data
         /// archetype", and the shipped chaser asset carries exactly that).
         /// ReqInRange would have replaced both floors with one inclusive
         /// bound and silently made the chaser's shipped 0 illegal.
+        ///
+        /// ⚠ A KNOWN, ACCEPTED DUPLICATE (Т14/Т23 fix-round, Ruling 200 /
+        /// review finding K-4): every float helper here opens with ReqFinite
+        /// so that it is self-sufficient, and the speed-ceiling fields are the
+        /// only ones in the tree guarded by TWO float helpers at once
+        /// (ReqPositive/ReqNonNegative for the floor plus this one for the
+        /// ceiling) — so a NaN there puts the "must be finite" line into the
+        /// error list twice. Cosmetic: the list is only ever thrown as one
+        /// refusal message, no test counts its lines, and dropping the
+        /// ReqFinite here would trade that noise for a helper that silently
+        /// accepts NaN when called alone.
         static void ReqAtMost(List<string> errors, string name, float value, float max)
         {
             ReqFinite(errors, name, value);

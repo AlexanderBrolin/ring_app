@@ -275,14 +275,16 @@ namespace Ring.Simulation.Combat
             // contract as hitZone/hitMult above.
             float hitHeight = 0f;
             // The fraction of the step the CONTACT sits at (app-88jb T14,
-            // coordinator Ruling 73). For a body it is the entry into the
-            // WINNING PART's circle, which is a later point than `bestT`
-            // (the entry into the whole body's circle) whenever the part
-            // struck is narrower than the body -- 0.33 m later on a chaser
-            // headshot. For every other kind it IS `bestT`, and
-            // AcceptCandidate says so by initializing it to exactly that.
-            // Same "never read on a HitNone/rejected verdict" contract as
-            // its three neighbors.
+            // coordinator Ruling 73). For a body it is the winning PART's own
+            // first contact, which is a later point than `bestT` (the entry
+            // into the whole body's circle) whenever the part struck is
+            // narrower than the body -- 0.33 m later on a chaser headshot.
+            // ⚠ ITS ONLY READERS ARE THE TWO DAMAGEABLE ARMS BELOW (Т14/Т23
+            // fix-round, Ruling 197 / review finding B-4): the barrier, ring
+            // and floor arms build their contact from `bestT` directly, so
+            // for those kinds this value is dead and no branch ever reads
+            // AcceptCandidate's default. Same "never read on a HitNone/
+            // rejected verdict" contract as its three neighbors.
             float hitContactT = 0f;
             while (candCount > 0)
             {
@@ -799,8 +801,9 @@ namespace Ring.Simulation.Combat
         /// The projectile's height is not a point: it moves by VelZ·dt across the
         /// step, so the test uses the height at BOTH ends of the chord through
         /// the target rather than the gather phase's entry-only SegmentCircle.
-        /// The zone itself is read at the ENTRY height: that is where the round
-        /// first touches the body.
+        /// The zone itself is read at the part's FIRST CONTACT -- the earliest
+        /// point where the round is inside the part's circle and its band at
+        /// once (Ruling 191): that is where the round first touches the body.
         ///
         /// app-88jb T14: for the two DAMAGEABLE kinds that whole judgement now
         /// lives in HitZones.Resolve, over the body's ORDERED STACK OF PARTS,
@@ -835,11 +838,16 @@ namespace Ring.Simulation.Combat
             zone = HitZone.None;
             mult = 1f;
             hitHeight = 0f;
-            // Defaults to the min-scan's own fraction, which is what every
-            // NON-body branch below means by "the contact": a barrier, the ring
-            // wall and the floor have no parts, and the point the scan already
-            // found IS their contact. Only the two damageable kinds overwrite
-            // it, with the winning part's own entry (Ruling 73).
+            // A DEAD WRITE KEPT FOR DEFINITE ASSIGNMENT, and it says so
+            // (Т14/Т23 fix-round, Ruling 197 / review finding B-4): C# demands
+            // every `out` be assigned on every path, and the non-body branches
+            // below return without touching this one. NOBODY READS THE
+            // DEFAULT -- the caller's barrier/ring/floor arms build their
+            // contact from the min-scan's own `bestT` directly, and the two
+            // damageable kinds overwrite this with the winning part's own
+            // first contact (Ruling 73). The min-scan fraction is still the
+            // least-wrong value to leave behind, which is why it is `t` and
+            // not zero.
             contactT = t;
 
             // The round's height AT the contact the min-scan handed down (app-88jb
@@ -902,8 +910,10 @@ namespace Ring.Simulation.Combat
                 // (T14 Step 4); the SLIDING arm does not move at all, and the
                 // reason it does not have to is a RULE rather than a
                 // coincidence: T13's validation rule 5 requires
-                // Hero.SlideProfileTop to COINCIDE with a part boundary
-                // (SimConfigBuilder.cs:620), so the profile the slide presents
+                // Hero.SlideProfileTop to "coincide with a part boundary"
+                // (SimConfigBuilder's own refusal wording -- cited by its
+                // words, not by a line number that has already drifted once,
+                // Ruling 196), so the profile the slide presents
                 // is expressible in the new model exactly as it was in the old
                 // one. For the collector this repointing moved no number at
                 // all -- his parts end at 1.75, which is where his column ended

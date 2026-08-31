@@ -507,14 +507,22 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
             cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
             cfg.Chaser.Accel = 0f;
-            // The premise pins the GAME's number, not "differs from the shared
-            // fixture" (review finding B-6): the shared fixture is free to
-            // change, and what this test needs is the 52.5 m/s the shipped
-            // WeaponConfig fires at -- at the fixture's 35 the peak is 36.2 deg
-            // against a 51.6 deg threshold and the criterion reads red on
-            // entirely correct code.
+            // ⚠ THE ASSERT BELOW GUARDS THE ASSIGNMENT ONE LINE UP, NOT THE
+            // GAME (Т14/Т23 fix-round, Ruling 201 / review finding B-1): it
+            // reads the very field the line above just wrote, so the one
+            // thing it can catch is that line being folded back into the
+            // shared fixture (whose 35 makes the criterion red on correct
+            // code -- 36.2 deg against a 51.6 deg threshold). 52.5 MIRRORS
+            // the shipped WeaponConfig.asset as of Т14 and does NOT follow
+            // it: the .asset staying in step with the numbers unit tests
+            // run on is deliberately a phase-level check, not a unit test
+            // (ConfigTests' own I-4 note; spec §0/Р56 keeps the two number
+            // sources apart on purpose), so a balance retune moves this
+            // fixture only by hand, together with the margins in the doc
+            // above.
             Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
-                "фикстура: скорость снаряда обязана быть ИГРОВОЙ (52.5), иначе тест красен на верном коде");
+                "фикстура: явное присваивание 52.5 строкой выше снято — на общих 35 порог " +
+                "не достигается и тест красен на верном коде");
 
             var w = new SimulationWorld(7, cfg);
             PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
@@ -575,7 +583,9 @@ namespace Ring.Simulation.Tests
             // nothing else; the tilt and the angular velocity are zeroed
             // through the seam between them.
             SimConfig cfg = TestConfigs.OpenField();
-            cfg.Weapon.ProjectileSpeed = 52.5f;   // the game's number, as above
+            // A mirror of the shipped 52.5 as of Т14, not a live read of it --
+            // the sibling above carries the full account (Ruling 201).
+            cfg.Weapon.ProjectileSpeed = 52.5f;
             cfg.Chaser.MaxSpeed = 0f;
             cfg.Chaser.Accel = 0f;
             var w = new SimulationWorld(7, cfg);
@@ -662,10 +672,13 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
             cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
             cfg.Chaser.Accel = 0f;
-            // The premise pins the GAME's number, not "differs from the shared
-            // fixture" (review finding B-6), exactly as the sibling above.
+            // The assert guards the ASSIGNMENT one line up, not the game --
+            // a mirror of the shipped 52.5 as of Т14, deliberately not a live
+            // read of the .asset; the first sibling above carries the full
+            // account (Т14/Т23 fix-round, Ruling 201 / review finding B-1).
             Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
-                "фикстура: скорость снаряда обязана быть ИГРОВОЙ (52.5), иначе тест красен на верном коде");
+                "фикстура: явное присваивание 52.5 строкой выше снято — на общих 35 пик " +
+                "0.6810 рад против порога 0.9 и тест красен на верном коде");
 
             var w = new SimulationWorld(7, cfg);
             PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);

@@ -243,22 +243,26 @@ namespace Ring.Simulation.Tests
             //     and its witness is mutation A2 (Pack A, already confirmed
             //     — reverting `Elite => eliteRadius` to `gunnerRadius`
             //     starves gather of any candidate at all).
-            //   * ACCEPT (ProjectileSystem.AcceptCandidate, :386) reads
-            //     `w.MobConfigFor(mob.Type).Radius` instead — a SEPARATE,
-            //     independent re-derivation. Mutation B1 (MobConfigFor's
+            //   * ACCEPT (ProjectileSystem.AcceptCandidate) reads
+            //     `w.MobConfigFor(mob.Type)` instead — a SEPARATE,
+            //     independent re-derivation, and since T14 what it takes
+            //     from that config is the PARTS array it hands to
+            //     HitZones.Resolve. Mutation B1 (MobConfigFor's
             //     `Elite => _config.Elite` swapped to `_config.Chaser`)
             //     left THIS test green twice in a row (Pack B, both before
-            //     and after a descending-shot rewrite) because
-            //     AcceptCandidate's own fallback (:488-491 doc, "a
-            //     hypothetical disagreement can only ever let a hit
-            //     through, never silently swallow one") makes its radius
-            //     read structurally unobservable through gather-plus-accept
-            //     alone — gather already found the candidate honestly (its
-            //     OWN radius is untouched by B1), so accept's wrong radius
-            //     never gets a chance to reject anything. No fixture in
-            //     THIS test — level or descending — can make B1 visible
-            //     here; MobRadiusFor_AgreesWith_MobConfigFor_
-            //     ForEveryArchetype below is B1's actual witness, comparing
+            //     and after a descending-shot rewrite) because that era's
+            //     AcceptCandidate carried a sweep-miss fallback that could
+            //     only ever let a hit through, never swallow one — accept's
+            //     wrong radius never got a chance to reject anything.
+            //     ⚠ T14 DELETED THAT FALLBACK (Т14/Т23 fix-round, Ruling
+            //     198), and the shield went with it: today Resolve sweeps
+            //     each alien part's own circle, finds no interval (a
+            //     chaser-sized circle is far too small for this chord),
+            //     answers false, and the hit is SWALLOWED outright — under
+            //     B1 the Hp assertion below now reads red. That stays a
+            //     side effect, not this test's charter:
+            //     MobRadiusFor_AgreesWith_MobConfigFor_
+            //     ForEveryArchetype below is B1's stated witness, comparing
             //     the two homes directly instead of inferring their
             //     agreement through projectile physics.
             //
@@ -288,19 +292,21 @@ namespace Ring.Simulation.Tests
             //   that lands in the BODY part (< 1.45). Its multiplier is 1f
             //   -> 10 dmg -> Hp 58 -> 48.
             //   Chaser/Gunner (r = 0.5+0.1 = 0.6, r^2 = 0.36): cc=11.25-0.36
-            //   =10.89, disc=1296-4*36*10.89=-272.16 < 0 -> NO interval
+            //   =10.89, disc=1296-4*36*10.89=-272.16 < 0 -> NO interval in
             //   either solver's math. Gather: SegmentCircle returns false,
             //   NO candidate at all (this is exactly what A2 kills). Accept
             //   (only reachable when gather's OWN eliteRadius is honest but
             //   MobConfigFor is wrongly Chaser/Gunner-sized, i.e. B1):
-            //   SegmentCircleInterval also returns false -> AcceptCandidate's
-            //   fallback tEnter=0,tExit=1 -> hEnter = hStart = 1.5 (UNCHANGED
-            //   — this IS the fallback's whole point) -> 1.5 lands in the HEAD
-            //   part ([1.45, 1.85]), whose multiplier is 0f -> 0 dmg ->
-            //   Hp stays 58. The fallback and the honest computation now
-            //   resolve to DIFFERENT zones because the shot's height
-            //   actually changes across the tick — that is the one thing
-            //   the old, level fixture never gave them.
+            //   SegmentCircleInterval finds no interval for ANY of the alien
+            //   parts, so HitZones.Resolve has no candidate and answers
+            //   false — the sweep-miss fallback (tEnter=0, tExit=1) this
+            //   arithmetic used to run through was deleted by T14 itself
+            //   (Т14/Т23 fix-round, Ruling 198) — AcceptCandidate rejects
+            //   the candidate, the min-scan rescans into emptiness, the
+            //   round flies on -> Hp stays 58. The honest computation and
+            //   the dishonest one thus resolve to DIFFERENT outcomes (a
+            //   10-damage body hit against no hit at all), which the Hp
+            //   assertion below tells apart.
             //   (tFloor check: (0.1-1.5)/(-30/30) = 1.4 > 1 — HitFloor never
             //   gathers this tick either way, so it cannot compete.)
             //
