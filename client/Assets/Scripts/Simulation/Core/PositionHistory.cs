@@ -67,6 +67,9 @@ namespace Ring.Simulation.Core
     ///   * the moment of the write -- HistoryRowOfTickT_HoldsThePositionAtTheEndOfTickT
     ///   * the degenerate and the miss branch -- the two PosAtATick... fixtures
     ///   * the negative-tick guard -- PosAtANegativeTick_DegradesInsteadOfThrowing
+    ///   * the MARK on the degenerate answer (app-88jb Т28, coordinator RULING
+    ///     204, the fourth witness RULING 145's "every branch has its own"
+    ///     was missing) -- PosAtSaysWhetherItAnsweredFromARow
     ///   * the fold, and the flag byte inside it --
     ///     TwoWorldsWithEqualPresentAndDifferentPast_DisagreeOnTheHash and
     ///     TwoWorldsDifferingOnlyInARecordedFlag_DisagreeOnTheHash
@@ -178,12 +181,21 @@ namespace Ring.Simulation.Core
         /// Flags: bit0 Alive, bit1 Sliding, bit2 Invulnerable.
         ///
         /// SLIDING AND INVULNERABLE ARE NOT DECORATION (finding C-I5). The
-        /// height gate reads the target's SlideTimer -- ProjectileSystem's own
-        /// AcceptCandidate does it at ProjectileSystem.cs:711 -- so a collector
-        /// who was sliding five ticks ago and is standing now would be tested
-        /// against a STANDING profile, and the round that visibly went over
-        /// their head would land. The flag is what makes the rewound question
-        /// ask about the body that was there, not the body that is.
+        /// height gate reads the target's slide -- ProjectileSystem's own
+        /// AcceptCandidate does it in the `overlapTop = sliding` line of its
+        /// HitPlayer branch, and since app-88jb Т28 that `sliding` is THIS BIT
+        /// on a rewound step and the live `SlideTimer > 0f` otherwise
+        /// (RewoundBody is where the two meet) -- so a collector who was
+        /// sliding a few ticks ago and is standing now would be tested against
+        /// a STANDING profile, and the round that visibly went over their head
+        /// would land.
+        /// ⚠ CITED BY THE OPERATOR AND NOT BY A LINE NUMBER (coordinator RULING
+        /// 210, the same discipline AcceptCandidate's own SlideProfileTop note
+        /// already follows under Ruling 196): the number this sentence used to
+        /// carry had gone stale by two hundred lines before anybody read it
+        /// again, and a fresh number would only go stale the same way.
+        /// The flag is what makes the rewound question ask about the body that
+        /// was there, not the body that is.
         /// Invulnerability is the same argument at the other end of the
         /// window: HeroConfig.DashIframes is 0.2 s, which is EXACTLY 6 ticks
         /// (SimulationWorld.TicksFromSeconds(0.2f)) -- the rewind cap itself
@@ -230,10 +242,17 @@ namespace Ring.Simulation.Core
         ///     second opinion.
         ///   * INVULNERABLE is `IframeTimer > 0f`, the positive form of
         ///     SimulationWorld.DamagePlayer's own `if (p.IframeTimer > 0f)
-        ///     return;`. ProjectileSystem states the same test inverted, as
-        ///     `victim.IframeTimer <= 0f`, because there it asks the opposite
-        ///     question ("does the blow arrive"); the two are one predicate
-        ///     read from two sides, and this is the side the record needs.
+        ///     return;` guard. ProjectileSystem's HitPlayer arm asks the
+        ///     opposite question ("does the blow arrive") and therefore reads
+        ///     the answer inverted, as `!invulnerableThen`; the two are one
+        ///     predicate read from two sides, and this is the side the record
+        ///     needs.
+        ///     ⭐ AND SINCE app-88jb Т28 THAT ARM FEEDS THIS VERY BIT INTO IT.
+        ///     It hands RewoundBody the live `IframeTimer > 0f` as the
+        ///     fallback and gets back either that or this flag, so the rewound
+        ///     and the live question are literally one expression with two
+        ///     sources -- which is what "asked the same way" was always meant
+        ///     to mean.
         /// ⚠ THEY ARE READ AT DIFFERENT STAGES OF THE LIVE PIPELINE, and that
         /// asymmetry is real rather than an oversight here: the slide is a
         /// GATHER-time question (it decides whether the round can touch the
@@ -323,31 +342,56 @@ namespace Ring.Simulation.Core
         /// SlideTimer/IframeTimer off the live body exactly as the un-rewound
         /// path does -- silence here would be finding C-I5 in reverse, a
         /// rewound question answered against a wrong profile.
+        /// ⭐ AND `fromHistory` IS HOW A CALLER KNOWS IT IS IN THAT BRANCH
+        /// (app-88jb Т28, coordinator RULING 204). Until this task the sentence
+        /// above asked for something no caller could do. The degenerate answer
+        /// is `true` plus a record carrying FlagAlive alone, and that is BYTE
+        /// FOR BYTE what a real row holds for a collector who was alive,
+        /// standing and vulnerable -- so the branch that KNOWS NOTHING about
+        /// the other two flags and the branch that knows them to be clear were
+        /// indistinguishable. This out parameter is the missing half of that
+        /// contract and nothing more: `true` means the answer came out of a
+        /// written row, `false` means it is the caller's own `currentPos`
+        /// handed straight back and the caller owes the live body a look.
+        /// ⛔ IT IS NOT INFERABLE FROM THE VALUE, which is why it is a
+        /// parameter rather than a note: `record.Pos == currentPos` holds for a
+        /// genuine row too, whenever the body did not move.
+        /// ⚠ IT IS A SEPARATE ANSWER FROM THE RETURN VALUE, whose own meaning
+        /// is untouched -- "was the target alive at that moment". The two
+        /// combine in three ways: `false` is a MISS, `true` with `fromHistory`
+        /// is the rewound picture, and `true` without it is "no rewind is
+        /// available here, ask the live body". Only the degenerate branch
+        /// produces the third.
         ///
-        /// | Case                            | Answer                          |
-        /// | tick < 0                        | the CURRENT position (see above)|
-        /// | Record present, Alive           | the historical position/flags   |
-        /// | Row's Tick does not match       | the CURRENT position -- degrades|
-        /// |   (body did not live that tick, |   into "no rewind at all"       |
-        /// |    first ticks of the match)    |                                 |
-        /// | Record present, Alive cleared   | MISS: the target was dead then  |
-        /// | k == 0                          | live positions (the row for T is|
-        /// |                                 |   written at the END of TickAll)|
+        /// | Case                            | Answer                          | fromHistory |
+        /// | tick < 0                        | the CURRENT position (see above)| false       |
+        /// | Record present, Alive           | the historical position/flags   | true        |
+        /// | Row's Tick does not match       | the CURRENT position -- degrades| false       |
+        /// |   (body did not live that tick, |   into "no rewind at all"       |             |
+        /// |    first ticks of the match)    |                                 |             |
+        /// | Record present, Alive cleared   | MISS: the target was dead then  | true        |
+        /// | k == 0                          | live positions (the row for T is| false       |
+        /// |                                 |   written at the END of TickAll)|             |
         ///
         /// ⚠ THE `k == 0` LINE IS EXECUTED BY THE DEGENERATE BRANCH, not by a
         /// branch of its own: the row for tick T is written on TickAll's last
         /// line, so a round fired in the weapon phase of tick T asks about a
         /// stamp the ring has not written yet, misses it, and is answered with
         /// the live positions -- which is what that line of the table promises.
-        public bool PosAt(int slot, int tick, float2 currentPos, out Record record)
+        /// It is a `fromHistory == false` answer for the same reason, and a
+        /// caller reading flags off that record would be reading invented ones.
+        public bool PosAt(int slot, int tick, float2 currentPos, out Record record,
+            out bool fromHistory)
         {
             int rowIndex = tick < 0 ? NoRow : RowIndex(tick);
             if (rowIndex == NoRow || _rowTick[rowIndex] != tick)
             {
                 record = new Record(currentPos, FlagAlive);
+                fromHistory = false;
                 return true;
             }
             record = _rows[RowBase(rowIndex) + slot];
+            fromHistory = true;
             return (record.Flags & FlagAlive) != 0;
         }
 

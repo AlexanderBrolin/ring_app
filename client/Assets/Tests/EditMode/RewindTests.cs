@@ -409,8 +409,11 @@ namespace Ring.Simulation.Tests
             // public field, so it added no capability, and this very file
             // already read the slot this way in two older fixtures -- a second
             // spelling of one path is what rule 2 forbids.
-            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot,
-                w.CurrentTick - 1, w.Player.Pos, out PositionHistory.Record rec));
+            // `out _` for the mark (app-88jb Т28, RULING 204): this fixture is
+            // about WHERE the row stands, and PosAtSaysWhetherItAnsweredFromARow
+            // is the witness of the mark itself.
+            Assert.IsTrue(w.History.PosAt(w.PlayerAt(0).HistorySlot,
+                w.CurrentTick - 1, w.Player.Pos, out PositionHistory.Record rec, out _));
             Assert.AreEqual(endOfTick.x, rec.Pos.x, 1e-5f,
                 "запись тика T содержит позицию НАЧАЛА тика, а не конца");
         }
@@ -484,8 +487,8 @@ namespace Ring.Simulation.Tests
             w.Tick(default);
             float2 currentPos = w.Player.Pos;
 
-            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot,
-                neverWrittenTick, currentPos, out PositionHistory.Record rec),
+            Assert.IsTrue(w.History.PosAt(w.PlayerAt(0).HistorySlot,
+                neverWrittenTick, currentPos, out PositionHistory.Record rec, out _),
                 "отмотка к тику, строки которого в кольце нет, обязана вырождаться в поведение " +
                 "без отмотки, а не в промах");
             Assert.AreEqual(currentPos, rec.Pos,
@@ -547,9 +550,9 @@ namespace Ring.Simulation.Tests
 
             int slot = w.PlayerAt(0).HistorySlot;
             float2 currentPos = w.Player.Pos;
-            Assert.IsTrue(w.HistoryForTest.PosAt(slot, aliveTick, currentPos, out _),
+            Assert.IsTrue(w.History.PosAt(slot, aliveTick, currentPos, out _, out _),
                 "тик, в котором сборщик был жив, обязан отдать историческую запись");
-            Assert.IsFalse(w.HistoryForTest.PosAt(slot, deadTick, currentPos, out _),
+            Assert.IsFalse(w.History.PosAt(slot, deadTick, currentPos, out _, out _),
                 "тик, в котором сборщик был мёртв, обязан быть промахом");
         }
 
@@ -594,17 +597,98 @@ namespace Ring.Simulation.Tests
             w.Tick(default);
             w.Tick(default);
 
-            PositionHistory ring = w.HistoryForTest;
+            PositionHistory ring = w.History;
             int slot = w.PlayerAt(0).HistorySlot;
             float2 currentPos = w.Player.Pos;
             PositionHistory.Record rec = default;
             bool answered = false;
 
-            Assert.DoesNotThrow(() => answered = ring.PosAt(slot, SentinelTick, currentPos, out rec),
+            Assert.DoesNotThrow(
+                () => answered = ring.PosAt(slot, SentinelTick, currentPos, out rec, out _),
                 "PosAt бросила на отрицательном тике — боевой путь обязан отвечать, а не падать");
             Assert.IsTrue(answered,
                 "тик до начала матча обязан вырождаться в поведение без отмотки, а не в промах");
             Assert.AreEqual(currentPos, rec.Pos,
+                "вырожденная ветка вернула не текущую позицию");
+        }
+
+        [Test]
+        public void PosAtSaysWhetherItAnsweredFromARow()
+        {
+            // ⭐ THE FOURTH WITNESS RULING 145 WAS MISSING (app-88jb Т28,
+            // coordinator RULING 204), and it stands beside the three it
+            // completes -- PosAtATickWithNoRow_DegradesToTheCurrentPosition,
+            // PosAtATickTheCollectorDidNotSurvive_ReportsAMiss and
+            // PosAtANegativeTick_DegradesInsteadOfThrowing, named rather than
+            // numbered for the reason the last of those already states in its
+            // own doc.
+            //
+            // ⛔ A SENTINEL, SAID OUT LOUD (lesson 427). The out parameter and
+            // its two assignments ship in the SAME structural phase as this
+            // test, so it is green the day it is written and green after the
+            // rewound question lands on top of it. What kills it is the
+            // mutation the mark exists against: hand `true` back from the
+            // degenerate branch as well -- i.e. read a cell the ring never
+            // wrote as if it were a record -- and the two IsFalse assertions
+            // below go red while every other fixture in the tree stays green.
+            //
+            // WHY THE MARK CANNOT BE INFERRED, which is the whole argument for
+            // its being a parameter (A-Т28-3). The degenerate record is
+            // `currentPos` under FlagAlive alone, and that is byte for byte
+            // what a real row holds for a collector who was alive, standing and
+            // vulnerable; and `rec.Pos == currentPos` is no tell either,
+            // because a body that did not move has exactly that row. The caller
+            // owes the live body a look at SlideTimer/IframeTimer in the second
+            // case and must not in the first, so the difference is not
+            // cosmetic -- reading invented flags there is finding C-I5 in
+            // reverse, which is what PosAt's own doc has demanded a way to
+            // avoid since Т24 without offering one.
+            //
+            // Open(), not OpenField(), and TWO ticks: the same fixture the
+            // three neighbors use, for the same two reasons -- the collector
+            // stands 159 m out on the ring, so `currentPos` cannot be mistaken
+            // for a blank record's origin, and he is far outside the outer zone
+            // boundary, so no Director is born on top of the measurement
+            // (lesson 590).
+            const int NeverWrittenTick = 0;
+            const int SentinelTick = -1;
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.Tick(default);
+            w.Tick(default);
+
+            PositionHistory ring = w.History;
+            int slot = w.PlayerAt(0).HistorySlot;
+            float2 currentPos = w.Player.Pos;
+
+            // The tick that just closed HAS a row: TickAll writes it on its own
+            // last line, so this is the ordinary rewound question.
+            Assert.IsTrue(ring.PosAt(slot, w.CurrentTick, currentPos, out _, out bool fromRow),
+                "строка только что закрытого тика обязана существовать");
+            Assert.IsTrue(fromRow,
+                "ответ по написанной строке помечен как вырожденный — вызывающий пойдёт " +
+                "читать подкат и неуязвимость с живого тела вместо записи");
+
+            // Tick 0 can never carry a row (TickAll increments before it runs),
+            // so this is the degenerate branch of the table.
+            Assert.IsTrue(ring.PosAt(slot, NeverWrittenTick, currentPos,
+                out PositionHistory.Record degenerate, out fromRow),
+                "отмотка к тику без строки обязана вырождаться, а не промахиваться");
+            Assert.IsFalse(fromRow,
+                "вырожденный ответ помечен как исторический — вызывающий прочтёт выдуманные " +
+                "флаги как записанные");
+            Assert.AreEqual(currentPos, degenerate.Pos,
+                "вырожденная ветка вернула не текущую позицию");
+
+            // And the negative tick lands in that same branch rather than in a
+            // fourth case of its own -- PosAt's own table says so, and the mark
+            // has to agree with the table.
+            Assert.IsTrue(ring.PosAt(slot, SentinelTick, currentPos,
+                out PositionHistory.Record before, out fromRow),
+                "тик до начала матча обязан вырождаться, а не промахиваться");
+            Assert.IsFalse(fromRow,
+                "тик до начала матча помечен как исторический — до матча истории нет");
+            Assert.AreEqual(currentPos, before.Pos,
                 "вырожденная ветка вернула не текущую позицию");
         }
 
@@ -651,8 +735,8 @@ namespace Ring.Simulation.Tests
             Assert.Greater(w.Player.SlideTimer, 0f, "фикстура не подкатывается — тест ничего не меряет");
             Assert.Greater(w.Player.IframeTimer, 0f, "фикстура не неуязвима — тест ничего не меряет");
 
-            Assert.IsTrue(w.HistoryForTest.PosAt(w.PlayerAt(0).HistorySlot, w.CurrentTick,
-                w.Player.Pos, out PositionHistory.Record rec),
+            Assert.IsTrue(w.History.PosAt(w.PlayerAt(0).HistorySlot, w.CurrentTick,
+                w.Player.Pos, out PositionHistory.Record rec, out _),
                 "строка только что закрытого тика обязана существовать");
             Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagSliding,
                 "подкат не записан в строку — отмотанный выстрел проверит подкатывающегося по стоячему профилю");
@@ -687,8 +771,8 @@ namespace Ring.Simulation.Tests
             Assert.AreNotEqual(w.PlayerAt(0).HistorySlot, mobSlot,
                 "фикстура спрашивает слот сборщика, а не моба — тест не про ту ветку");
             var neverVisited = new float2(-500f, -500f);
-            Assert.IsTrue(w.HistoryForTest.PosAt(mobSlot, w.CurrentTick, neverVisited,
-                out PositionHistory.Record rec),
+            Assert.IsTrue(w.History.PosAt(mobSlot, w.CurrentTick, neverVisited,
+                out PositionHistory.Record rec, out _),
                 "строка моба отвечает промахом — PvE-отмотка мертва по построению");
             Assert.AreNotEqual(0, rec.Flags & PositionHistory.FlagAlive,
                 "у моба не записан бит жизни");
@@ -1038,6 +1122,22 @@ namespace Ring.Simulation.Tests
             float traveled = math.distance(w.Projectiles[0].Pos, w.Mobs[0].Pos);
             Assert.Less(traveled, cfg.Gunner.Radius + 2f * step,
                 "мобий снаряд прокручен догоняющими шагами — k не обнулён для мобов");
+            // ⭐ THE OTHER HALF OF THE SAME ZERO (app-88jb Т28): the distance
+            // above witnesses that the mob's round took no CATCH-UP steps --
+            // Т27's half, the one that moves -- and this line witnesses that it
+            // was handed no PICTURE half either, so it is answered against the
+            // bodies where they stand. The two halves fail independently: a
+            // catch-up moved into MobAiSystem's path would be caught by the
+            // distance and not by this, while a picture depth taken from the
+            // collector's own input -- the shape RULING 208 makes impossible by
+            // giving SpawnProjectile a required parameter instead of a default
+            // -- would be caught by this and not by the distance, because
+            // asking the past moves nothing at all.
+            // The test's own name stays true of both, which is why this is one
+            // more assertion here rather than a fixture of its own (rule 2).
+            Assert.AreEqual(0, (int)w.Projectiles[0].RewindLeft,
+                "мобий раунд получил глубину картинки — у моба нет ни клиента, ни задержки, " +
+                "и спрашивать прошлое ему нечем");
         }
 
         [Test]
@@ -1437,6 +1537,913 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(expectedX, w.Projectiles[0].Pos.x, 0.05f,
                 "остаток догоняющих шагов раунду не сохранён — догон прервался на рикошете, " +
                 "и отскочивший снаряд лагающего стрелка отлетел на целый шаг меньше");
+        }
+
+        // ── app-88jb Т28: THE PICTURE HALF CHANGES THE QUESTION ───────────────
+        //
+        // Everything below states one sentence from a different side: while a
+        // round still owes rewound steps, the gather phase and AcceptCandidate
+        // ask where the body STOOD in tick (CurrentTick - RewindLeft), not
+        // where it stands. Nothing about the round MOVES -- that is Т27's half
+        // of the same depth, spent by CatchUp on the birth tick -- so every
+        // fixture here fires with k = Arena.RewindPictureTicks, at which the
+        // input half is zero by construction (RewindSplit's own min) and the
+        // round takes exactly one ordinary step per tick.
+        //
+        // THE GEOMETRY EVERY NUMBER BELOW COMES FROM, written once. The muzzle
+        // stands at MuzzleOffset + TickDt * ProjectileSpeed, because
+        // WeaponSystem.SpawnShot pre-advances the round by the fire cooldown's
+        // fractional remainder and the first shot of a match carries a whole
+        // tick of it. The step is ProjectileSpeed * TickDt, whole and
+        // horizontal, because every shot below but one aims at its OWN muzzle
+        // height and therefore leaves VelZ at zero -- the exception is the
+        // slide fixture, which aims a little lower on purpose and pays 0.02% of
+        // its horizontal step for the descent (its own doc carries the number).
+        // At this fixture's balance that is a muzzle at 1.7667 m and a step of
+        // 1.1667 m, so the step ends run 2.9333 / 4.1000 / 5.2667 / 6.4333 m.
+
+        /// Where the collector victims below stand: the flag fixtures, and the
+        /// position fixture that borrows their geometry
+        /// (CollectorThatMovedAway_IsHitAtHisPastPosition).
+        const float VictimX = 3f;
+
+        /// Where the mob target of the fixtures that shoot at a mob stands, and
+        /// where the doomed neighbor of the swap-remove fixture stands behind
+        /// it. Named by what they do rather than counted: the count here was
+        /// already one behind before this task added to it.
+        const float MobTargetX = 4f, DoomedMobX = 10f;
+
+        /// Where the countdown sentinel's victim stands: PAST the last rewound
+        /// step's end (5.2667 m), so the contact can only fall on a step that
+        /// is already in the present.
+        ///
+        /// ⚠ 6.4 AND NOT A ROUNDER NUMBER, AND THE MARGIN IS THE REASON. The
+        /// contact circle is DistantVictimX - (Hero.Radius + ProjectileRadius), i.e.
+        /// 0.57 m in from the stand, and the fourth step runs 5.2667 -> 6.4333
+        /// m; at a stand of 7 m the contact would be 6.43 m, which clears the
+        /// step's far end by THREE MILLIMETERS. The fixture would still pass --
+        /// but if that margin ever went the other way the contact would land on
+        /// the FIFTH step, where the mutant this sentinel exists for
+        /// ("never count down") asks about a tick the victim has already left,
+        /// and the mutation would survive in silence. 6.4 puts the contact at
+        /// 5.83 m, better than half a meter clear of both ends.
+        const float DistantVictimX = 6.4f;
+
+        /// Idle ticks every fixture below runs before its shot. Two jobs, both
+        /// asserted rather than assumed: they PROBE the freeze (a chaser under
+        /// its own legs covers 0.173 m per tick straight at the shooter -- see
+        /// TestWorlds.FreezeArchetype and ruling 17/104), and together with
+        /// Arena.RewindPictureTicks worth of further ticks they fill the ring
+        /// with the rows the shot is going to ask about.
+        const int ProbeTicks = 3;
+
+        /// The collector fixture the tests below share: the shooter at
+        /// the origin, the victim VictimX out along +X, no cone.
+        ///
+        /// THE CONE IS CLOSED for the reason every straight-line fixture in
+        /// this file closes it -- a randomized muzzle angle would move the
+        /// contact that each doc's arithmetic is built from.
+        /// OpenField(), not Open(): Open() spawns collectors on the ring 159 m
+        /// out, so a firing line stated in absolute coordinates would not be
+        /// the line they stand on; and OpenField carries no zone boundaries at
+        /// all, so no Director is born in the middle of the measurement
+        /// (lesson 590).
+        static SimulationWorld TwoCollectorsOnTheFiringLine(out SimConfig cfg)
+        {
+            cfg = TestConfigs.OpenField();
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(VictimX, 0f));
+            return w;
+        }
+
+        /// The shooter's input for ONE tick of held trigger, aimed down the
+        /// firing line at `aimHeight` and claiming the whole picture depth.
+        ///
+        /// THE AIM POINT IS A POINT ON THE LINE, NOT THE TARGET, and the round
+        /// does not stop there: what the pair (point, height) fixes is the
+        /// DIRECTION -- straight down +X from the origin -- and the slope from
+        /// the muzzle. The countdown fixture below stands its victim further
+        /// out than that point and is aimed by the same call for that reason.
+        ///
+        /// ⛔ ONE TICK, AND THE "ONE" IS LOAD-BEARING RATHER THAN TIDY. Held
+        /// for five ticks the trigger fires a SECOND round on the fourth of
+        /// them (FireInterval 0.12 s against a TickDt of 0.0333 s, and
+        /// WeaponSystem.Advance decrements before it tests), and that round's
+        /// own rewound tick is the FIRST shot's tick -- by which time every
+        /// fixture below has already put the flag it spent its idle ticks
+        /// recording back the other way. A held trigger would therefore land a
+        /// perfectly legitimate second hit and turn each negative fixture red
+        /// against CORRECT code.
+        ///
+        /// AimHeld is set so that `aimHeight` means anything at all: hip fire
+        /// ignores it and leaves the round at the standing muzzle height
+        /// (WeaponSystem.SpawnShot's two branches). With the cone closed the
+        /// aimed branch draws no randomness either -- the settle term is
+        /// multiplied by a SpreadRad of zero.
+        static SimInput[] OneShotAt(in SimConfig cfg, float aimHeight)
+        {
+            var inputs = new SimInput[2];
+            inputs[0] = new SimInput
+            {
+                FireHeld = true,
+                AimHeld = true,
+                AimPoint = new float2(VictimX, 0f),
+                AimHeight = aimHeight,
+                RewindTicks = (byte)cfg.Arena.RewindPictureTicks
+            };
+            return inputs;
+        }
+
+        /// WHICH STEP OF THE FLIGHT A CONTACT FALLS ON, ASSERTED RATHER THAN
+        /// DECLARED. Same discipline and same failure mode as
+        /// AssertContactLandsOnAMiddleCatchUpStep above, at the other half of
+        /// the split depth: each fixture below is correct only inside a window
+        /// of balance numbers, those numbers have already moved once inside
+        /// this epic, and a contact that slid onto a neighboring step would
+        /// leave the fixture GREEN and witnessing nothing.
+        ///
+        /// Steps are counted 1-based from the muzzle, which is MuzzleOffset
+        /// plus the first shot's whole tick of fire-cooldown overshoot
+        /// (WeaponSystem.SpawnShot), and the step is ProjectileSpeed * TickDt.
+        /// `toTargetCenter` is a stand the caller measured, so the fixture is
+        /// checked where it actually put the bodies.
+        /// ⚠ THE STEP IS THE FLAT ONE, and for one caller that is an
+        /// approximation rather than the number: a shot aimed slightly BELOW
+        /// its own muzzle height spends a little of its speed on the descent,
+        /// so its horizontal step is shorter -- by 0.02% at the one fixture
+        /// that does it, against margins of half a meter at both ends. Named
+        /// instead of glossed, because the day those margins shrink is the day
+        /// this approximation stops being free.
+        static void AssertContactLandsOnStep(int oneBasedStep, in SimConfig cfg,
+            float toTargetCenter, float targetRadius)
+        {
+            float muzzle = cfg.Weapon.MuzzleOffset
+                + SimulationWorld.TickDt * cfg.Weapon.ProjectileSpeed;
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            float contact = toTargetCenter - (targetRadius + cfg.Weapon.ProjectileRadius);
+            float from = muzzle + (oneBasedStep - 1) * step;
+            float to = muzzle + oneBasedStep * step;
+            Assert.Greater(contact, from,
+                $"баланс уехал: контакт в {contact} м не дотягивает до шага {oneBasedStep} " +
+                $"({from}..{to} м) — фикстура мерит другой шаг и перестала свидетельствовать");
+            Assert.Less(contact, to,
+                $"баланс уехал: контакт в {contact} м лежит дальше шага {oneBasedStep} " +
+                $"({from}..{to} м) — фикстура мерит другой шаг и перестала свидетельствовать");
+        }
+
+        [Test]
+        public void TargetThatMovedAway_IsHitAtItsPastPosition()
+        {
+            // ⭐⭐ THE WITNESS OF THE WHOLE TASK. The target has left the line
+            // of fire, and the lagging shooter's round is counted all the same
+            // -- because the picture he was aiming at is the picture the server
+            // answers against. The round is not moved by one meter: at
+            // k = RewindPictureTicks the input half is zero, so the only thing
+            // the depth buys here is the question.
+            //
+            // THE ARITHMETIC, DERIVED RATHER THAN READ OFF A RUN (the muzzle
+            // and the step come from the block above this fixture). The contact
+            // circle around the chaser's PAST stand is
+            // MobTargetX - (Chaser.Radius + ProjectileRadius) = 4 - 0.62 =
+            // 3.38 m, which lies between the first step's end (2.9333) and the
+            // second's (4.1000). So the blow lands on the SECOND step of the
+            // flight, which is the second of the three rewound ones -- not the
+            // last, and the count is worth stating because the plan's own text
+            // calls this position "the last rewound step".
+            //
+            // AGAINST THE LIVE BODY IT LIES NOWHERE, and the first assertion
+            // says so instead of leaving it to the reader: the chaser has
+            // stepped three of his own diameters off the axis, which is further
+            // from the firing line than the two radii the solver pads with.
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(MobTargetX, 0f)));
+            var target = w.Mobs[0]; target.Hp = 1e6f; w.SetMobForTest(0, target);
+            float2 stood = w.Mobs[0].Pos;
+
+            for (int i = 0; i < ProbeTicks + cfg.Arena.RewindPictureTicks; i++) w.Tick(default);
+            Assert.AreEqual(stood, w.Mobs[0].Pos,
+                "чейзер сдвинулся за холостые тики — заморозка не сработала, и отмотанный " +
+                "вопрос задаётся про тело, которое двигалось само");
+            AssertContactLandsOnStep(2, in cfg, MobTargetX, cfg.Chaser.Radius);
+
+            var moved = w.Mobs[0];
+            moved.Pos = new float2(MobTargetX, 3f * 2f * cfg.Chaser.Radius);
+            w.SetMobForTest(0, moved);
+            Assert.Greater(math.abs(w.Mobs[0].Pos.y),
+                cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: цель осталась в пределах суммы радиусов от линии огня, " +
+                "и попадание по живым позициям всё ещё возможно — тест ничего не доказывает");
+
+            w.Tick(new SimInput
+            {
+                FireHeld = true,
+                AimHeld = true,
+                AimPoint = new float2(MobTargetX, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindPictureTicks
+            });
+            for (int i = 0; i < 3; i++) w.Tick(default);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out _),
+                "выстрел с глубиной не засчитан по ушедшей цели — сбор и разрешение " +
+                "спрашивают, где тело СТОИТ, а не где игрок его видел");
+        }
+
+        [Test]
+        public void RewindSurvivesANeighborsDeath()
+        {
+            // ⭐ THE ADDRESS IS A SLOT, NOT AN ARRAY INDEX, asked of the
+            // REWOUND QUESTION rather than of the field alone.
+            // HistorySlot_SurvivesASwapRemoveOfANeighbor above already pins
+            // that the field itself rides a swap-remove; what nothing pins is
+            // that the rewind READS through it. A gather phase that addressed
+            // the ring by the mob's index in `_mobs` would answer this fixture
+            // with the DEAD neighbor's row -- and that row is blank, because
+            // ReturnSlot clears at release -- so the shot would find nobody.
+            //
+            // The kill is the middle of the window on purpose: over six ticks
+            // one array index has time to be several different bodies, and a
+            // slot does not.
+            // The rest of the arithmetic is TargetThatMovedAway's, unchanged:
+            // the same 4 m stand, the same 3.38 m contact circle, the same
+            // second step.
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(DoomedMobX, 0f)),
+                (MobType.Chaser, new float2(MobTargetX, 0f)));
+            for (int i = 0; i < 2; i++)
+            {
+                var mi = w.Mobs[i]; mi.Hp = 1e6f; w.SetMobForTest(i, mi);
+            }
+            float2 doomedStood = w.Mobs[0].Pos, survivorStood = w.Mobs[1].Pos;
+
+            for (int i = 0; i < ProbeTicks + cfg.Arena.RewindPictureTicks; i++) w.Tick(default);
+            Assert.AreEqual(doomedStood, w.Mobs[0].Pos, "дальний чейзер не заморожен");
+            Assert.AreEqual(survivorStood, w.Mobs[1].Pos, "ближний чейзер не заморожен");
+            AssertContactLandsOnStep(2, in cfg, MobTargetX, cfg.Chaser.Radius);
+
+            int survivorId = w.Mobs[1].Id;
+            w.DamageMob(0, 1e9f, w.Mobs[0].Pos, HitZone.Body, new float2(1f, 0f),
+                ownerIndex: 0, hitHeight: 1f, projectileMass: 0f, projectileSpeed3D: 0f);
+
+            Assert.AreEqual(survivorId, w.Mobs[0].Id,
+                "фикстура не воспроизвела своп с хвостом — выживший не переехал на индекс 0, " +
+                "и различать слот от индекса тесту нечем");
+            Assert.AreNotEqual(0, w.Mobs[0].HistorySlot,
+                "адрес истории выжившего совпал с его новым индексом в массиве — фикстура " +
+                "перестала различать две схемы адресации");
+
+            var moved = w.Mobs[0];
+            moved.Pos = new float2(MobTargetX, 3f * 2f * cfg.Chaser.Radius);
+            w.SetMobForTest(0, moved);
+
+            w.Tick(new SimInput
+            {
+                FireHeld = true,
+                AimHeld = true,
+                AimPoint = new float2(MobTargetX, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindPictureTicks
+            });
+            for (int i = 0; i < 3; i++) w.Tick(default);
+
+            Assert.Less(w.Mobs[0].Hp, 1e6f,
+                "выживший моб не получил урона — отмотка адресует историю индексом массива, " +
+                "и после смерти соседа она читает чужую (очищенную) строку");
+        }
+
+        [Test]
+        public void CollectorThatMovedAway_IsHitAtHisPastPosition()
+        {
+            // ⭐⭐ THE POSITION AXIS ON THE OTHER BODY KIND, and that is the
+            // whole reason it is written. The two fixtures above move a MOB;
+            // every collector fixture below either leaves its victim standing
+            // on the line and measures a BIT, or moves him and asserts a MISS.
+            // So "where did the body stand at the rewound tick" was witnessed
+            // on `_mobs` only, and the collector arm of the same rule -- the
+            // player loop of ProjectileSystem's gather phase and
+            // AcceptCandidate's HitPlayer branch -- had no witness at all. The
+            // plan named this case in its own Step 5 -- rewinding a collector
+            // works the same way as rewinding a mob -- and left it unwritten.
+            //
+            // ⛔ GREEN FROM ITS FIRST DAY, SAID OUT LOUD (lesson 427): the
+            // feature is already in the tree, so this fixture passes the moment
+            // it compiles and proves nothing by passing. Its witness is what it
+            // REFUSES -- two mutations the rest of the suite survives today.
+            //   ⭐ "THE GATHER TAKES THE LIVE STAND": hand SegmentCircle
+            // `player.Pos` instead of RewoundBody's `playerPos`. The victim
+            // below has stepped 1.35 m off the firing line, better than twice
+            // the Hero.Radius + Weapon.ProjectileRadius = 0.57 m the solver pads
+            // the segment with, so he never becomes a candidate on any step and
+            // no blow is struck at all.
+            //   ⭐ "THE NARROW PHASE TAKES THE LIVE STAND": keep the gather
+            // honest and let AcceptCandidate's HitPlayer branch resolve against
+            // `target.Pos`. The candidate is then gathered at the past stand and
+            // refused at the live one on every step of the flight -- HitZones.
+            // Resolve finds no part of the body on the segment -- and the victim
+            // never walks back onto the line for a later step to find him.
+            // ⚠ BOTH MUTANTS KEEP EVERY OTHER FIXTURE OF THIS BLOCK GREEN,
+            // which is the measurement this test exists for: not one collector
+            // fixture here moves its victim BEFORE the shot, so live stand and
+            // recorded stand agree in all of them, and the countdown sentinel at
+            // the bottom of the file moves its victim only to assert a MISS --
+            // an outcome both mutants produce too.
+            //
+            // THE ARITHMETIC, and it is the shared collector geometry
+            // unchanged. Six idle ticks (ProbeTicks plus the picture depth, the
+            // same warm-up the mob twin runs) fill rows 1..6; the shot goes out
+            // on tick 7 with k = RewindPictureTicks = 3, so the input half is
+            // zero and the round takes one ordinary step per tick. Its FIRST
+            // step -- the contact circle is VictimX - (Hero.Radius +
+            // ProjectileRadius) = 3 - 0.57 = 2.43 m, inside 1.7667 -> 2.9333 --
+            // still carries the full RewindLeft = 3, so the question is about
+            // tick 7 - 3 = 4, a row written while the victim still stood on the
+            // line.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            AssertContactLandsOnStep(1, in cfg, VictimX, cfg.Hero.Radius);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < ProbeTicks + cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+            Assert.AreEqual(new float2(VictimX, 0f), w.PlayerAt(1).Pos,
+                "жертва сдвинулась за холостые тики — записанные строки не о той линии, " +
+                "и отмотанный вопрос задаётся про тело, которое двигалось само");
+
+            // THE ROW THE SHOT IS ABOUT TO ASK FOR, ASSERTED AND NOT DECLARED,
+            // and here it is load-bearing twice over. PosAt's degenerate branch
+            // answers a missing row with the LIVE stand, so a fixture whose row
+            // had aged out of the ring would go green under BOTH mutants above;
+            // and the row has to hold the stand on the line, or the hit below
+            // would witness a different geometry than the one this doc states.
+            int askedTick = w.CurrentTick + 1 - cfg.Arena.RewindPictureTicks;
+            int slot = w.PlayerAt(1).HistorySlot;
+            Assert.IsTrue(w.History.PosAt(slot, askedTick, w.PlayerAt(1).Pos,
+                    out PositionHistory.Record row, out bool fromRow),
+                $"жертва числится мёртвой в записанном тике {askedTick}");
+            Assert.IsTrue(fromRow,
+                $"строки тика {askedTick} нет — отмотанный вопрос уйдёт в вырожденную ветку " +
+                "и ответит живой позицией, которую тест как раз и уводит с линии");
+            Assert.AreEqual(new float2(VictimX, 0f), row.Pos,
+                $"строка тика {askedTick} держит не тот стенд — фикстура мерит не ту линию");
+
+            // OFF THE LINE, AND THE PREMISE ASSERTED RATHER THAN LEFT TO THE
+            // READER: three hero radii out is 1.35 m against 0.57 m of padding,
+            // so by the LIVE stands a hit is impossible and the outcome below
+            // can only have come from the record.
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(VictimX, 3f * cfg.Hero.Radius));
+            Assert.Greater(math.abs(w.PlayerAt(1).Pos.y),
+                cfg.Hero.Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: жертва осталась в пределах суммы радиусов от линии огня, " +
+                "и попадание по живым позициям всё ещё возможно — тест ничего не доказывает");
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+            for (int i = 0; i < 3; i++) w.TickAll(idle);
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out _),
+                "выстрел с глубиной не засчитан по ушедшему сборщику — сбор и разрешение " +
+                "спрашивают, где тело СТОИТ, а не где стрелок его видел");
+            Assert.Less(w.PlayerAt(1).Hp, hpBefore,
+                "сборщик, поражённый в отмотанной позиции, не потерял Hp");
+        }
+
+        [Test]
+        public void SlidingAtTheRewoundTick_IsCheckedWithTheSlidingProfile()
+        {
+            // ⭐ THE Sliding BIT, ASKED BY THE SHOT rather than by a direct
+            // read of the row. HistoryRow_CarriesTheSlideAndInvulnerabilityOf
+            // TheTickItRecords above proves the bit is WRITTEN; this proves it
+            // is OBEYED -- and finding C-I5's whole account of what it costs
+            // not to be is about this branch: a collector who was mid-slide at
+            // the rewound tick and stands now would be tested against a
+            // STANDING profile, and the round that visibly went over his head
+            // would land.
+            //
+            // WHY THE GUNNER'S MUZZLE HEIGHT: 0.95 m is above
+            // Hero.SlideProfileTop (0.55) by more than the round's own radius,
+            // so the sliding profile refuses it, and it is inside the body
+            // part's belt [0.55, 1.35), so the standing profile takes it. That
+            // is the same "a shot on a high horizontal line (e.g. a Gunner's
+            // muzzle height) passes clean over a sliding target" case
+            // AcceptCandidate's own slide note describes.
+            //
+            // THE CONTACT IS ON THE BIRTH TICK, and that is the cheapest place
+            // to put it: the contact circle is
+            // VictimX - (Hero.Radius + ProjectileRadius) = 3 - 0.57 = 2.43 m,
+            // inside the first step (1.7667 -> 2.9333), where RewindLeft is
+            // still the full picture depth and the question is about tick
+            // (T - 3) -- a row the three idle ticks below have written.
+            //
+            // ⛔ THE TIMER IS SET DIRECTLY, NOT DRIVEN THROUGH INPUT, on this
+            // file's own settled grounds (see the flag fixture above): a real
+            // slide is gated on a run-up, and an input-driven fixture that
+            // silently failed its gate would assert about a collector who never
+            // slid. The two sanity assertions make it prove it worked.
+            // ⚠ AND THE SLIDE MOVES NOBODY HERE, which is checked rather than
+            // hoped: PlayerMovementSystem's slide branch drives Vel from
+            // SlideDir, Geometry.RotateTowards hands a zero SlideDir straight
+            // back, and a zero Vel resolves to a zero step. The position
+            // assertion below is what says so, because a victim that drifted
+            // would make this a POSITION fixture wearing a flag fixture's name.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            // The premise of the shared collector fixture, asserted HERE
+            // rather than inside the fixture itself: the countdown sentinel
+            // below borrows that fixture and then moves its victim, so a check
+            // built into the fixture would be about a stand that test abandons.
+            // The three tests that keep this geometry name this one for it.
+            AssertContactLandsOnStep(1, in cfg, VictimX, cfg.Hero.Radius);
+            PlayerState victim = w.PlayerAt(1);
+            victim.SlideTimer = cfg.Hero.SlideDuration;
+            w.SetPlayerForTest(1, victim);
+            float2 stood = w.PlayerAt(1).Pos;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+
+            Assert.Greater(w.PlayerAt(1).SlideTimer, 0f,
+                "жертва не подкатывается — записанные строки не несут бита подката, и тест " +
+                "ничего не меряет");
+            Assert.AreEqual(stood, w.PlayerAt(1).Pos,
+                "подкат сдвинул жертву — фикстура мерит позицию, а не бит профиля");
+
+            victim = w.PlayerAt(1);
+            victim.SlideTimer = 0f;
+            w.SetPlayerForTest(1, victim);
+
+            w.TickAll(OneShotAt(in cfg, cfg.Gunner.MuzzleHeight));
+            for (int i = 0; i < 3; i++) w.TickAll(idle);
+
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out _),
+                "подкатывавшаяся в отмотанном тике жертва проверена стоячим профилем — " +
+                "выстрел, прошедший над головой, засчитан");
+        }
+
+        [Test]
+        public void RewoundQuestionLandsOnExactlyTheTickTheDepthNames()
+        {
+            // ⭐⭐ THE WITNESS OF THE FORMULA ITSELF (app-88jb Т28, coordinator
+            // RULING 212), and it exists because every other fixture in this
+            // block FREEZES its target. A frozen body stands in the same place
+            // at every recorded tick, so "ask tick T-3" and "ask tick T-2"
+            // return the same position and the shift mutation survives the
+            // whole suite. This one asks a question the neighboring ticks
+            // answer DIFFERENTLY, so the outcome names the tick.
+            //
+            // ⚠ AND THE WITNESS HAS TO BE A BIT, NOT A POSITION -- measured,
+            // not assumed. Telling two adjacent ticks apart by where the body
+            // stood needs it to travel further in one tick than the solver's
+            // own padding, Hero.Radius + Weapon.ProjectileRadius = 0.57 m; a
+            // collector at MaxSpeed 7 covers 0.233 m per tick. The Sliding bit,
+            // by contrast, changes whole between one row and the next.
+            //
+            // THE FIXTURE, AND ITS ARITHMETIC. The victim slides through
+            // EXACTLY ONE recorded tick and stands in the ones on both sides of
+            // it; the shot is then timed so the rewound question falls on that
+            // one. Four idle ticks run first (rows 1..4, the slide on row 2),
+            // the shot goes out on tick 5, and its first step -- the contact
+            // circle is VictimX - (Hero.Radius + ProjectileRadius) = 3 - 0.57 =
+            // 2.43 m, inside the first step's 1.7667 -> 2.9333 -- carries the
+            // full picture depth, RewindLeft = 3. So the question is about tick
+            // 5 - 3 = 2, which is the sliding row, and the shot at the gunner's
+            // muzzle height passes over the low profile: no damage.
+            // ⭐ WHAT DIES ON IT: shift the formula by one tick in EITHER
+            // direction and the question lands on tick 1 or tick 3, both of
+            // which recorded a STANDING victim at the same position -- the
+            // round is then gated by the standing profile, the blow lands, and
+            // the assertion below goes red. That is a resolution of one tick,
+            // which is what RULING 203 needed and what no other fixture here
+            // could give it.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            AssertContactLandsOnStep(1, in cfg, VictimX, cfg.Hero.Radius);
+            float2 stood = w.PlayerAt(1).Pos;
+            var idle = new SimInput[2];
+
+            // One recorded tick of standing ahead of the slide, so the mutation
+            // that asks one tick EARLIER has a row to be wrong about.
+            w.TickAll(idle);
+
+            // The one sliding tick. The timer is set directly rather than
+            // driven through input for the reason the fixture above states: a
+            // real slide is gated on a run-up, and a fixture whose gate failed
+            // silently would assert about a collector who never slid.
+            PlayerState victim = w.PlayerAt(1);
+            victim.SlideTimer = cfg.Hero.SlideDuration;
+            w.SetPlayerForTest(1, victim);
+            w.TickAll(idle);
+            int slidTick = w.CurrentTick;
+            victim = w.PlayerAt(1);
+            Assert.Greater(victim.SlideTimer, 0f,
+                "подкат кончился внутри своего тика — записанная строка не несёт бита, " +
+                "и различать тики тесту нечем");
+            victim.SlideTimer = 0f;
+            w.SetPlayerForTest(1, victim);
+
+            // Two more standing rows, so the mutation that asks one tick LATER
+            // is wrong about a row that exists too.
+            w.TickAll(idle);
+            w.TickAll(idle);
+
+            // THE TIMING IS THE CLAIM, so it is asserted before the shot rather
+            // than left to the arithmetic in the doc: the round is born on the
+            // next tick and its first step asks (birth tick - picture depth).
+            Assert.AreEqual(slidTick, w.CurrentTick + 1 - cfg.Arena.RewindPictureTicks,
+                "выстрел встаёт не на тот тик — отмотанный вопрос придётся мимо " +
+                "единственной подкатной строки, и тест перестанет свидетельствовать");
+
+            // The premise, spelled out over all four rows: ONE of them carries
+            // the slide, the other three do not, and ALL FOUR hold the same
+            // position -- so nothing but the bit can decide the outcome, which
+            // is the whole point of this fixture over its neighbors.
+            int slot = w.PlayerAt(1).HistorySlot;
+            float2 live = w.PlayerAt(1).Pos;
+            for (int t = slidTick - 1; t <= slidTick + 2; t++)
+            {
+                Assert.IsTrue(w.History.PosAt(slot, t, live,
+                        out PositionHistory.Record row, out bool fromRow),
+                    $"жертва числится мёртвой в записанном тике {t}");
+                Assert.IsTrue(fromRow, $"строки тика {t} нет — премисса фикстуры не выполнена");
+                Assert.AreEqual(stood, row.Pos,
+                    $"жертва сдвинулась к тику {t} — соседние тики различимы позицией, " +
+                    "и свидетелем формулы стал бы не бит");
+                Assert.AreEqual(t == slidTick, (row.Flags & PositionHistory.FlagSliding) != 0,
+                    $"бит подката в тике {t} не тот, которого требует фикстура: подкат " +
+                    "обязан стоять ровно в одном записанном тике");
+            }
+
+            w.TickAll(OneShotAt(in cfg, cfg.Gunner.MuzzleHeight));
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired, out _),
+                "выстрела не было — фикстура ничего не мерит");
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out _),
+                "отмотанный вопрос пришёлся не на тот тик: спрошен соседний тик, в котором " +
+                "жертва стояла, и выстрел поверх подката засчитан");
+        }
+
+        [Test]
+        public void RewindingToATickWhenTheTargetWasDead_IsAMiss()
+        {
+            // ⭐ THE Alive BIT, ASKED BY THE SHOT. PosAt answers `false` on
+            // exactly one question -- "was this body alive at that moment" --
+            // and the gather phase has to route that answer through, or the
+            // rewind hits a ghost. The broad phase gates a collector on the
+            // LIVE `player.Alive` (ProjectileSystem's player loop), so this is
+            // the fixture that says that gate gains a SECOND asker on a rewound
+            // step rather than handing over to it: the live question stays and
+            // the recorded one joins it (coordinator RULING 213, whose other
+            // half is the neighbor below).
+            //
+            // The geometry is the sliding fixture's, unchanged -- the same
+            // 2.43 m contact inside the first step -- and the shot is at the
+            // collector's own standing muzzle height, so nothing about the
+            // height gate is in play and the only thing left to decide the
+            // outcome is the bit.
+            //
+            // ⚠ THE DEATH IS SET THROUGH THE SEAM AND TAKEN BACK, which is a
+            // fixture and not a game state: `_players` is never compacted, the
+            // ring keeps recording a dead collector with FlagAlive clear
+            // (Write's own "COLLECTORS ARE WALKED WHOLE" note), and no system
+            // in TickAll ends a match over it. That is what makes "he was dead
+            // then, he is alive now" expressible at all.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            PlayerState victim = w.PlayerAt(1);
+            victim.Alive = false;
+            w.SetPlayerForTest(1, victim);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+            Assert.IsFalse(w.PlayerAt(1).Alive,
+                "фикстура не похоронила жертву — записанные строки несут бит жизни");
+
+            victim = w.PlayerAt(1);
+            victim.Alive = true;
+            w.SetPlayerForTest(1, victim);
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+            for (int i = 0; i < 3; i++) w.TickAll(idle);
+
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out _),
+                "отмотка к тику, в котором цель была мертва, засчитана как попадание — " +
+                "выстрел попал в призрака");
+            Assert.AreEqual(hpBefore, w.PlayerAt(1).Hp, 1e-4f,
+                "у мёртвой в отмотанном тике жертвы убавилось Hp");
+        }
+
+        [Test]
+        public void TargetDeadNowButAliveThen_IsNotHitAtAll()
+        {
+            // ⭐ THE MIRROR OF THE FIXTURE ABOVE, AND THE HALF THAT KEEPS THE
+            // LIVE GATE IN PLACE (app-88jb Т28, coordinator RULING 213). That one
+            // says the rewound `Alive` question IS asked; this one says the LIVE
+            // `player.Alive` is STILL asked beside it. A collector who was alive
+            // at the rewound tick and has died since is not a candidate at all:
+            // no ProjectileHitPlayer, no damage, and the round flies on.
+            //
+            // ⭐ WHAT DIES ON IT -- the mutation "drop the live gate from the
+            // gather loop and let the record decide alone", which is the reading
+            // RULING 206's first wording invited. Under it the corpse is
+            // gathered, AcceptCandidate passes him, and the HitPlayer arm emits
+            // ProjectileHitPlayer carrying the round's whole damage and RETIRES
+            // THE ROUND, while SimulationWorld.DamagePlayer returns on its own
+            // `!Alive` guard having touched nothing.
+            // ⚠ SO Hp AND PlayerDamaged ARE GREEN UNDER BOTH CODES and witness
+            // nothing here -- the two assertions that kill the mutant are the
+            // ABSENT END EVENT and the round still standing on the board. The
+            // other two are asserted anyway, because "no damage" is the other
+            // half of what the rule promises and a future mutation may reach it.
+            //
+            // The geometry is the sliding fixture's, unchanged -- the contact
+            // circle is VictimX - (Hero.Radius + ProjectileRadius) = 2.43 m,
+            // inside the FIRST step (1.7667 -> 2.9333 m), which still carries
+            // RewindLeft = RewindPictureTicks -- so the question really is a
+            // rewound one and not a shortcut through the present.
+            //
+            // ⚠ THE DEATH IS SET THROUGH THE SEAM AFTER the recorded ticks,
+            // the reverse order of the fixture above, and it is a fixture rather
+            // than a game state: `_players` is never compacted, a dead collector
+            // keeps his history slot (DeadCollectorsSlot_IsNotReissued) and the
+            // rows he wrote while alive stay readable, which is what makes
+            // "alive then, dead now" expressible at all.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            AssertContactLandsOnStep(1, in cfg, VictimX, cfg.Hero.Radius);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+
+            // THE PREMISE ABOUT THE PAST, ASSERTED AND NOT DECLARED: the tick
+            // the shot is about to ask about HAS a row, and that row says the
+            // victim was ALIVE in it. Without both halves the fixture would go
+            // green against a world where the rewound question found nothing to
+            // refuse, and the mutant would survive it.
+            int askedTick = w.CurrentTick + 1 - cfg.Arena.RewindPictureTicks;
+            int slot = w.PlayerAt(1).HistorySlot;
+            Assert.IsTrue(w.History.PosAt(slot, askedTick, w.PlayerAt(1).Pos,
+                    out _, out bool fromRow),
+                $"жертва числится мёртвой в записанном тике {askedTick} — фикстура мерит " +
+                "не тот случай: отмотанный гейт отказал бы и без живого");
+            Assert.IsTrue(fromRow,
+                $"строки тика {askedTick} нет — отмотанный вопрос уйдёт в вырожденную ветку");
+
+            PlayerState victim = w.PlayerAt(1);
+            victim.Alive = false;
+            w.SetPlayerForTest(1, victim);
+            Assert.IsFalse(w.PlayerAt(1).Alive,
+                "фикстура не похоронила жертву к моменту выстрела — живому гейту " +
+                "нечего отказывать");
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired, out _),
+                "выстрела не было — фикстура ничего не мерит");
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHitPlayer, out _),
+                "раунд отчитался о попадании в труп: живой гейт снят, и на провод " +
+                "уехало событие с суммой урона, которого никто не получил");
+            Assert.AreEqual(1, w.ProjectileCount,
+                "раунд снят с доски трупом — мёртвый сборщик стал кандидатом, и " +
+                "выстрел кончился на теле, которому не может нанести урона");
+            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out _),
+                "мёртвая на момент выстрела жертва получила урон");
+            Assert.AreEqual(hpBefore, w.PlayerAt(1).Hp, 1e-4f,
+                "у мёртвой на момент выстрела жертвы убавилось Hp");
+        }
+
+        [Test]
+        public void ShotOnTheFirstTick_WithFullDepth_DoesNotHitTheArenaCenter()
+        {
+            // ⛔ A SENTINEL, SAID OUT LOUD (lesson 427): green against today's
+            // structure, which reads no history at all, and green against the
+            // finished feature. What it refuses is a PHANTOM STAND AT THE
+            // ORIGIN -- a body answered for a tick the ring has no row for, at
+            // a blank Record's `Pos` instead of where it actually is.
+            // ⚠ AND THE OBVIOUS FORM OF THAT MUTATION CANNOT REACH IT, which is
+            // measured rather than argued (session 79, M106/M107): poisoning
+            // PosAt's degenerate `Record` changes nothing at all, because
+            // ProjectileSystem's own RewoundBody returns on `!fromHistory`
+            // BEFORE it reads the record, and on a negative tick before it even
+            // calls PosAt. Through the round's path that record is dead; its
+            // only readers are the three direct PosAt fixtures above, which is
+            // exactly why RULING 145 insisted every branch keep one.
+            // ⇒ What is left reachable is the FALLBACK itself, and the contact
+            // assertion at the bottom is what makes that killable -- see its
+            // own note for why Hp alone was not enough.
+            //
+            // ⛔ AND ONE TICK IS THE WHOLE FIXTURE, which is what makes the
+            // history EMPTY. Rows are written on TickAll's last line, so during
+            // the very first tick the ring holds nothing and every rewound
+            // question falls into PosAt's degenerate branch. From the second
+            // tick on there are rows, and the mutant would be answered with a
+            // real one and survive.
+            //
+            // THE ARITHMETIC, AND IT IS WHY THE DEPTH IS THE CAP AND NOT THE
+            // PICTURE DEPTH. k = RewindCapTicks = 6 splits into a saturated
+            // picture half of 3 and an input half of 3, so the birth tick
+            // spends THREE catch-up steps plus the ordinary one -- ends at
+            // 2.9333 / 4.1000 / 5.2667 / 6.4333 -- and the whole flight fits
+            // inside the one tick this fixture runs. The contact circle is
+            // 3.38 m, so the blow lands on the SECOND of those four steps.
+            // ⚠ THAT IS THE SECOND OF THE THREE REWOUND STEPS, NOT THE LAST,
+            // and the count is stated because the plan's own text calls it "the
+            // last rewound step" at this very point. Counting step ENDS: three
+            // steps carry a positive RewindLeft (3, 2, 1) and the fourth is
+            // already in the present, and 3.38 m falls in the second of them.
+            //
+            // ⚠ THE FREEZE IS NOT PROBED HERE, AND NEITHER HALF OF THAT IS AN
+            // OVERSIGHT. There is no "before" to probe in -- the fixture is one
+            // tick long by construction -- and there is no honest "after"
+            // either: DamageMob adds this very blow's impact shove into the
+            // mob's own Vel, and with Accel zeroed the archetype's MoveTowards
+            // can no longer damp anything (its step is Accel * dt = 0), so the
+            // struck body DOES drift on the same tick. TestWorlds.RunIntoBody's
+            // own note carries that mechanism in as many words.
+            //   What makes the freeze unnecessary rather than merely unprobed
+            // is the ORDER: the contact is resolved inside the WEAPON phase,
+            // and TickAll runs MobAiSystem after it, so the mob could not have
+            // taken a step of its own before the blow whether it were frozen or
+            // not. The call below is kept for the fixture to read like its two
+            // neighbors and costs nothing.
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            cfg.Weapon.SpreadRad = 0f;
+            cfg.Weapon.RecoilPerShotRad = 0f;
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(MobTargetX, 0f)));
+            var target = w.Mobs[0]; target.Hp = 1e6f; w.SetMobForTest(0, target);
+            AssertContactLandsOnStep(2, in cfg, MobTargetX, cfg.Chaser.Radius);
+
+            w.Tick(new SimInput
+            {
+                FireHeld = true,
+                AimHeld = true,
+                AimPoint = new float2(MobTargetX, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)cfg.Arena.RewindCapTicks
+            });
+
+            Assert.Less(w.Mobs[0].Hp, 1e6f,
+                "выстрел на первом тике матча не попал в цель — пустая ячейка кольца прочитана " +
+                "как настоящая запись, и цель встала в центр арены");
+
+            // ⛔ AND WHERE THE BLOW LANDED IS ASSERTED, NOT MERELY THAT IT DID,
+            // and that strengthening is a MEASUREMENT rather than a precaution
+            // (session 79, mutations M106-M108). Three separate mutations that
+            // hand a PHANTOM STAND AT THE ORIGIN back for a tick the ring has no
+            // row for -- a poisoned degenerate record, a poisoned no-row
+            // fallback and a poisoned negative-tick fallback -- all left the Hp
+            // assertion above GREEN. The reason is the gather's own solver: a
+            // step that STARTS inside the target circle answers t = 0, so a
+            // round that missed the body on the step it should have struck
+            // simply resolves on the NEXT one, and Hp cannot tell the two
+            // apart. The contact abscissa can: the blow belongs at the entry
+            // into the winning PART's circle, MobTargetX - (part radius + round
+            // radius), and a phantom origin pushes it a whole step downrange.
+            // ⚠ The part is the body belt, because the shot is level with the
+            // collector's own muzzle height and that height falls inside it.
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
+                "события попадания нет вовсе — фикстура перестала мерить свой предмет");
+            Assert.AreEqual(MobTargetX - (cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius),
+                hit.Pos.x, 0.03f,
+                "контакт стоит не на входе в круг части: пустая история отвечает не текущей " +
+                "позицией, и снаряд дошёл до цели на шаг позже, чем должен был");
+        }
+
+        [Test]
+        public void TargetInvulnerableAtTheRewoundTick_IsNotDamaged()
+        {
+            // ⭐ THE Invulnerable BIT, ASKED BY THE SHOT, and the half of the
+            // pair that says "the dodge counts". Hero.DashIframes is 0.2 s,
+            // which is EXACTLY the six-tick rewind cap, so a whole dodge fits
+            // inside the deepest rewind -- reading invulnerability off the LIVE
+            // body would award a hit the victim had already earned away.
+            //
+            // ⚠ THE LIVE i-FRAME GATE LIVES IN THE HitPlayer BRANCH AND IN
+            // DamagePlayer, not in AcceptCandidate (coordinator RULING 205), so
+            // this fixture asserts on Hp rather than on the absence of an end
+            // event: with the feature the round still ENDS on the victim, it
+            // simply carries no damage there. Hp is the outcome the rule is
+            // about.
+            //
+            // The geometry is the sliding fixture's, unchanged, and the shot is
+            // at the standing muzzle height so no height gate is in play.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            PlayerState victim = w.PlayerAt(1);
+            victim.IframeTimer = cfg.Hero.DashIframes;
+            w.SetPlayerForTest(1, victim);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+            Assert.Greater(w.PlayerAt(1).IframeTimer, 0f,
+                "неуязвимость истекла за холостые тики — записанные строки её не несут, " +
+                "и тест ничего не меряет");
+
+            victim = w.PlayerAt(1);
+            victim.IframeTimer = 0f;
+            w.SetPlayerForTest(1, victim);
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+            for (int i = 0; i < 3; i++) w.TickAll(idle);
+
+            Assert.AreEqual(hpBefore, w.PlayerAt(1).Hp, 1e-4f,
+                "неуязвимая в отмотанном тике жертва получила урон — уклонение, которое игрок " +
+                "видел на экране, не засчитано");
+        }
+
+        [Test]
+        public void TargetInvulnerableNowButNotThen_IsDamaged()
+        {
+            // ⭐ THE MIRROR, AND THE PAIR IS THE WITNESS. Without this half the
+            // mutation "always answer invulnerable" -- or, just as cheaply,
+            // "keep reading the live body and let a late dash cancel a blow
+            // that already landed in the past" -- would survive the whole
+            // suite: the fixture above would stay green under both.
+            //
+            // The rewound question has to answer about THAT tick in both
+            // directions, so here the victim is vulnerable through the recorded
+            // ticks and raises i-frames only on the tick of the shot.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+            Assert.AreEqual(0f, w.PlayerAt(1).IframeTimer, 1e-6f,
+                "жертва неуязвима в холостых тиках — фикстура записала не тот бит");
+
+            PlayerState victim = w.PlayerAt(1);
+            victim.IframeTimer = cfg.Hero.DashIframes;
+            w.SetPlayerForTest(1, victim);
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+            for (int i = 0; i < 3; i++) w.TickAll(idle);
+
+            Assert.Less(w.PlayerAt(1).Hp, hpBefore,
+                "уязвимая в отмотанном тике жертва не получила урона — отмотанный вопрос " +
+                "отвечает про СЕЙЧАС, а дэш задним числом отменил попавший выстрел");
+        }
+
+        [Test]
+        public void RewindEndsAfterThePictureTicks_AndTheRoundIsInThePresent()
+        {
+            // ⛔ A SENTINEL, SAID OUT LOUD (lesson 427): green against today's
+            // structure and green against the finished feature. What kills it
+            // is the mutation "never count down" -- a rewind that lasts
+            // forever.
+            //
+            // THE CLAIM: the depth is spent on the first k_picture steps and on
+            // not one more. So the fixture puts the victim BEYOND the last
+            // rewound step and walks him off the line right after the shot: the
+            // contact falls on a step that is already in the present, where the
+            // question is about the live body, and the live body is gone.
+            //
+            // THE ARITHMETIC. k = RewindPictureTicks = 3 => k_input = 0, so the
+            // round takes one step per tick and its three rewound steps end at
+            // 2.9333 / 4.1000 / 5.2667 m. The contact circle is
+            // DistantVictimX - (Hero.Radius + ProjectileRadius) = 6.4 - 0.57 =
+            // 5.83 m, which lies inside the FOURTH step (5.2667 -> 6.4333) --
+            // the first one the countdown has already released -- with better
+            // than half a meter of clearance at each end (see the constant's
+            // own doc for the stand that had three millimeters instead).
+            // ⚠ THE VICTIM IS A COLLECTOR, so the padding is Hero.Radius
+            // (0.45) and not the chaser radius (0.5) the mob fixtures above
+            // use. The two differ by 0.05 m, which is exactly the size of the
+            // mistake this note exists to stop.
+            // ⭐ WHY THE MUTANT DIES ON IT: under "never count down" that
+            // fourth step still asks tick (T - 3), whose row was written at the
+            // end of the shot's own tick -- before the victim moved -- so it
+            // finds him standing on the line and the blow lands.
+            var w = TwoCollectorsOnTheFiringLine(out SimConfig cfg);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(DistantVictimX, 0f));
+            // The step the contact falls on IS the claim here, so it is
+            // asserted and not declared: one step nearer and the blow would
+            // land while the round is still rewound, which is a different test
+            // wearing this one's name.
+            AssertContactLandsOnStep(cfg.Arena.RewindPictureTicks + 1, in cfg,
+                DistantVictimX, cfg.Hero.Radius);
+            float hpBefore = w.PlayerAt(1).Hp;
+
+            var idle = new SimInput[2];
+            for (int i = 0; i < ProbeTicks + cfg.Arena.RewindPictureTicks; i++) w.TickAll(idle);
+            Assert.AreEqual(new float2(DistantVictimX, 0f), w.PlayerAt(1).Pos,
+                "жертва сдвинулась за холостые тики — записанные строки не о той линии");
+
+            w.TickAll(OneShotAt(in cfg, cfg.Hero.MuzzleHeight));
+            Assert.AreEqual(1, w.ProjectileCount, "выстрела не было — фикстура ничего не мерит");
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(DistantVictimX, 50f));
+
+            for (int i = 0; i < 4; i++) w.TickAll(idle);
+
+            Assert.AreEqual(hpBefore, w.PlayerAt(1).Hp, 1e-4f,
+                "цель за пределами отматываемого окна поражена — отмотка не кончилась после " +
+                "k_картинки шагов и тянется всю жизнь снаряда");
         }
     }
 }

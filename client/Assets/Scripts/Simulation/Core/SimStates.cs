@@ -417,6 +417,58 @@ namespace Ring.Simulation.Core
         /// WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash went red the
         /// moment this field was declared, and green again only on the fold.
         public int Ricochets;
+
+        /// app-88jb Т28 (spec §3.6, coordinator RULING 208): how many more
+        /// steps of THIS round are asked of the PAST. It is set at birth to
+        /// the PICTURE half of its own shooter's rewind depth
+        /// (RewindSplit.PictureTicks), it drops by one on every step the round
+        /// takes, and while it is above zero both the gather phase and
+        /// AcceptCandidate ask PositionHistory.PosAt for the tick
+        /// (CurrentTick - RewindLeft) instead of reading the live body.
+        /// ⚠ IT MOVES NOTHING. The round travels its ordinary step either way;
+        /// what this half of the depth buys is a different QUESTION, which is
+        /// the Valve form of lag compensation. The half that DOES move
+        /// something is Т27's, and it is spent by ProjectileSystem.CatchUp on
+        /// the birth tick.
+        ///
+        /// A FIELD RATHER THAN A COMPUTATION, because neither input such a
+        /// computation would need is on hand. On every later tick of the
+        /// flight the rule needs this round's AGE and its OWN picture half:
+        /// ProjectileState carries no birth tick and no age, and Ttl is not an
+        /// age -- Т27's catch-up already subtracted its own steps from it, so
+        /// two rounds of the same age can carry different Ttl. And the picture
+        /// half is PER SHOT, not per world: a mob's round gets zero by
+        /// construction (MobAiSystem's own RULING 177 note), and two collectors
+        /// firing on ONE tick can carry two different depths -- RewindTests'
+        /// TwoCollectorsWithDifferentLag_EachGetTheirOwnCatchUp already stands
+        /// two such shooters side by side.
+        ///
+        /// A BYTE BECAUSE THE DOMAIN IS CLOSED BY VALIDATION, not by hope.
+        /// SimConfigBuilder rejects an Arena.RewindCapTicks above
+        /// TicksFromSeconds(0.2f) -- 6 at this tick rate, CRITICAL RULE 5's own
+        /// 200 ms -- and rejects an Arena.RewindPictureTicks above the cap, so
+        /// min(k, RewindPictureTicks) never leaves [0, 6]. It is also the width
+        /// every neighbor of its kind already carries: OwnerIndex above and
+        /// SimInput.RewindTicks are both bytes.
+        ///
+        /// IT WAS DECLARED INERT AND IS NOT ANY MORE, exactly the way
+        /// Ricochets above went (errata E-1's "structural rebuild"
+        /// discipline). The structural phase gave it a home and a spawn
+        /// parameter and no reader at all, which turned the ProjectileState
+        /// pass of WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash red
+        /// -- the receipt that discipline exists to collect -- and the behavior
+        /// phase then handed it its three readers (ProjectileSystem's step,
+        /// which counts it down and turns it into a tick number; the gather
+        /// phase; AcceptCandidate) and its fold in
+        /// SimulationWorld.HashProjectile, which is what turned that pass green
+        /// again.
+        ///
+        /// HASHED, and on Ricochets' own third argument: this is canonical
+        /// state that SURVIVES A TICK and rides SaveState/RestoreState, so a
+        /// rollback that dropped it would resume a round asking about the wrong
+        /// tick -- and which tick a round asks about decides whether a blow
+        /// lands, which is a game outcome by any reading.
+        public byte RewindLeft;
     }
 
     /// Stage 3 Task 3 (spec §3.6): the one kind of pickup that exists today —

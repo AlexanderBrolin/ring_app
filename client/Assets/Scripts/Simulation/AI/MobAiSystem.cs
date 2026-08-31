@@ -396,11 +396,16 @@ namespace Ring.Simulation.AI
                 // RewindTests.MobFiredRound_GetsNoRewindAtAll is a sentinel
                 // guarding exactly this: what kills it is moving the catch-up
                 // into this path, not damaging a line of it.
+                //   THE PICTURE HALF IS ZERO ON THE SAME GROUNDS AND IS STATED
+                // OUT LOUD (app-88jb Т28): the literal below is the depth this
+                // round will ask of the past, and a mob asks nothing -- it is
+                // answered against the bodies where they stand, exactly as
+                // every round was before lag compensation existed.
                 w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Id,
                     m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
-                    cfg.ProjectileLifetime);
+                    cfg.ProjectileLifetime, 0);
                 m.FireCooldown += cfg.FireInterval;
             }
         }

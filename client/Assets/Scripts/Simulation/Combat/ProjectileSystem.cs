@@ -13,10 +13,22 @@ namespace Ring.Simulation.Combat
     /// of fire (ADR-003 §1's diegesis: machine dementia, not rebellion — no aggro
     /// follows, the shooter's target selection is untouched) — excluding only its
     /// own shooter (mobs[m].Id == proj.OwnerEntityId, below). Player targets are
-    /// gated only on Alive here — the i-frame check happens inside
-    /// SimulationWorld.DamagePlayer, and, since app-88jb Т20, ALSO in the
-    /// HitPlayer arm below, where it decides whether a blow that never landed
-    /// may pierce (that arm carries the full reasoning).
+    /// gated only on Alive here — the i-frame question is asked in the HitPlayer
+    /// arm below, which since app-88jb Т20 decides whether a blow that never
+    /// landed may pierce and since Т28 decides the blow itself (that arm carries
+    /// the full reasoning); SimulationWorld.DamagePlayer's own guard stands
+    /// behind it for every OTHER caller and as defense-in-depth for this one.
+    ///
+    /// AND SINCE app-88jb Т28 EVERY ONE OF THOSE QUESTIONS MAY BE ASKED OF THE
+    /// PAST (spec §3.6). While a round still owes rewound steps
+    /// (ProjectileState.RewindLeft), the gather phase and AcceptCandidate ask
+    /// PositionHistory where each body STOOD at tick
+    /// (CurrentTick - RewindLeft) and what it was doing there, instead of
+    /// reading the live struct -- the Valve form of lag compensation, in which
+    /// the round itself is not moved by a single meter. RewoundBody below is
+    /// the one place that asks; every consumer goes through it so that a
+    /// candidate and its resolution can never disagree about which moment they
+    /// are talking about.
     ///
     /// A PROJECTILE IS NO LONGER SINGLE-TARGET BY CONSTRUCTION (app-88jb Т20,
     /// spec §3.4, owner decision Н13): a round that OVERKILLS a light enough
@@ -66,10 +78,15 @@ namespace Ring.Simulation.Combat
                 // callable step below, and it has TWO callers -- this loop,
                 // which walks every live round once, and CatchUp further down
                 // this file, which walks ONE freshly spawned round several
-                // times from inside the weapon phase. -1 is the sentinel the
-                // contract gives that parameter -- the present, no history read
-                // at all -- and this pass is exactly the pass it has always
-                // been.
+                // times from inside the weapon phase.
+                //
+                // NEITHER OF THEM NAMES THE TICK THE BODIES ARE ASKED ABOUT
+                // ANY MORE (app-88jb Т28, coordinator RULING 207). Т27 handed that
+                // number down as a parameter and both callers passed the same
+                // literal -1; the step now derives it from the round it is
+                // stepping, because the round is the only thing that knows how
+                // much of its own picture depth is left. Both callers would
+                // otherwise have written one expression twice.
                 //
                 // ITS ANSWER IS DROPPED HERE AND READ THERE, and that asymmetry
                 // is the contract rather than dead weight. "The round still
@@ -78,7 +95,7 @@ namespace Ring.Simulation.Combat
                 // precisely so a swap-remove lands on a slot already visited,
                 // which makes the removal the iteration's own business. CatchUp
                 // re-enters one index repeatedly and therefore has to read it.
-                StepProjectile(w, i, dt, in config, heroRadius, candidates, -1);
+                StepProjectile(w, i, dt, in config, heroRadius, candidates);
             }
         }
 
@@ -90,15 +107,21 @@ namespace Ring.Simulation.Combat
         /// with no operator moved and no value changed. Only the two additions
         /// below are new, and both are contract rather than behavior.
         ///
-        /// `historyTick` IS INTRODUCED HERE AND READ BY NOBODY YET. -1 names
-        /// the present, and every caller that exists today passes it. Answering
-        /// the bodies at the tick a lagging shooter actually saw them is Т28's
-        /// work; the parameter arrives WITH the lift rather than after it so
-        /// this body is opened once instead of twice. A delegate would have
-        /// been the other way to carry that choice and is refused outright --
-        /// allocations are forbidden on this path
-        /// (AllocationTests.Tick_DoesNotAllocateGC), so the parameter is
-        /// explicit.
+        /// WHICH TICK THE BODIES ARE ASKED ABOUT IS DERIVED HERE, NOT PASSED
+        /// IN (app-88jb Т28, spec §3.6, coordinator RULING 207). Т27 lifted
+        /// this body out of the loop with an `int historyTick` parameter that
+        /// nobody read and both callers filled with the same literal; Т28 gives
+        /// it a reader and takes the parameter away in the same breath, because
+        /// the number is a function of the ROUND -- `CurrentTick - RewindLeft`
+        /// while the round still owes rewound steps, and the present otherwise
+        /// -- and the two callers would have had to write that one expression
+        /// twice. -1 keeps its old meaning as the value that says "the present,
+        /// no history read at all"; it is simply computed here now.
+        /// ⚠ IT IS READ BEFORE THE COUNTDOWN BELOW SPENDS A STEP, so the step
+        /// asks about the tick its own remaining depth names rather than about
+        /// the next one; and a delegate is still refused outright, on Т27's own
+        /// grounds -- allocations are forbidden on this path
+        /// (AllocationTests.Tick_DoesNotAllocateGC).
         ///
         /// RETURNS "THE ROUND STILL OCCUPIES SLOT `i`" (coordinator RULING
         /// 172), which is the one thing a caller that steps the same round more
@@ -131,12 +154,19 @@ namespace Ring.Simulation.Combat
         /// to the hottest loop in the simulation. It arrives by `in` for the
         /// same reason every neighbor here already takes it that way.
         static bool StepProjectile(SimulationWorld w, int i, float dt, in SimConfig config,
-            float heroRadius, (float t, int kind, int index)[] candidates, int historyTick)
+            float heroRadius, (float t, int kind, int index)[] candidates)
         {
             // RULING 172: raised beside every RemoveProjectileAt below, never
             // inferred from the count.
             bool stillInSlot = true;
             ref ProjectileState proj = ref w.Projectiles[i];
+            // app-88jb Т28 (spec §3.6, coordinator RULING 203): the tick this
+            // step's questions are asked at. `CurrentTick - RewindLeft` is the
+            // plan's own reading of the spec sentence, and it is the one that
+            // walks the round back into the present a tick at a time (the lag
+            // runs 3, 2, 1, 0 over a picture depth of three) instead of
+            // dropping it there in one jump.
+            int historyTick = proj.RewindLeft > 0 ? w.CurrentTick - proj.RewindLeft : -1;
             float2 startPos = proj.Pos;
             // app-88jb Т18: the step itself -- where this tick ends and
             // what STATIC geometry stands along the way -- comes from the
@@ -151,6 +181,13 @@ namespace Ring.Simulation.Combat
             float2 target = step.Target;
             proj.PrevPos = startPos;
             proj.Ttl -= dt;
+            // app-88jb Т28: the picture half is spent by the SAME bookkeeping
+            // that ages the round, one unit per step, and for the same reason
+            // -- a round is charged for the distance it covered, not for the
+            // ticks that passed. So a catch-up step spends one too: those are
+            // the round's FIRST steps (ProjectileSystem.CatchUp), which is
+            // exactly what the depth was owed for.
+            if (proj.RewindLeft > 0) proj.RewindLeft--;
 
             MobState[] mobs = w.Mobs;
 
@@ -197,13 +234,29 @@ namespace Ring.Simulation.Combat
             // (SimulationWorld._nextEntityId starts at 1), so this same
             // check is a no-op for that branch — nothing changes for a
             // player's own shot.
+            //
+            // app-88jb Т28 (spec §3.6): AND THE GATHER PHASE IS WHERE THE
+            // REWOUND QUESTION HAS TO BE ASKED FIRST, not only at the
+            // resolution below. This loop walks bodies at their CURRENT stands,
+            // so a body that stood on the round's line k ticks ago and has
+            // since walked off it would never become a candidate at all -- and
+            // the rewind would return a miss in precisely the situation it
+            // exists for. RewoundBody answers both halves at once, "was it a
+            // target then" and "where was it", and for a mob the first half can
+            // only come out of the row: `_mobs[0.._mobCount)` holds live bodies
+            // by construction, so there is no live flag to fall back on and
+            // none is wanted (PositionHistory.Write's own COLLECTORS ARE WALKED
+            // WHOLE note draws the same asymmetry from the other side).
             int mobCount = w.MobCount;
             for (int m = 0; m < mobCount; m++)
             {
                 if (mobs[m].Id == proj.OwnerEntityId) continue;
                 float mobRadius = MobRadiusFor(mobs[m].Type, in config);
-                if (Geometry.SegmentCircle(startPos, target, proj.Radius,
-                        mobs[m].Pos, mobRadius, out float tm))
+                if (RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
+                        liveAlive: true, liveSliding: false, liveInvulnerable: false,
+                        out float2 mobPos, out _, out _, out _)
+                    && Geometry.SegmentCircle(startPos, target, proj.Radius,
+                        mobPos, mobRadius, out float tm))
                 {
                     candidates[candCount++] = (tm, HitMob, m);
                 }
@@ -220,14 +273,70 @@ namespace Ring.Simulation.Combat
             // to, so the canonical packing order — and with it every t-tie
             // this scan resolves — is unchanged for a world that has only
             // one player.
+            //
+            // app-88jb Т28 (coordinator RULINGs 206 and 213): the `Alive` gate
+            // this loop has always carried does NOT change hands on a rewound
+            // step -- IT GAINS A SECOND ASKER. A collector is gathered only if
+            // he is alive BOTH NOW AND AT THE TICK THE ROUND IS REWOUND TO: the
+            // live half is the `continue` below, the historical half is
+            // RewoundBody's own return value. PosAt answers `false` on exactly
+            // one question -- "was this body alive at that moment" -- so a round
+            // rewound to a tick the victim did not live through finds nobody
+            // instead of hitting a ghost; on every un-rewound step, and on a
+            // rewound one the ring has no row for, the live answer is the only
+            // one there is, exactly as before this task.
+            // ⛔ WHAT DROPPING THE LIVE HALF WOULD COST, because RULING 206's
+            // first wording ("the gate changes hands") invited exactly that: a
+            // victim who lived at the rewound tick and has DIED SINCE would be
+            // gathered as a corpse. AcceptCandidate would pass him, the
+            // HitPlayer arm would emit ProjectileHitPlayer carrying the round's
+            // whole damage and RETIRE THE ROUND, and SimulationWorld.DamagePlayer
+            // would then return on its own `!Alive` guard having touched
+            // nothing. So a round would end on a body it cannot damage, and
+            // Presentation would spend a hit spark and a hit sound
+            // (PersistentPropsDirector.SpawnPlayerHitSpark, AudioDirector's
+            // `_hitClip`) on a corpse.
+            // ⚠ THE `Amount` ON THAT EVENT WOULD NOT BE A NEW KIND OF LIE, and
+            // the ruling's second ground overstates this one thing: the kind's
+            // own doc already says Amount is what the round CARRIED and is
+            // "strictly more than it when the victim absorbed the hit". What
+            // that clause licenses is a LIVE body that refused the blow, not one
+            // that was already dead when the round arrived -- the round's ending
+            // is what changes, not the payload's contract.
+            // ⭐ AND THE MOB LOOP ABOVE CANNOT REACH THAT CASE AT ALL:
+            // SimulationWorld.DamageMob swap-removes a dead mob out of
+            // `_mobs[0.._mobCount)` in the same breath it returns its history
+            // slot, so "alive then, dead now" does not exist for a mob. No
+            // document asks the two body arms to behave differently, and keeping
+            // the live half is what keeps them the same. It also keeps TODAY's
+            // behavior exactly where Т28 promised to change nothing: a dead
+            // collector was never a candidate and does not become one.
+            // ⛔ THE OWNER SKIP ABOVE THIS IS UNTOUCHED (Р411): the shooter is
+            // never rewound, and it is not gathered at all, so the exclusion
+            // stays exactly where and what it was.
             int playerCount = w.PlayerCount;
             for (int pi = 0; pi < playerCount; pi++)
             {
                 if (proj.Owner == ProjectileOwner.Player && pi == proj.OwnerIndex) continue;
                 PlayerState player = w.PlayerAt(pi);
-                if (player.Alive
+                // The LIVE half of the gate, spelled ahead of the rewound one so
+                // the rule reads in a single glance: a corpse is never a
+                // candidate, whatever the past says. A `continue` and not a
+                // conjunction, because the loop's OTHER gather-phase exclusion
+                // -- the owner skip one line up -- is already spelled this way,
+                // and because `player.Alive` would otherwise appear twice inside
+                // one condition: RewoundBody still receives it as its live
+                // fallback, which is what its `liveAlive` parameter is
+                // contracted to be (the value the caller reads off the struct it
+                // is holding). Past this line the two answers agree by
+                // construction, so the un-rewound path behaves exactly as it did
+                // before Т28 -- and as it did before this fix.
+                if (!player.Alive) continue;
+                if (RewoundBody(w, historyTick, player.HistorySlot, player.Pos,
+                        player.Alive, player.SlideTimer > 0f, player.IframeTimer > 0f,
+                        out float2 playerPos, out _, out _, out _)
                     && Geometry.SegmentCircle(startPos, target, proj.Radius,
-                        player.Pos, heroRadius, out float tp))
+                        playerPos, heroRadius, out float tp))
                 {
                     candidates[candCount++] = (tp, HitPlayer, pi);
                 }
@@ -312,8 +421,8 @@ namespace Ring.Simulation.Combat
                 hitTargetIndex = candidates[bestSlot].index;
 
                 if (AcceptCandidate(w, in config, in proj, startPos, target, bestT,
-                        hitKind, hitTargetIndex, out hitZone, out hitMult, out hitHeight,
-                        out hitContactT))
+                        hitKind, hitTargetIndex, historyTick, out hitZone, out hitMult,
+                        out hitHeight, out hitContactT))
                 {
                     break;
                 }
@@ -575,32 +684,65 @@ namespace Ring.Simulation.Combat
                     // ⚠ THE I-FRAME CHECK IS HERE AND NOT INSIDE THE RULE,
                     // and that boundary is the ruling's own (101): Impact
                     // answers whether a ROUND PIERCES, this line answers
-                    // whether the BLOW ARRIVES. DamagePlayer returns without
-                    // touching Hp while a dash is up (its own second
-                    // guard), and a round allowed to "pierce" a body it
-                    // never damaged would meet that same LIVE body again on
+                    // whether the BLOW ARRIVES. A blow that does not arrive
+                    // deals no damage, and a round allowed to "pierce" a body
+                    // it never damaged would meet that same LIVE body again on
                     // the very next tick -- the gather phase gates on
                     // `Alive` alone -- halving its damage once per tick
                     // until its lifetime ran out. `&&` short-circuits, so on
                     // an absorbed blow TryPierce is not called and writes
                     // nothing.
                     //
-                    // `Alive` is NOT re-checked: the gather phase above
-                    // already refused a dead player, and nothing can kill
-                    // this victim in between -- each round resolves fully
-                    // before the next is looked at, which is the same
-                    // reasoning DamagePlayer's own doc gives for calling its
-                    // matching guard defense-in-depth.
+                    // `Alive` is NOT re-checked HERE, and DamagePlayer's own
+                    // guard is what stands behind that. Un-rewound, the gather
+                    // phase above already refused a dead player and nothing can
+                    // kill this victim in between -- each round resolves fully
+                    // before the next is looked at, which is the same reasoning
+                    // DamagePlayer's own doc gives for calling its matching
+                    // guard defense-in-depth. ⚠ AND A REWOUND STEP DOES NOT
+                    // WEAKEN IT (app-88jb Т28, coordinator RULING 213), which
+                    // is written down because the first form of this task did:
+                    // the gather phase asks BOTH questions there, the live
+                    // `Alive` it always asked and the recorded one beside it,
+                    // so a body dead at that tick and a body dead right now are
+                    // both refused before a candidate is ever packed. Neither a
+                    // rewound resurrection nor a round that ends on a corpse is
+                    // on the table, and the live `Alive` rule stays exactly
+                    // where it was (RULING 205 moved the i-frame question and
+                    // nothing else).
                     PlayerState victim = w.PlayerAt(hitTargetIndex);
-                    bool piercedPlayer = victim.IframeTimer <= 0f
+                    // app-88jb Т28 (spec §3.6, coordinator RULING 205): THE
+                    // I-FRAME QUESTION IS ASKED IN ONE PLACE AND IT IS THIS
+                    // ONE, rewound or not. AcceptCandidate does not read
+                    // invulnerability and must not start to -- it answers
+                    // whether the round TOUCHED the body, and this arm answers
+                    // whether the blow ARRIVES, which is the boundary Ruling
+                    // 101 drew -- so the rewound answer lands where the live
+                    // one already stood. On an un-rewound step, and on a
+                    // rewound one the ring has no row for, `invulnerableThen`
+                    // IS `victim.IframeTimer > 0f`, i.e. the exact test that
+                    // used to be written out here.
+                    // ⚠ Hp IS STILL READ OFF THE LIVE BODY, and that is a
+                    // stated boundary rather than an oversight: the row carries
+                    // three bits and no health, so the pierce judges the
+                    // overkill against the victim as he stands now. Naming it
+                    // costs nothing and hiding it would cost the next reader an
+                    // afternoon.
+                    RewoundBody(w, historyTick, victim.HistorySlot, victim.Pos, victim.Alive,
+                        victim.SlideTimer > 0f, victim.IframeTimer > 0f,
+                        out _, out _, out bool invulnerableThen, out bool iframesFromHistory);
+                    bool blowArrives = !invulnerableThen;
+                    bool piercedPlayer = blowArrives
                         && ProjectileFlight.TryPierce(ref proj, in config,
                             config.Hero.Mass, dmg, victim.Hp, contact, hitHeight);
                     // EMITTED ON EVERY ENDING AND ONLY ON AN ENDING. An
                     // ABSORBED blow still ends the round, so it still
-                    // reports: DamagePlayer below is a no-op while the
-                    // victim's i-frames are up, and a consumed round whose
-                    // end went unreported is precisely the hanging tracer
-                    // this event exists to prevent.
+                    // reports: an absorbed blow deals no damage at all -- the
+                    // call below is skipped outright since app-88jb Т28, and
+                    // was a no-op inside DamagePlayer's own guard before that
+                    // -- and a consumed round whose end went unreported is
+                    // precisely the hanging tracer this event exists to
+                    // prevent.
                     // ⚠ A PIERCED blow does NOT end the round, so it does
                     // NOT report (app-88jb Т20, coordinator Ruling 106,
                     // review finding C-1) -- the mob branch above carries
@@ -617,10 +759,36 @@ namespace Ring.Simulation.Combat
                             zone: hitZone, hitDir: hitDir, playerIndex: proj.OwnerIndex,
                             secondaryEntityId: proj.Id, height: hitHeight);
                     }
-                    w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
-                        contact, hitZone, hitDir, hitHeight,
-                        Impact.ProjectileMassFor(proj.OwnerIndex, in config),
-                        math.length(new float3(proj.Vel, proj.VelZ)));
+                    // app-88jb Т28: the SAME answer decides the blow, because
+                    // "does it arrive" has one answer and not two.
+                    //   A blow that does NOT arrive skips the call outright, and
+                    // that is behaviorally identical to the absorbed blow this
+                    // arm has always produced: DamagePlayer's own i-frame guard
+                    // returns before it writes anything at all -- no Hp, no
+                    // channel abort, no impulse, no PlayerDamaged -- so there is
+                    // nothing for the skipped call to have done.
+                    //   A blow that DOES arrive off a written row carries
+                    // `iframesDecidedByRewind`, and that flag is the whole
+                    // reason the parameter exists: a victim who was vulnerable
+                    // at the rewound tick and dashed since would otherwise have
+                    // the live guard cancel a blow the past had already landed.
+                    // It is raised ONLY on the historical answer, so on every
+                    // un-rewound shot the guard keeps deciding exactly as it
+                    // does today (its own doc calls itself defense-in-depth,
+                    // and Т28 does not take that away from it).
+                    // ⚠ THE END-OF-ROUND EVENT ABOVE IS UNCHANGED IN BOTH
+                    // CASES. An absorbed blow still ENDS the round, so it still
+                    // reports -- a consumed round whose end went unreported is
+                    // the hanging tracer that event exists to prevent, and a
+                    // rewound absorption is an absorption.
+                    if (blowArrives)
+                    {
+                        w.DamagePlayer(hitTargetIndex, proj.OwnerIndex, dmg,
+                            contact, hitZone, hitDir, hitHeight,
+                            Impact.ProjectileMassFor(proj.OwnerIndex, in config),
+                            math.length(new float3(proj.Vel, proj.VelZ)),
+                            iframesDecidedByRewind: iframesFromHistory);
+                    }
                     if (!piercedPlayer)
                     {
                         w.RemoveProjectileAt(i);
@@ -682,19 +850,25 @@ namespace Ring.Simulation.Combat
         /// pierce does NOT stop this loop: it leaves the round in its slot on
         /// purpose, and the rest of the catch-up is still owed to it.
         ///
-        /// ⚠ WHICH MOMENT A CATCH-UP STEP LOOKS AT, SAID PLAINLY BECAUSE IT IS
-        /// NOT THE PAST. This runs inside the WEAPON phase, and
-        /// SimulationWorld.TickAll runs MobAiSystem, SeparationSystem and
-        /// ProjectileSystem AFTER that phase rather than before it. So every
-        /// step below sees collectors where they stand at the end of THIS
-        /// tick's movement and mobs where they stood at the end of the PREVIOUS
-        /// tick, and it sees that same frozen mixture on all of its steps. For
-        /// a step standing in for tick T - k those positions lie k ticks in the
-        /// FUTURE, not behind it: the half of the compensation spent here pays
-        /// the round for travel that really happened on the wire, and the
-        /// subtracting half -- asking where a body STOOD -- is Т28's and does
-        /// not exist yet. The mixture is simply the freshest picture this tick
-        /// has to offer, and calling it "the past" would be a lie.
+        /// ⚠ WHICH MOMENT A CATCH-UP STEP LOOKS AT, SAID PLAINLY BECAUSE IT
+        /// CHANGED WITH app-88jb Т28. These are the round's FIRST steps, so
+        /// they are the first ones its picture depth is owed for: a round born
+        /// with RewindLeft above zero asks each of them about the tick that
+        /// depth names, and spends one unit of it per step, exactly as the
+        /// ordinary steps in Update do. A round whose whole depth went to the
+        /// input half -- the only kind that reaches this loop at all with
+        /// nothing left over -- asks about the present here.
+        ///   AND WHERE "THE PRESENT" IS MEASURED FROM STILL MATTERS, because
+        /// the ring does not answer every question. This runs inside the WEAPON
+        /// phase, and SimulationWorld.TickAll runs MobAiSystem,
+        /// SeparationSystem and ProjectileSystem AFTER that phase rather than
+        /// before it. So a step answered off the LIVE bodies -- an un-rewound
+        /// one, or a rewound one the ring holds no row for -- sees collectors
+        /// where they stand at the end of THIS tick's movement and mobs where
+        /// they stood at the end of the PREVIOUS tick, and sees that same
+        /// frozen mixture on all of its steps. That mixture is the freshest
+        /// picture this tick has to offer and is not "the past"; the past is
+        /// what PositionHistory answers with, and only when it has the row.
         ///
         /// ⚠ AND A CATCH-UP STEP CAN KILL FROM INSIDE THE WEAPON PHASE, which
         /// nothing could do before this task: until Т27 every kill happened in
@@ -740,11 +914,13 @@ namespace Ring.Simulation.Combat
 
             for (int s = 0; s < steps; s++)
             {
-                // -1 is the present, and Т27 passes nothing else: reading
-                // where a body STOOD is the picture half's business and
-                // belongs to Т28. A catch-up step is an ordinary step of the
-                // round against the world as it is right now.
-                if (!StepProjectile(w, index, dt, in config, heroRadius, candidates, -1))
+                // app-88jb Т28: no tick is named here any more (RULING 207).
+                // A catch-up step is an ordinary step of the round in every
+                // respect, THIS ONE INCLUDED -- it asks the bodies about the
+                // tick the round's own remaining depth names, and the step
+                // itself works that number out. See this method's own note on
+                // which moment these steps look at.
+                if (!StepProjectile(w, index, dt, in config, heroRadius, candidates))
                 {
                     break;
                 }
@@ -793,6 +969,79 @@ namespace Ring.Simulation.Combat
                 "unknown archetype"),
         };
 
+        /// ⭐⭐ THE ONE HOME OF "WHERE THAT BODY WAS AND WHAT IT WAS DOING"
+        /// (app-88jb Т28, spec §3.6). Three callers ask it -- the two gather
+        /// loops in StepProjectile and AcceptCandidate below, plus the HitPlayer
+        /// arm for the i-frame half -- and they are obliged to get the SAME
+        /// answer: a candidate gathered against a past stand and then resolved
+        /// against the live one would be a round that connects with a body
+        /// standing somewhere else entirely, which is a worse outcome than
+        /// either reading alone.
+        ///
+        /// IT ANSWERS THE WHOLE QUESTION AT ONCE -- "is this a target at all"
+        /// as the return value, and where it stood and its two profile bits as
+        /// out parameters -- because the four are one reading of one moment.
+        /// The un-rewound path is the FIRST branch rather than a separate code
+        /// path at the call sites: `historyTick < 0` names the present, the
+        /// live values are handed straight back, and every caller therefore
+        /// keeps exactly the behavior it had before this task without a second
+        /// spelling of it anywhere.
+        ///
+        /// ⛔⛔ ON A DEGENERATE ANSWER NOT ONE FLAG COMES OUT OF THE RECORD,
+        /// AND THAT INCLUDES `Alive`. PositionHistory.PosAt hands back
+        /// `new Record(currentPos, FlagAlive)` when the ring holds no row for
+        /// the tick -- FlagAlive raised UNCONDITIONALLY, whatever the live body
+        /// is doing -- and returns `true` with it. So the record of that branch
+        /// states three things and knows none of them: reading `Alive` off it
+        /// would resurrect a dead collector, and reading the other two would
+        /// invent a profile. `fromHistory` is exactly the mark PosAt grew for
+        /// this (coordinator RULING 204), and this method is the only place in
+        /// the combat path that reads it: below `false` the live triple is what
+        /// the caller already passed in, which is the un-rewound behavior its
+        /// own doc demands ("a caller that has fallen into this branch must
+        /// read SlideTimer/IframeTimer off the live body").
+        ///
+        /// `liveAlive`/`liveSliding`/`liveInvulnerable` are what the CALLER
+        /// reads off the live struct it is holding, and a mob passes
+        /// `true, false, false` rather than being special-cased here: mobs are
+        /// live by construction inside `_mobs[0.._mobCount)`, and MobState
+        /// carries neither SlideTimer nor IframeTimer, so there is no field to
+        /// read and a branch on the body kind would only be a longer way of
+        /// writing those three literals. That is the same argument
+        /// PositionHistory.Write gives one level down for why a mob's row
+        /// carries FlagAlive and nothing else.
+        ///
+        /// ⚠ `fromHistory` TRAVELS OUT FOR EXACTLY ONE READER, the i-frame
+        /// decision in the HitPlayer arm, which has to tell "the rewind said
+        /// the blow arrives" from "the live body did" -- only the first may
+        /// overrule SimulationWorld.DamagePlayer's own guard. Every other
+        /// caller discards it, and the `out _` at those sites says so.
+        ///
+        /// NO ALLOCATION AND NO DELEGATE: it is a static method over value
+        /// parameters, called once per body per step in the hottest loop in the
+        /// simulation, and the first branch retires the whole of the
+        /// un-rewound case before the ring is ever touched
+        /// (AllocationTests.Tick_DoesNotAllocateGC).
+        static bool RewoundBody(SimulationWorld w, int historyTick, int slot, float2 livePos,
+            bool liveAlive, bool liveSliding, bool liveInvulnerable,
+            out float2 pos, out bool sliding, out bool invulnerable, out bool fromHistory)
+        {
+            pos = livePos;
+            sliding = liveSliding;
+            invulnerable = liveInvulnerable;
+            fromHistory = false;
+            if (historyTick < 0) return liveAlive;
+
+            bool aliveThen = w.History.PosAt(slot, historyTick, livePos,
+                out PositionHistory.Record record, out fromHistory);
+            if (!fromHistory) return liveAlive;
+
+            pos = record.Pos;
+            sliding = (record.Flags & PositionHistory.FlagSliding) != 0;
+            invulnerable = (record.Flags & PositionHistory.FlagInvulnerable) != 0;
+            return aliveThen;
+        }
+
         /// Height gate + zone resolution for the candidate the min-scan just
         /// picked (Task 6). Returns false when the shot passes clear over (or
         /// under) the target's body, which sends the scan back for the next
@@ -821,6 +1070,15 @@ namespace Ring.Simulation.Combat
         /// interior-barrier gate needs the round's height AT the contact, and
         /// the scan already knows where that contact is.
         ///
+        /// `historyTick` (app-88jb Т28, spec §3.6) is the tick the two BODY
+        /// branches are answered at, -1 for the present. It is the same number
+        /// the gather phase above was answered with, and it travels down rather
+        /// than being recomputed for the reason RewoundBody's own doc gives:
+        /// gathering a candidate at one moment and resolving it at another
+        /// would seat the contact on a body that is not there. The barrier,
+        /// ring-wall and floor branches ignore it -- static geometry does not
+        /// move, so it has no past to be asked about.
+        ///
         /// `hitHeight` (app-88jb Т3, finding D-C4) is the contact height this
         /// candidate lands at — every branch below fills it with the height
         /// arithmetic it already had to compute for its own gate (or, for
@@ -832,8 +1090,8 @@ namespace Ring.Simulation.Combat
         /// requires — a rejected candidate's height is never read by the
         /// caller, only its true/false verdict.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
-            float2 p0, float2 p1, float t, int kind, int targetIndex, out HitZone zone, out float mult,
-            out float hitHeight, out float contactT)
+            float2 p0, float2 p1, float t, int kind, int targetIndex, int historyTick,
+            out HitZone zone, out float mult, out float hitHeight, out float contactT)
         {
             zone = HitZone.None;
             mult = 1f;
@@ -873,7 +1131,14 @@ namespace Ring.Simulation.Combat
             {
                 MobState mob = w.Mobs[targetIndex];
                 MobSimConfig cfg = w.MobConfigFor(mob.Type);
-                targetPos = mob.Pos;
+                // app-88jb Т28: WHERE THE BODY STOOD, through the one home the
+                // gather phase above asked as well -- so this resolution seats
+                // the contact on the same stand the candidate was gathered at.
+                // A mob has no slide and no dash, so the two profile bits are
+                // discarded here as they are at the gather.
+                RewoundBody(w, historyTick, mob.HistorySlot, mob.Pos,
+                    liveAlive: true, liveSliding: false, liveInvulnerable: false,
+                    out targetPos, out _, out _, out _);
                 parts = cfg.Parts;
                 // THE CROWN OF THE MODEL, NOT OF THE COLUMN (app-88jb T14 Step
                 // 4, coordinator Ruling 68). This read was the column's head
@@ -895,7 +1160,17 @@ namespace Ring.Simulation.Combat
                 // slide profile must come from the SAME player, and one copy of
                 // the struct is also one fewer indexer call on the hot path.
                 PlayerState target = w.PlayerAt(targetIndex);
-                targetPos = target.Pos;
+                // app-88jb Т28 (spec §3.6, finding C-I5): the stand AND the
+                // slide bit come out of the SAME answer, which is the whole
+                // reason RewoundBody hands back both at once -- a contact
+                // seated at a past position but gated by a present profile
+                // would be two different moments in one verdict. On an
+                // un-rewound step, and on a rewound one with no row, `sliding`
+                // IS `target.SlideTimer > 0f`, the test this branch has always
+                // written out here.
+                RewoundBody(w, historyTick, target.HistorySlot, target.Pos, target.Alive,
+                    target.SlideTimer > 0f, target.IframeTimer > 0f,
+                    out targetPos, out bool sliding, out _, out _);
                 parts = cfg.Parts;
                 // Task 11: mid-slide, the hero presents a lower profile — the
                 // OVERLAP gate caps at SlideProfileTop instead of the standing
@@ -920,7 +1195,7 @@ namespace Ring.Simulation.Combat
                 // too -- and that is measured, not assumed: only his RADII
                 // differed from the column (0.32 / 0.45 / 0.16 against one body
                 // radius of 0.45).
-                overlapTop = target.SlideTimer > 0f
+                overlapTop = sliding
                     ? cfg.SlideProfileTop
                     : HitZones.StackTop(parts);
             }

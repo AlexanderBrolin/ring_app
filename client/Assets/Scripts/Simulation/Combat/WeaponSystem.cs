@@ -355,9 +355,18 @@ namespace Ring.Simulation.Combat
             // the literal 0, which no live mob can ever match
             // (SimulationWorld._nextEntityId starts at 1), so ProjectileSystem's
             // friendly-fire exclusion is a no-op for a player's own shot.
+            // rewindLeft (app-88jb Т28, coordinator RULING 208): the PICTURE
+            // half of this shooter's own depth, handed over AT THE SPAWN
+            // because the catch-up below runs on the very next line and its
+            // steps are the round's first ones — see SpawnProjectile's own doc.
+            // The cast is safe by the same domain RewindSplit states for both
+            // halves: `input` is the SANITIZED input, so `RewindTicks` is
+            // already inside [0, Arena.RewindCapTicks], and the builder caps
+            // that at 6.
             int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos,
                 vel3.xy, height, vel3.z,
-                weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime);
+                weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime,
+                (byte)RewindSplit.PictureTicks(input.RewindTicks, in cfg.Arena));
             w.StatsRef(ownerIndex).ShotsFired++;
             // app-88jb Т27 (spec §3.6, owner decision Н24/Р407): the round is
             // born at the muzzle IN THE PRESENT and is then cranked forward by

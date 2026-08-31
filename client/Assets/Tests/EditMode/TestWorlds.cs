@@ -593,7 +593,23 @@ namespace Ring.Simulation.Tests
         /// actually freezes a mob (ruling 17/104). Written once here because
         /// two fixtures below need it and a switch copied twice is a second
         /// answer waiting to drift.
-        static void FreezeArchetype(ref SimConfig cfg, MobType type)
+        ///
+        /// `internal` SINCE app-88jb Т28, AND THAT IS RULING 151 BEING SPENT
+        /// RATHER THAN OVERTURNED. That ruling left the method private on the
+        /// grounds that Т25 did not need a freeze and that widening access "for
+        /// the future" is a feature for its own sake (AGENT.md §4.3) -- and it
+        /// recorded the method here in writing so that "the next brief that
+        /// DOES need the freeze does not hunt for it again and does not start a
+        /// second copy of the switch". Т28 is that brief: its rewound-position
+        /// fixtures stand a chaser still for the length of the window, and a
+        /// chaser left to its own legs covers 0.173 m per tick straight at the
+        /// shooter. ⛔ `m.Ai = MobAiState.Idle` DOES NOT DO IT -- MobAiSystem
+        /// puts the mob back into Chase on the very next tick (ruling 17/104,
+        /// and RunIntoBody's own comment above carries the measurement) -- so
+        /// zeroing the archetype's MaxSpeed/Accel BEFORE `new SimulationWorld`
+        /// is the whole of the freeze, and every caller still proves it worked
+        /// by ticking idle and asserting the body did not move.
+        internal static void FreezeArchetype(ref SimConfig cfg, MobType type)
         {
             switch (type)
             {

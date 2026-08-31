@@ -1336,8 +1336,21 @@ namespace Ring.Simulation.Core
         /// else 0 (WeaponSystem's own literal — see ProjectileState.OwnerEntityId's
         /// own doc for why 0 can never collide with a live mob) — also required,
         /// same "say explicitly" discipline as ownerIndex.
+        /// `rewindLeft` (app-88jb Т28, coordinator RULING 208) is the PICTURE
+        /// half of the shooter's own rewind depth — the number of steps this
+        /// round will ask of the past (ProjectileState.RewindLeft's own doc).
+        /// ⛔ IT ARRIVES HERE RATHER THAN BEING ASSIGNED AFTER THE SPAWN, and
+        /// the reason is checkable rather than stylistic:
+        /// WeaponSystem.SpawnShot calls ProjectileSystem.CatchUp on the very
+        /// next line, and Т27's catch-up steps are the round's FIRST steps —
+        /// that is, the first steps the depth is meant to pay for. A field set
+        /// after the spawn would have arrived too late for every one of them.
+        /// Required, no default: both battle call sites say the depth out loud,
+        /// and MobAiSystem's zero is a rule with its own note (RULING 177), not
+        /// an omission. The test seam is where the trailing default lives.
         internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, int ownerEntityId,
-            float2 pos, float2 vel, float height, float velZ, float damage, float radius, float ttl)
+            float2 pos, float2 vel, float height, float velZ, float damage, float radius, float ttl,
+            byte rewindLeft)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -1351,7 +1364,8 @@ namespace Ring.Simulation.Core
                 Id = id, Owner = owner, OwnerIndex = ownerIndex, OwnerEntityId = ownerEntityId,
                 Pos = pos, PrevPos = pos, Vel = vel,
                 Height = height, PrevHeight = height, VelZ = velZ,
-                Damage = damage, Radius = radius, Ttl = ttl
+                Damage = damage, Radius = radius, Ttl = ttl,
+                RewindLeft = rewindLeft
             };
             // Amount carries the shot's sim-plane velocity angle (Presentation
             // fix-round app-2pl round 2): MuzzleFlashView needs a tick-accurate
@@ -1988,7 +2002,9 @@ namespace Ring.Simulation.Core
         /// Applies damage to one player (spec Interfaces, Task 16/23): a
         /// no-op once the player is already dead (spec §3.12 — stats stay frozen and
         /// no further PlayerDamaged/PlayerDied events fire); otherwise active dash
-        /// i-frames absorb the hit with no event, else Hp drops and, once it reaches
+        /// i-frames absorb the hit with no event — unless the caller has already
+        /// answered that question against the past (`iframesDecidedByRewind`
+        /// below, app-88jb Т28) — else Hp drops and, once it reaches
         /// zero, the player dies exactly once.
         /// `dmg` is the POST-multiplier amount, same contract as DamageMob above;
         /// `zone`/`dir` ride along on PlayerDamaged and, on the killing blow, on
@@ -2034,13 +2050,35 @@ namespace Ring.Simulation.Core
         /// ⚠ A FIST PASSES 0f, 0f AND THAT IS A DECISION (spec §3.2, plan Т7):
         /// MobAiSystem's contact strike gives no knockback at all. It is stated
         /// at that call site, not defaulted here.
+        ///
+        /// `iframesDecidedByRewind` (app-88jb Т28, spec §3.6, coordinator
+        /// RULING 205) is the ONE parameter here that carries a default, and it
+        /// says: "the i-frame question has already been answered, against the
+        /// tick the shooter actually saw -- the live timer does not get a
+        /// second vote." Only ProjectileSystem's HitPlayer arm ever raises it,
+        /// and only when the answer came out of a written history row; a
+        /// collector who was vulnerable k ticks ago and dashed since would
+        /// otherwise have the guard below cancel a blow the past had already
+        /// landed on him.
+        /// ⛔ THE GUARD IS NOT REMOVED AND THE DEFAULT IS WHY. Every other
+        /// caller -- MobAiSystem's contact strike, the KillPlayerForTest seam,
+        /// the fixtures that clear bodies through this path, and an un-rewound
+        /// round -- keeps compiling unchanged and keeps being decided by the
+        /// guard, which stays the one home of the LIVE rule and stays
+        /// defense-in-depth for the rest (its own note below). The rewound shot
+        /// is the single case that answers the question upstream, and it is the
+        /// single case that says so here.
+        /// ⚠ AND IT DOES NOT REACH THE `Alive` GUARD, which is a different
+        /// question with a different answer: a dead body takes no damage
+        /// whatever the past says.
         internal void DamagePlayer(int victimIndex, byte attackerIndex, float dmg,
             float2 pos, HitZone zone, float2 dir, float hitHeight,
-            float projectileMass, float projectileSpeed3D)
+            float projectileMass, float projectileSpeed3D,
+            bool iframesDecidedByRewind = false)
         {
             ref PlayerState p = ref _players[victimIndex];
             if (!p.Alive) return;
-            if (p.IframeTimer > 0f) return;
+            if (!iframesDecidedByRewind && p.IframeTimer > 0f) return;
 
             // Stage 3 Task 19 (spec §3.7, errata E-6/C-I7): AFTER both
             // guards — an absorbed or posthumous "hit" must not reach here,
@@ -2063,12 +2101,14 @@ namespace Ring.Simulation.Core
             //
             // INSIDE DamagePlayer, AFTER BOTH GUARDS, and that placement is
             // load-bearing rather than tidy (finding D2-I13). The method
-            // returns above on `!Alive` and on `IframeTimer > 0` WITHOUT
-            // emitting PlayerDamaged -- so an impulse applied over either
-            // guard would be a shove the server delivered and the client
+            // returns above on `!Alive` and on a LIVE `IframeTimer > 0`
+            // WITHOUT emitting PlayerDamaged -- so an impulse applied over
+            // either guard would be a shove the server delivered and the client
             // never heard about, i.e. a guaranteed divergence rather than a
             // balance question. A dash is immune to the blow AND to the
-            // shove, together, because the two are decided in one place.
+            // shove, together, because the two are decided in one place -- and
+            // a blow that `iframesDecidedByRewind` lets through carries both,
+            // for that same reason read the other way round (app-88jb Т28).
             //
             // THE SHOVE LANDS IN Vel, NEVER IN Pos, exactly as the mob's
             // does: a body that is shoved keeps traveling for the ticks that
@@ -2460,10 +2500,20 @@ namespace Ring.Simulation.Core
         /// not itself testing the friendly-fire exclusion
         /// (MobFriendlyFireTests.MobRound_DoesNotDamageItsOwnShooter passes the
         /// real shooter's own id explicitly).
+        /// `rewindLeft` (app-88jb Т28) is a NEW trailing parameter with a
+        /// default, built exactly the way `ownerIndex` above was: every
+        /// existing call site keeps compiling unchanged and defaults to 0 — "no
+        /// rewound picture at all", which is what a fixture that states its own
+        /// geometry in the present wants. A fixture that means to exercise the
+        /// rewound question drives a real Tick through WeaponSystem instead,
+        /// because the depth has to come from a SHOOTER's input to mean
+        /// anything (RewindSplit's own doc on what the direct-call witnesses do
+        /// not cover).
         internal int SpawnProjectileForTest(ProjectileOwner owner, float2 pos, float2 vel,
             float height, float velZ, float damage, float radius, float ttl, byte ownerIndex = 0,
-            int ownerEntityId = 0)
-            => SpawnProjectile(owner, ownerIndex, ownerEntityId, pos, vel, height, velZ, damage, radius, ttl);
+            int ownerEntityId = 0, byte rewindLeft = 0)
+            => SpawnProjectile(owner, ownerIndex, ownerEntityId, pos, vel, height, velZ,
+                damage, radius, ttl, rewindLeft);
 
         /// Test-only seam (Task 19 Interfaces): kills the player outright via the
         /// normal damage path (overkill amount) so MobAiSystem's "player dead"
@@ -3033,30 +3083,35 @@ namespace Ring.Simulation.Core
         /// post-tick projectile state (e.g. Height/PrevHeight after VelZ integration).
         internal ProjectileState GetProjectileForTest(int index) => _projectiles[index];
 
-        /// Test-only seam (app-88jb Т25): the rewind ring itself, so a test can
-        /// ask what a row holds. Nothing in the world exposes a row otherwise --
-        /// the ring is private state and its first PRODUCTION reader is Т27/Т28 --
-        /// and "observe the write through the outcome of a shot" is that later
-        /// task's test, not this one's. Same shape as GetProjectileForTest
-        /// above, except that PositionHistory is a class, so this hands back
-        /// the live object rather than a copy: a seam that cloned the ring
-        /// would answer questions about a snapshot nobody writes to.
+        /// The rewind ring itself (app-88jb Т25) -- the world's one accessor to
+        /// the rows a body's past is kept in. Nothing else exposes a row.
         ///
-        /// ⚠ AND IT HANDS BACK THE WHOLE OBJECT, MUTABLE (review finding A-5).
-        /// Through this one property a fixture can reach Clear, Write, RentSlot
-        /// and RestoreFrom on the live world's own ring, none of which any test
-        /// has business calling. That width is real and is named here rather
-        /// than left to be discovered.
-        /// ⇒ It is not narrowed, and the reason is a precedent from this same
-        /// task: a read-only forwarder would be a SECOND SPELLING of PosAt on
-        /// the world, and RULING 148 removed the other seam of this task for
-        /// exactly that (`PlayerHistorySlotForTest` duplicated
-        /// `PlayerAt(i).HistorySlot`). Trading one duplication for another is
-        /// not a fix. What guards the width is the same thing that guards every
-        /// other `*ForTest` seam here: they are internal, the test assembly is
-        /// the only one that sees them, and misuse is a review finding rather
-        /// than a compile error.
-        internal PositionHistory HistoryForTest => _history;
+        /// ⚠ IT WAS `HistoryForTest` UNTIL app-88jb Т28, AND THE RENAME IS THE
+        /// WHOLE OF WHAT CHANGED HERE. Т25 wrote it for tests because the ring
+        /// had no production reader yet and said so in as many words ("its
+        /// first PRODUCTION reader is Т27/Т28"); Т28 is that reader --
+        /// ProjectileSystem.RewoundBody asks PosAt through this property on
+        /// every rewound step of every round -- so a name ending in `ForTest`
+        /// would now be a lie about the hottest loop in the simulation. It sits
+        /// among the `*ForTest` seams because that is where it was written and
+        /// moving it would churn the file without changing anything; what it is
+        /// is stated here instead.
+        /// ⛔ AND THERE IS NO SECOND PROPERTY. A narrow read-only forwarder
+        /// beside this one would be a SECOND SPELLING of PosAt on the world,
+        /// which is what RULING 148 removed the other seam of Т25 for
+        /// (`PlayerHistorySlotForTest` duplicated `PlayerAt(i).HistorySlot`).
+        ///
+        /// ⚠ IT HANDS BACK THE WHOLE OBJECT, MUTABLE (review finding A-5).
+        /// PositionHistory is a class, so this is the live ring and not a copy
+        /// -- a seam that cloned it would answer questions about a snapshot
+        /// nobody writes to -- and through it a caller can reach Clear, Write,
+        /// RentSlot and RestoreFrom, none of which anything outside TickAll has
+        /// business calling. That width is real and is named here rather than
+        /// left to be discovered. What guards it is what guards every other
+        /// internal member of this class: the simulation and its test assembly
+        /// are the only things that see it, and misuse is a review finding
+        /// rather than a compile error.
+        internal PositionHistory History => _history;
 
         /// Canonical order (spec §3.3 and, since Stage 3, spec Р294; Task 3 —
         /// split rng into spreadRng/waveRng; Stage 2 Task 10 — multiplayer
@@ -3345,6 +3400,20 @@ namespace Ring.Simulation.Core
             // decides whether the next contact reflects or retires the round,
             // which is a game outcome by any reading.
             h = StateHash64.Add(h, p.Ricochets);
+            // app-88jb Т28 (spec §3.6): the picture half's countdown CLOSES the
+            // fold in its turn, by the same "end of struct = end of fold" rule
+            // Т5 and Т19 followed above -- it qualifies no other field, so there
+            // is none for it to sit beside, and it is the last field of the
+            // struct. Cast is explicit for the reason OwnerIndex's own note
+            // gives: byte has implicit conversions to several
+            // StateHash64.Add overloads at once.
+            //
+            // HASHED, on Ricochets' argument one line up: it survives a tick and
+            // rides SaveState/RestoreState, and it decides WHICH TICK the round
+            // asks the bodies about -- so a rollback that dropped it would
+            // resume a round that answers a different question, which is a game
+            // outcome and not a detail.
+            h = StateHash64.Add(h, (int)p.RewindLeft);
             return h;
         }
 

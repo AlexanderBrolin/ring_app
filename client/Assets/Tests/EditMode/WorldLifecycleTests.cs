@@ -247,6 +247,25 @@ namespace Ring.Simulation.Tests
             //   36 x 2 = 72, 10 x 2 = 20, 7 x 3 = 21,
             //   5 + 13 + 14 + 5 + 2 + 5 = 44          -> 154 -> 157.
             //
+            // app-88jb Т28: ProjectileState grew from 14 fields to 15 --
+            // RewindLeft, how many more steps of this round are asked of the
+            // PAST (spec §3.6, SimStates.cs' own field doc) -- folded into
+            // HashProjectile at the END, mirroring the end of the struct,
+            // exactly as Т19 folded Ricochets. Re-derived once more from fresh
+            // typeof(X).GetFields() readings of ALL NINE structs rather than
+            // adjusted from 157, and this time the recount came back agreeing
+            // with the receipt in every other line: PlayerState 36,
+            // MatchStats 10, WaveState 7, WorldStats 5, MobState 13,
+            // PickupState 5, MatchState 2, ContainerState 5. WaveState's count
+            // is SEVEN and not eight on purpose -- PendingTotal is an
+            // expression-bodied property and GetFields() does not see it, which
+            // is the very outcome its own doc says it was written that way for.
+            // So only the projectile line and the two sums move, and the round
+            // is counted ONCE (like the mob, unlike PlayerState/MatchStats --
+            // the pass below bumps w.Projectiles[0] and nothing else):
+            //   36 x 2 = 72, 10 x 2 = 20, 7 x 3 = 21,
+            //   5 + 13 + 15 + 5 + 2 + 5 = 45          -> 157 -> 158.
+            //
             // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST. The two
             // new fields turned it red through the reflective sweep below, and
             // only the two folds (HashMob/HashPlayer) turn it green again;
