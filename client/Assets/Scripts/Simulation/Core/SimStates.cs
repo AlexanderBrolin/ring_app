@@ -443,13 +443,39 @@ namespace Ring.Simulation.Core
         /// TwoCollectorsWithDifferentLag_EachGetTheirOwnCatchUp already stands
         /// two such shooters side by side.
         ///
-        /// A BYTE BECAUSE THE DOMAIN IS CLOSED BY VALIDATION, not by hope.
-        /// SimConfigBuilder rejects an Arena.RewindCapTicks above
-        /// TicksFromSeconds(0.2f) -- 6 at this tick rate, CRITICAL RULE 5's own
-        /// 200 ms -- and rejects an Arena.RewindPictureTicks above the cap, so
-        /// min(k, RewindPictureTicks) never leaves [0, 6]. It is also the width
-        /// every neighbor of its kind already carries: OwnerIndex above and
-        /// SimInput.RewindTicks are both bytes.
+        /// A BYTE, AND THE TWO ENDS OF THE DOMAIN ARE HELD BY DIFFERENT
+        /// THINGS -- which the first wording of this note flattened into "the
+        /// domain is closed by validation, not by hope" and thereby made half
+        /// false (review finding, Т28 fix-round).
+        ///   THE CEILING IS SimConfigBuilder's, and that half was true: it
+        /// rejects an Arena.RewindCapTicks above TicksFromSeconds(0.2f) -- 6 at
+        /// this tick rate, CRITICAL RULE 5's own 200 ms -- and rejects an
+        /// Arena.RewindPictureTicks above that cap, so min(k,
+        /// RewindPictureTicks) can never exceed 6.
+        ///   THE FLOOR IS NetInvariants RULE #11, NOT THAT BUILDER AND NOT
+        /// ArenaConfig's [Range]. The builder states no lower bound on
+        /// RewindPictureTicks ON PURPOSE (its own note beside the two rules
+        /// says why: zero means "no picture time at all" there, unlike
+        /// RewindCapTicks where zero would silently disable compensation), and
+        /// [Range(0, 16)] is an Inspector attribute that refuses nothing a
+        /// script, a test or a hand-edited asset assigns. What holds the floor
+        /// is rule #11 -- Arena.RewindPictureTicks == Net.InterpBufferTicks --
+        /// standing on rule #1 of the same validator, which rejects an
+        /// InterpBufferTicks of zero or less; and it holds it at SERVER START,
+        /// because ServerBootstrap fails the process on every violation the
+        /// validator reports. RewindSplit's own doc is the fuller account.
+        /// ⛔ AND NO CLAMP IS ADDED HERE (coordinator ruling 139, which is what
+        /// left RewindPictureTicks without a lower bound in the first place):
+        /// the border has a written home, and a second one in this struct would
+        /// be a second answer to one question.
+        /// ⚠ WHAT A NEGATIVE PICTURE DEPTH WOULD ACTUALLY DO, named so the
+        /// floor above reads as load-bearing rather than tidy: min(k, -1) is
+        /// -1, WeaponSystem's `(byte)` cast turns that into 255, and
+        /// RewindSplit.InputTicks answers k + 1 -- an input half DEEPER than
+        /// the whole depth. That is the canceled Р381 scheme, reached by
+        /// configuration instead of by code.
+        ///   The width is also the one every neighbor of its kind already
+        /// carries: OwnerIndex above and SimInput.RewindTicks are both bytes.
         ///
         /// IT WAS DECLARED INERT AND IS NOT ANY MORE, exactly the way
         /// Ricochets above went (errata E-1's "structural rebuild"
@@ -457,11 +483,18 @@ namespace Ring.Simulation.Core
         /// parameter and no reader at all, which turned the ProjectileState
         /// pass of WorldLifecycleTests.EveryPlayerAndStatsFieldAffectsHash red
         /// -- the receipt that discipline exists to collect -- and the behavior
-        /// phase then handed it its three readers (ProjectileSystem's step,
-        /// which counts it down and turns it into a tick number; the gather
-        /// phase; AcceptCandidate) and its fold in
+        /// phase then handed it a reader and its fold in
         /// SimulationWorld.HashProjectile, which is what turned that pass green
         /// again.
+        /// ⚠ ONE READER IN THE COMBAT PATH AND NOT THREE, said exactly because
+        /// the first wording of this line said three (review finding, Т28
+        /// fix-round). ProjectileSystem.StepProjectile is the only code that
+        /// touches THIS FIELD: it reads it to build `historyTick` and it counts
+        /// it down. The gather phase and AcceptCandidate never see it -- they
+        /// are handed the tick number that was derived from it, which is
+        /// precisely what coordinator RULING 207 took the `historyTick`
+        /// parameter away to guarantee. The fold above is the second reader and
+        /// it is named separately for the same reason it always was.
         ///
         /// HASHED, and on Ricochets' own third argument: this is canonical
         /// state that SURVIVES A TICK and rides SaveState/RestoreState, so a

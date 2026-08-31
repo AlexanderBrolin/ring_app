@@ -266,11 +266,17 @@ namespace Ring.Simulation.Tests
             //   36 x 2 = 72, 10 x 2 = 20, 7 x 3 = 21,
             //   5 + 13 + 15 + 5 + 2 + 5 = 45          -> 157 -> 158.
             //
-            // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST. The two
-            // new fields turned it red through the reflective sweep below, and
-            // only the two folds (HashMob/HashPlayer) turn it green again;
-            // editing these numbers would have changed nothing executable in
-            // either direction.
+            // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST -- SAID OF
+            // Т24, whose paragraph it closes. (Т28's own paragraph was inserted
+            // above it and left this one reading as if it described Т28, which
+            // added ONE field and ONE fold, not two: review finding, Т28
+            // fix-round. The subject is named here rather than the paragraphs
+            // reordered, because the order they were written in is what the
+            // numbers step through.) Т24's TWO new fields turned this test red
+            // through the reflective sweep below, and only its two folds
+            // (HashMob/HashPlayer) turned it green again; editing these numbers
+            // would have changed nothing executable in either direction. The
+            // same holds of Т28, at one field and one fold.
             // ⚠ THE RECEIPT IS NOT WHAT MAKES THIS TEST PASS OR FAIL, and Т7
             // is where that was measured rather than assumed (coordinator
             // errata 12): the two new fields turned this test red through the

@@ -117,11 +117,39 @@ namespace Ring.Simulation.Combat
         /// -- and the two callers would have had to write that one expression
         /// twice. -1 keeps its old meaning as the value that says "the present,
         /// no history read at all"; it is simply computed here now.
+        /// ⚠ AND THAT SENTINEL NOW HAS TWO PRODUCERS, NOT ONE (review finding,
+        /// Т28 fix-round). The literal below is one of them -- "this round owes
+        /// no rewound steps". The other is the SUBTRACTION itself: on the first
+        /// ticks of a match `CurrentTick - RewindLeft` is legitimately negative
+        /// (a round born on tick 1 owing three picture ticks asks about -2), and
+        /// that number travels down the same way. The two outcomes coincide,
+        /// which is why one branch serves both -- PositionHistory.PosAt answers
+        /// a negative tick in its degenerate branch and says so in its own table
+        /// -- but they are different facts, and a reader who takes every -1 down
+        /// here for "no rewind was asked for" would misread the opening ticks of
+        /// every raid.
         /// ⚠ IT IS READ BEFORE THE COUNTDOWN BELOW SPENDS A STEP, so the step
         /// asks about the tick its own remaining depth names rather than about
         /// the next one; and a delegate is still refused outright, on Т27's own
         /// grounds -- allocations are forbidden on this path
         /// (AllocationTests.Tick_DoesNotAllocateGC).
+        ///
+        /// ⚠ "THE ROUND IS NOT MOVED BY A SINGLE METER" HAS ONE EXCEPTION, AND
+        /// IT IS THE PIERCE (review finding, Т28 fix-round). Everything else in
+        /// this task's account of the picture half is literal: the step comes
+        /// from ProjectileFlight.Step, and the `default:` arm below advances the
+        /// round by it whatever the rewind answered. But
+        /// ProjectileFlight.TryPierce writes `p.Pos = contact`, and on the two
+        /// BODY arms `contact` is built from the REWOUND stand
+        /// (math.lerp(startPos, target, hitContactT), where hitContactT is
+        /// AcceptCandidate's answer against the row) -- so a round that pierces
+        /// on a rewound step is seated at a point the past decided.
+        ///   IT IS UNREACHABLE AT THE SHIPPED NUMBERS AND IS NAMED ANYWAY: the
+        /// pierce refuses every body in the game today (2.6 against the lightest
+        /// 70 kg is 0.037 under a threshold of 0.06, this file's own type doc),
+        /// so no round has ever taken that write. The growth epic (app-vb5u) is
+        /// the one that turns the knob, and the day it does, this is the line
+        /// where the Valve form stops being exact.
         ///
         /// RETURNS "THE ROUND STILL OCCUPIES SLOT `i`" (coordinator RULING
         /// 172), which is the one thing a caller that steps the same round more
@@ -970,13 +998,19 @@ namespace Ring.Simulation.Combat
         };
 
         /// ⭐⭐ THE ONE HOME OF "WHERE THAT BODY WAS AND WHAT IT WAS DOING"
-        /// (app-88jb Т28, spec §3.6). Three callers ask it -- the two gather
-        /// loops in StepProjectile and AcceptCandidate below, plus the HitPlayer
-        /// arm for the i-frame half -- and they are obliged to get the SAME
-        /// answer: a candidate gathered against a past stand and then resolved
-        /// against the live one would be a round that connects with a body
-        /// standing somewhere else entirely, which is a worse outcome than
-        /// either reading alone.
+        /// (app-88jb Т28, spec §3.6). The call sites are NAMED rather than
+        /// counted, because the count this line used to carry ("three callers")
+        /// was already one reading behind the code (review finding, Т28
+        /// fix-round):
+        ///   * StepProjectile's mob gather loop;
+        ///   * StepProjectile's collector gather loop;
+        ///   * the HitPlayer arm, for the i-frame half (RULING 205);
+        ///   * AcceptCandidate's HitMob branch, for the stand;
+        ///   * AcceptCandidate's HitPlayer branch, for the stand and the slide.
+        /// They are obliged to get the SAME answer: a candidate gathered
+        /// against a past stand and then resolved against the live one would be
+        /// a round that connects with a body standing somewhere else entirely,
+        /// which is a worse outcome than either reading alone.
         ///
         /// IT ANSWERS THE WHOLE QUESTION AT ONCE -- "is this a target at all"
         /// as the return value, and where it stood and its two profile bits as
@@ -1078,6 +1112,37 @@ namespace Ring.Simulation.Combat
         /// would seat the contact on a body that is not there. The barrier,
         /// ring-wall and floor branches ignore it -- static geometry does not
         /// move, so it has no past to be asked about.
+        /// ⚠ AND A REFUSAL HERE IS NOT STICKY, WHICH MATTERS MORE SINCE Т28
+        /// THAN IT DID BEFORE IT (review finding A-M1, Т28 fix-round). Refusing
+        /// a candidate only sends the min-scan back for the next one; it does
+        /// not mark the body, and the round is not pushed clear of it. The
+        /// caller's `default:` arm then advances the round to the step's end,
+        /// and that end can perfectly well lie INSIDE the body's own padded
+        /// circle, because the circle is a fair fraction of a whole step. The
+        /// round clears the body within the same step only if the contact falls
+        /// in the leading (step - diameter) of it, and BOTH numbers depend on
+        /// the balance source, which is why they are given twice:
+        ///   * shipped assets -- step = ProjectileSpeed * TickDt = 52.5 / 30 =
+        ///     1.75 m, collector circle 2 * (Hero.Radius +
+        ///     Weapon.ProjectileRadius) = 1.06 m, so 0.69 m of the step clears
+        ///     and the remaining 1.06 m does not;
+        ///   * the C# defaults the EditMode fixtures run on -- step 35 / 30 =
+        ///     1.1667 m against a circle of 1.14 m, so only the leading 2.7 cm
+        ///     clears and a refused round practically always ends inside.
+        /// From inside, Geometry.SegmentCircle's own `start inside -> t = 0`
+        /// line makes the same body a candidate again on the very next step.
+        ///   WHAT Т28 CHANGED IS WHICH MOMENT ANSWERS THE REPEAT. The mechanism
+        /// itself predates it -- it has run on live bits since Т11's height
+        /// gate -- but the second look is now taken against a row TWO RECORDED
+        /// TICKS FRESHER than the first: with one step per tick, CurrentTick
+        /// rises by one while RewindLeft falls by one, so `CurrentTick -
+        /// RewindLeft` advances by two. A profile bit that flipped in between
+        /// therefore decides the repeat, and the two looks can legitimately
+        /// disagree. RewindTests'
+        /// SlidingAtTheRewoundTick_IsCheckedWithTheSlidingProfile is the
+        /// fixture that walks it: refused on its first step against tick T-3,
+        /// asked again on its second against tick T-1, and refused there too
+        /// only because its victim's slide spans all three recorded rows.
         ///
         /// `hitHeight` (app-88jb Т3, finding D-C4) is the contact height this
         /// candidate lands at — every branch below fills it with the height
