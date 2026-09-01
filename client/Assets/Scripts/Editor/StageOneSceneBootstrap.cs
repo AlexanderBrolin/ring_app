@@ -1219,8 +1219,18 @@ namespace Ring.Editor
             // would never reach NetConfig.asset, the owner's В1 fade knob
             // would silently be the C# initializer, and EditMode would stay
             // green throughout (the tests read C# defaults, not the asset).
+            // app-88jb Т29 moves it one more time, to RewindSanityTicks — the
+            // tolerance the server's rewind-depth sanity check allows itself on
+            // top of its own estimate, appended as the class's new last field
+            // in the same commit as this move. Same drill and the same
+            // consequence if it were skipped: with EntityFadeTicks still named
+            // here the new key would never reach NetConfig.asset,
+            // MatchServer.SanitizeRewindDepthForTest would weigh every claimed
+            // rewind depth against the C# initializer instead of the owner's
+            // tuned number, and EditMode would stay green throughout (the tests
+            // read C# defaults, not the asset).
             EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
-                "EntityFadeTicks"); // Stage 2 Task 47c (was SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
+                "RewindSanityTicks"); // app-88jb Т29 (was EntityFadeTicks, Stage 2 Task 47c; SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 

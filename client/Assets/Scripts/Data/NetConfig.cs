@@ -227,6 +227,45 @@ namespace Ring.Data
         // tuning" (CR 6 is about numbers the game plays by). Task 47c is the
         // reader — ViewRegistry holds a doll the frame has gone silent about and
         // dims it by this budget — so the constant moved here, unchanged at 15.
+        [Range(1, 60)] public int EntityFadeTicks = 15;
+
+        // app-88jb Т29 (spec §3.6, Р404): the tolerance, IN TICKS, that the
+        // server allows itself on top of its own estimate of how deep a client
+        // may legitimately ask it to rewind. `MatchServer.
+        // SanitizeRewindDepthForTest` adds this to the one-way delay and the
+        // interpolation buffer before it compares the sum against the depth the
+        // client claimed; that method's doc carries the formula and what each
+        // term is there for. In TICKS, like InterpMaxStaleTicks and
+        // EntityFadeTicks above and for the same reason: the arithmetic that
+        // reads it works in ticks, and a second seconds-to-ticks conversion
+        // would be a second answer to a question that already has one.
+        //
+        // 2 AND NOT 4, AND THE RATIO IS THE ARGUMENT. The rewind cap is six
+        // ticks (Arena.RewindCapTicks — the 200 ms of CRITICAL RULE 5), so a
+        // tolerance of 4 hands 67 % of the whole compensation window over on
+        // trust, against the ~20 % the industry's published practice keeps;
+        // 2 is 20 % of 6. Concretely, and this is why the number is not a
+        // matter of taste: with the round trip reading at zero, a client on a
+        // perfect connection could claim four ticks more than his picture is
+        // actually behind and keep every one of them — and PvP is switched on,
+        // so that slack is paid for by the collector who gets shot.
+        //
+        // BOTH ENDS OF THE RANGE ARE MODES, NOT MISTAKES, which is why neither
+        // is excluded. 0 is the STRICTEST form of the check — no tolerance at
+        // all, the claim believed only as far as the estimate itself reaches —
+        // and emphatically not "the check switched off". 6 is the opposite end
+        // and equals the rewind cap: at that tolerance the estimate can never
+        // fall below the cap, so the minimum is always the cap or the claim and
+        // the check trims nothing ever again. That is a deliberate mode too,
+        // and the ceiling is stated as 6 rather than as some number pretending
+        // the field cannot be neutralized.
+        //
+        // The [Range] above is an Inspector hint and nothing more — see this
+        // class's own type doc, which says it of every [Range] here. This
+        // number has no cross-config rule in NetInvariants to catch a
+        // hand-edited YAML, and none is added: there is no plan for one, and
+        // the arithmetic that reads the field is bounded by the rewind cap on
+        // either side of the range regardless.
         //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),
@@ -234,13 +273,14 @@ namespace Ring.Data
         // if the marker names a field the .asset already carries, the search
         // succeeds, nothing is dirtied, and NO new key is ever written. So the
         // marker has to be the LAST field added, and the call site has to name
-        // THIS field — Task 47c moved it here, in the same commit that added
-        // this field. The chain so far: MatchMaxDurationSeconds (Task 23, the
-        // first join) -> MatchAbandonGraceSeconds (Task 41b) ->
-        // SpectatorSwitchCooldownSeconds (Task 42a) -> here. Each predecessor's
-        // own field comment stops mentioning the mechanism once the marker
-        // leaves it, so exactly one field in this class ever claims to be it.
-        [Range(1, 60)] public int EntityFadeTicks = 15; // sync-marker key — keep LAST
+        // THIS field — app-88jb Т29 moved it here, in the same commit that
+        // added this field. The chain so far: MatchMaxDurationSeconds (Task 23,
+        // the first join) -> MatchAbandonGraceSeconds (Task 41b) ->
+        // SpectatorSwitchCooldownSeconds (Task 42a) -> EntityFadeTicks
+        // (Task 47c) -> here. Each predecessor's own field comment stops
+        // mentioning the mechanism once the marker leaves it, so exactly one
+        // field in this class ever claims to be it.
+        [Range(0, 6)] public int RewindSanityTicks = 2; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

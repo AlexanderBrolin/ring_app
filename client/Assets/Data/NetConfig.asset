@@ -31,3 +31,4 @@ MonoBehaviour:
   MatchAbandonGraceSeconds: 30
   SpectatorSwitchCooldownSeconds: 0.35
   EntityFadeTicks: 15
+  RewindSanityTicks: 2
