@@ -377,7 +377,7 @@ namespace Ring.Networking
             // and nothing then ties Arena.RewindPictureTicks to the new value.
             //
             // A SECOND READER SINCE app-88jb Т29, on the SERVER's side rather
-            // than the doll's: MatchServer.SanitizeRewindDepthForTest adds
+            // than the doll's: MatchServer.SanitizedRewindDepth adds
             // Arena.RewindPictureTicks to half the round trip to judge how deep
             // a client may claim to have rewound, and names THIS rule as what
             // keeps that term equal to the buffer the client actually renders
@@ -401,6 +401,73 @@ namespace Ring.Networking
                     + "systematic uncompensated lag on every shot (got "
                     + $"RewindPictureTicks={sim.Arena.RewindPictureTicks}, "
                     + $"InterpBufferTicks={net.InterpBufferTicks}).");
+            }
+
+            // #12 (app-88jb Т29 review round, owner decision 4б; the finding
+            // both reviewers raised independently, A-1/B-4). A TOLERANCE BELOW
+            // ZERO DOES NOT TIGHTEN THE REWIND SANITY CHECK — IT INVERTS IT
+            // INTO AN AMPLIFIER. `MatchServer.SanitizedRewindDepth` builds its
+            // estimate as `oneWayTicks + Arena.RewindPictureTicks +
+            // Net.RewindSanityTicks` and answers
+            // `(byte)min(claimed, min(estimate, capTicks))`. Drag the tolerance
+            // far enough under zero and the SUM goes under with it. MEASURED,
+            // not feared: with the shipped picture of 3 and the round trip a
+            // dedicated server actually reads (identically zero — that method's
+            // own ⛔ paragraph derives it from the pinned FishNet 4.7.2), the
+            // estimate is `0 + 3 + sanityTicks`, so -4 is where it crosses:
+            // 0 + 3 - 4 = -1, the minimum of the three terms is -1, and the
+            // `(byte)` cast wraps it to 255. `SimInputSanitizer.Sanitize`
+            // inside `TickAll` then clamps that 255 down to
+            // `Arena.RewindCapTicks` — so EVERY collector is granted the FULL
+            // compensation window, including the one who honestly claimed a
+            // depth of zero. The check does not stop
+            // working; it starts handing out what it exists to withhold, and it
+            // does so silently, because what it hands on is a plausible tick
+            // count nothing downstream can tell from an earned one.
+            //   THE SHALLOWER NEGATIVES ARE REFUSED TOO, and not because they
+            // wrap. At -1..-3 the sum stays non-negative and the only effect is
+            // an estimate stricter than the owner asked for — still a number no
+            // band admits and still worth a line a human reads, exactly as #7
+            // refuses a negative `SlewFraction` that the render clock would
+            // merely have read as "do not slew". The rule is one-sided at zero
+            // for both kinds at once.
+            //
+            // WHAT IT CATCHES IS THE HAND-EDITED YAML, and until this rule
+            // nothing stood there at all. `NetConfig.RewindSanityTicks` carries
+            // a `[Range(0, 6)]`, which by this class's own type doc (Р115) is
+            // an Inspector hint enforced nowhere: a value assigned from code,
+            // from a test fixture, or typed straight into the committed
+            // `.asset`, has never passed through a slider. Nor is one added
+            // downstream: `SanitizedRewindDepth` refuses a second answer to a
+            // question a written home should settle — the argument ruling 139
+            // made for `Arena.RewindPictureTicks`, which rule #11 holds rather
+            // than a clamp of its own. This rule is that home.
+            //
+            // ZERO STAYS LEGAL, AND IT IS THE STRICTEST SETTING THE FIELD HAS,
+            // not the absence of a setting: no tolerance at all, the claim
+            // believed only as far as the server's own estimate reaches. Same
+            // shape as #7's zero, which means "do not slew" and is a deliberate
+            // mode rather than a misconfiguration — which is why the rule below
+            // is stated `>= 0` and not `> 0` the way #9's is.
+            //
+            // NO CEILING, DELIBERATELY, and by a DIFFERENT argument from #9's.
+            // A tolerance above the rewind cap breaks nothing downstream: it
+            // only lifts the estimate over `capTicks` on every input, so the
+            // minimum becomes the cap or the claim and the check trims nothing
+            // ever again. That is the check switched OFF, which the field's own
+            // doc records as a deliberate mode at both ends of its band — and
+            // the answer stays bounded by `Arena.RewindCapTicks` for every
+            // value the sum can hold without overflowing `int`. Past that (a
+            // tolerance within `oneWayTicks + pictureTicks` of `int.MaxValue`)
+            // the sum wraps negative again and the byte cast answers an
+            // arbitrary number; the boundary is NAMED here rather than guarded,
+            // because a ceiling picked to make it unreachable would be the
+            // duplicate of the `[Range]` hint this class's type doc refuses to
+            // become.
+            if (net.RewindSanityTicks < 0)
+            {
+                errors.Add("Net.RewindSanityTicks must be >= 0 " +
+                    $"(got RewindSanityTicks={net.RewindSanityTicks}).");
             }
 
             return errors.ToArray();

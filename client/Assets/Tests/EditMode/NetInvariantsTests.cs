@@ -445,10 +445,10 @@ namespace Ring.Simulation.Tests
             // check weighs a claimed depth against half the round trip plus
             // Arena.RewindPictureTicks plus the owner's tolerance
             // (NetConfig.RewindSanityTicks — dropped from an earlier wording of
-            // this paragraph, fix-round B-10; MatchServer.
-            // SanitizeRewindDepthForTest carries the whole formula), so a pair
-            // that had drifted apart would make that comparison wrong by the
-            // drift on every shot — and wrong SILENTLY, since the estimate
+            // this paragraph, fix-round B-10;
+            // MatchServer.SanitizedRewindDepth carries the whole formula), so a
+            // pair that had drifted apart would make that comparison wrong by
+            // the drift on every shot — and wrong SILENTLY, since the estimate
             // stays a plausible tick count and nothing downstream can tell it
             // apart from a correct one. This rule is what keeps the two
             // numbers the same number.
@@ -528,6 +528,84 @@ namespace Ring.Simulation.Tests
             CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "пара уехала вместе и осталась законной — #11 обязан пинить равенство, " +
                 "а не значение: " + string.Join(" | ",
+                    NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
+        }
+
+        // ==================================================================
+        // Invariant #12 (app-88jb Т29 review round, owner decision 4б):
+        // NetConfig.RewindSanityTicks — the tolerance the server's rewind
+        // sanity check allows itself on top of its own estimate. Below zero
+        // the check does not tighten, it inverts; the rule's own doc carries
+        // the measurement.
+        // ==================================================================
+
+        [Test]
+        public void RewindSanityTicksNegative_IsReported()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // MEASURED, and it is why the rule exists (the finding both
+            // reviewers raised independently, A-1/B-4): at -4, with the shipped
+            // picture of 3 and the round trip a dedicated server actually reads
+            // (zero), `MatchServer.SanitizedRewindDepth` computes 0 + 3 - 4 =
+            // -1, the minimum of the three terms is -1, and the `(byte)` cast
+            // answers 255 — which `SimInputSanitizer.Sanitize` inside `TickAll`
+            // then clamps to `Arena.RewindCapTicks`. A tolerance the operator
+            // wrote to be STRICTER is therefore the most permissive value the
+            // field can hold: every collector gets the full compensation
+            // window, including the one who claimed nothing.
+            //   -4 AND NOT -1, AND THE DIFFERENCE IS REAL rather than a matter
+            // of taste: the sum is `0 + 3 + sanityTicks` on a shipped server,
+            // so -1..-3 leave it non-negative and merely make the estimate
+            // stricter than the owner asked for — -4 is the first value that
+            // crosses zero and wraps. The rule refuses all four alike (a
+            // negative tolerance is a mode at no depth), and this fixture
+            // stands on the one where the inversion is visible.
+            net.RewindSanityTicks = -4;
+
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Net.RewindSanityTicks");
+        }
+
+        [Test]
+        public void RewindSanityTicksZero_IsLegal()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // Zero is the STRICTEST form of the check, not its absence: the
+            // claim is believed exactly as far as the server's own estimate
+            // reaches and no further. The same argument
+            // `SlewFractionZero_IsLegal` above makes for #7 — a deliberate
+            // mode, not a misconfiguration — and it is the whole reason this
+            // rule reads `>= 0` while its neighbor #9 reads `> 0`. A validator
+            // written by analogy with #9 would refuse the strictest setting the
+            // owner can dial in, and nothing but this line would say so.
+            net.RewindSanityTicks = 0;
+
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "нулевой допуск — самая строгая форма проверки, а не ошибка конфигурации");
+        }
+
+        [Test]
+        public void RewindSanityTicksShippedTolerance_IsLegal()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // Positive witness (lesson 129) on the SHIPPED number, and what it
+            // adds over the blanket AllInvariantsHold test above is stated
+            // rather than assumed: a floor mutated to any value above the
+            // shipped tolerance fails both, but this one fails NAMING the
+            // field, and it asserts the premise the witness rests on instead of
+            // leaning on it silently. There is no separate "first legal value"
+            // fixture the way #9 needed `EntityFadeTicksOne_IsLegal`: with the
+            // rule stated as `>= 0` that value is zero, and the case above
+            // already stands on it.
+            Assert.Greater(net.RewindSanityTicks, 0,
+                "премиса: отгруженный допуск обязан быть строго положительным, иначе эта " +
+                "фикстура повторяет проверку нуля выше и ничего своего не свидетельствует");
+
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "отгруженный допуск обязан быть законным: " + string.Join(" | ",
                     NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
         }
     }

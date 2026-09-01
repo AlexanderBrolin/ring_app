@@ -231,14 +231,14 @@ namespace Ring.Data
 
         // app-88jb Т29 (spec §3.6, Р404): the tolerance, IN TICKS, that the
         // server allows itself on top of its own estimate of how deep a client
-        // may legitimately ask it to rewind. `MatchServer.
-        // SanitizeRewindDepthForTest` adds this to the one-way delay and the
-        // interpolation buffer before it compares the sum against the depth the
-        // client claimed; that method's doc carries the formula and what each
-        // term is there for. In TICKS, like InterpMaxStaleTicks and
-        // EntityFadeTicks above and for the same reason: the arithmetic that
-        // reads it works in ticks, and a second seconds-to-ticks conversion
-        // would be a second answer to a question that already has one.
+        // may legitimately ask it to rewind. `MatchServer.SanitizedRewindDepth`
+        // adds this to the one-way delay and the interpolation buffer before it
+        // compares the sum against the depth the client claimed; that method's
+        // doc carries the formula and what each term is there for. In TICKS,
+        // like InterpMaxStaleTicks and EntityFadeTicks above and for the same
+        // reason: the arithmetic that reads it works in ticks, and a second
+        // seconds-to-ticks conversion would be a second answer to a question
+        // that already has one.
         //
         // 2 AND NOT 4, AND THE RATIO IS THE ARGUMENT. The rewind cap is six
         // ticks (Arena.RewindCapTicks — the 200 ms of CRITICAL RULE 5), so a
@@ -252,12 +252,12 @@ namespace Ring.Data
         // owner's 2 is that guideline rounded UP to a whole tick; it is not
         // claimed to BE the guideline.
         // Concretely, and this is why the number is not a matter of taste: with
-        // the round trip reading at zero (MatchServer.
-        // SanitizeRewindDepthForTest measures why it does) the estimate is 5,
-        // while a client on a perfect connection is honestly 3 ticks behind —
-        // his whole depth IS the interpolation buffer — so TWO unearned ticks
-        // are believed, not the four an earlier wording claimed (fix-round,
-        // B-5). At a tolerance of 4 it would be three: the estimate becomes 7,
+        // the round trip reading at zero (MatchServer.SanitizedRewindDepth
+        // measures why it does) the estimate is 5, while a client on a perfect
+        // connection is honestly 3 ticks behind — his whole depth IS the
+        // interpolation buffer — so TWO unearned ticks are believed, not the
+        // four an earlier wording claimed (fix-round, B-5). At a tolerance of 4
+        // it would be three: the estimate becomes 7,
         // the wire holds the claim at 6, and 6 - 3 = 3. PvP is switched on, so
         // that slack is paid for by the collector who gets shot.
         //
@@ -282,17 +282,22 @@ namespace Ring.Data
         // here — so it refuses nothing a hand-edited YAML, a script or a test
         // assigns. (It sits below this paragraph, not above it; an earlier
         // wording pointed the wrong way — fix-round, B-9.)
-        // ⛔ AND THERE IS NO SECOND GUARD BEHIND IT. This number has no
-        // cross-config rule in NetInvariants, and none is added: there is no
-        // plan for one (ruling 226). An earlier wording excused that with "the
-        // arithmetic that reads the field is bounded by the rewind cap on
-        // either side of the range regardless" — false below zero (fix-round,
-        // A-1/B-4). A negative tolerance drags MatchServer's estimate under
-        // zero, its `(byte)` cast wraps the answer to 255, and what keeps that
-        // out of the world is the arena clamp inside TickAll
-        // (SimInputSanitizer.Sanitize) — which bounds it by granting the FULL
-        // CAP, i.e. by inverting the check rather than by enforcing it. Below
-        // zero this field's only line of defense is the [Range] hint itself.
+        // ⛔ THE GUARD BEHIND IT IS NetInvariants RULE #12, AND IT ARRIVED
+        // LATE (owner decision 4б). What that rule refuses is a NEGATIVE
+        // tolerance, at any depth — and past -3 the reason stops being tidiness
+        // (MatchServer's estimate is 0 + RewindPictureTicks + this field on a
+        // shipped server, so -4 is where the sum crosses zero): from there the
+        // `(byte)` cast in that method wraps the answer to 255, and the only
+        // thing that would then keep it out of the world is the arena clamp
+        // inside TickAll (SimInputSanitizer.Sanitize) — which bounds it by
+        // granting the FULL CAP, i.e. by inverting the check rather than by
+        // enforcing it (fix-round, A-1/B-4; an earlier wording excused the
+        // missing rule with "the arithmetic that reads the field is bounded by
+        // the rewind cap on either side of the range regardless", false below
+        // zero, and a later one recorded ruling 226's refusal of the rule for
+        // want of a plan). ABOVE the band there is still no guard, and
+        // deliberately: a tolerance past the cap only switches the check off,
+        // which is the mode the paragraph two up already states.
         //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),

@@ -1225,7 +1225,7 @@ namespace Ring.Editor
             // in the same commit as this move. Same drill and the same
             // consequence if it were skipped: with EntityFadeTicks still named
             // here the new key would never reach NetConfig.asset,
-            // MatchServer.SanitizeRewindDepthForTest would weigh every claimed
+            // MatchServer.SanitizedRewindDepth would weigh every claimed
             // rewind depth against the C# initializer instead of the owner's
             // tuned number, and EditMode would stay green throughout (the tests
             // read C# defaults, not the asset).

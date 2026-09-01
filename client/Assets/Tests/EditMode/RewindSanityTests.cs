@@ -8,10 +8,10 @@ namespace Ring.Simulation.Tests
     /// SOCKET READING SAYS IS POSSIBLE (app-88jb Т29, spec §3.6, Р374/Р404).
     /// The depth arrives in `SimInput.RewindTicks`, because the client is the
     /// only party that knows which picture it was shooting at; the server
-    /// therefore takes the number but does not take it on trust. `MatchServer.
-    /// SanitizeRewindDepthForTest` is the arithmetic of that second opinion —
-    /// it builds an estimate out of the round trip time the server reads and
-    /// trims a claim that runs past it.
+    /// therefore takes the number but does not take it on trust.
+    /// `MatchServer.SanitizedRewindDepth` is the arithmetic of that second
+    /// opinion — it builds an estimate out of the round trip time the server
+    /// reads and trims a claim that runs past it.
     ///
     /// ONE FORMULA, AND ALL SIX EXPECTATIONS BELOW ARE COMPUTED FROM IT rather
     /// than chosen (review finding A-C1: an earlier draft carried three
@@ -63,7 +63,7 @@ namespace Ring.Simulation.Tests
             // AND THE CUT IS NOT A REFUSAL OF THE CONNECTION. Nothing is
             // dropped, nothing is disconnected: the input is legal and runs
             // this tick like any other, only its depth stops being believed.
-            Assert.AreEqual((byte)5, MatchServer.SanitizeRewindDepthForTest(
+            Assert.AreEqual((byte)5, MatchServer.SanitizedRewindDepth(
                     claimed: 6, roundTripMs: 0f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 3),
                 "глубина, заявленная выше оценки по сокету, обязана быть урезана до 5");
@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
             // TicksFromSeconds(0.04f) = 1, the buffer adds 3, the tolerance
             // adds 2, so the estimate is 6. The claimed 5 sits inside it and
             // is obliged to come back untouched.
-            Assert.AreEqual((byte)5, MatchServer.SanitizeRewindDepthForTest(
+            Assert.AreEqual((byte)5, MatchServer.SanitizedRewindDepth(
                     claimed: 5, roundTripMs: 80f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 3),
                 "честная глубина внутри допуска обязана пройти нетронутой");
@@ -106,7 +106,7 @@ namespace Ring.Simulation.Tests
             // Every misreading answers 6 and only the right one answers 4, so
             // this fixture cannot come out green by accident.
             Assert.AreEqual((byte)(SimulationWorld.TicksFromSeconds(0.04f) + 3),
-                MatchServer.SanitizeRewindDepthForTest(
+                MatchServer.SanitizedRewindDepth(
                     claimed: 6, roundTripMs: 80f, sanityTicks: 0, capTicks: 6,
                     pictureTicks: 3),
                 "RoundTripTime прочитан не как миллисекунды: 80 мс — это один тик в одну сторону");
@@ -134,7 +134,7 @@ namespace Ring.Simulation.Tests
             // in the shipped asset and in the test fixtures alike. Read the
             // number below as "the function is bounded for every input it can
             // be given", never as "a claim of 7 happens".
-            Assert.AreEqual((byte)6, MatchServer.SanitizeRewindDepthForTest(
+            Assert.AreEqual((byte)6, MatchServer.SanitizedRewindDepth(
                     claimed: 7, roundTripMs: 400f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 3),
                 "оценка выше капа обязана остаться ограниченной капом — ждём 6");
@@ -170,7 +170,7 @@ namespace Ring.Simulation.Tests
             // picture buffer of 2 is a legal tuning (rule #11 only asks that
             // Net.InterpBufferTicks name the same number), so nothing here is a
             // contract-only fixture.
-            Assert.AreEqual((byte)4, MatchServer.SanitizeRewindDepthForTest(
+            Assert.AreEqual((byte)4, MatchServer.SanitizedRewindDepth(
                     claimed: 6, roundTripMs: 0f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 2),
                 "буфер картинки обязан читаться из параметра: при 2 оценка равна 4");
@@ -198,7 +198,7 @@ namespace Ring.Simulation.Tests
             // legal config (SimConfigBuilder refuses one below 1 or above
             // TicksFromSeconds(0.2f) = 6), so this is an ordinary tuning and
             // not a contract-only input.
-            Assert.AreEqual((byte)5, MatchServer.SanitizeRewindDepthForTest(
+            Assert.AreEqual((byte)5, MatchServer.SanitizedRewindDepth(
                     claimed: 6, roundTripMs: 400f, sanityTicks: 2, capTicks: 5,
                     pictureTicks: 3),
                 "кап обязан читаться из параметра: при капе 5 ответ равен 5");

@@ -385,7 +385,7 @@ namespace Ring.Networking.Server
         // the arithmetic is on hand rather than feared — the claim is
         // `predictionLead + interpolationLag` (`RewindDepthMeter.Measure`),
         // both halves move with packet arrival, and with the round trip time
-        // reading zero (see `SanitizeRewindDepthForTest`'s own ⛔ paragraph)
+        // reading zero (see `SanitizedRewindDepth`'s own ⛔ paragraph)
         // the estimate is a flat 5 at the shipped picture of 3 and tolerance
         // of 2. "Is this trimmed" therefore degenerates to "is the claim
         // exactly 6", the top of the wire's own domain and one tick above the
@@ -1302,7 +1302,7 @@ namespace Ring.Networking.Server
             // 1a. app-88jb Т29 (spec §3.6): the rewind depth each collector
             // claimed this tick, weighed against what THE SERVER'S OWN SOCKET
             // READING says is possible. The whole rule is
-            // `SanitizeRewindDepthForTest` and this step is wiring — read that
+            // `SanitizedRewindDepth` and this step is wiring — read that
             // method's doc before this loop, in particular for what the round
             // trip time it is fed actually reads on a dedicated server, and for
             // the single witness of the wiring's liveness (the Ф4 lag gate,
@@ -1371,7 +1371,7 @@ namespace Ring.Networking.Server
             for (int i = 0; i < _effectiveInputsScratch.Length; i++)
             {
                 byte claimed = _effectiveInputsScratch[i].RewindTicks;
-                byte allowed = SanitizeRewindDepthForTest(claimed, rttMs, sanityTicks,
+                byte allowed = SanitizedRewindDepth(claimed, rttMs, sanityTicks,
                     _rewindCapTicks, _rewindPictureTicks);
                 bool trimmed = allowed != claimed;
                 // `SimInput` is a STRUCT, so the write has to land in the ARRAY
@@ -2067,34 +2067,42 @@ namespace Ring.Networking.Server
         ///
         /// ⛔ NO FLOOR AT ZERO IS ADDED HERE, and the boundary is named rather
         /// than left for a reader to find. Drag the sum below zero and the
-        /// minimum goes with it, and the `(byte)` cast wraps: at -1 this method
-        /// answers 255. TWO of its parameters can take the sum there, AND ONLY
-        /// ONE OF THEM IS HELD — an earlier wording claimed the answer was
-        /// bounded "for every input the function can be given", which is false
-        /// on the second (fix-round, A-1/B-4).
+        /// minimum goes with it, and the `(byte)` cast wraps: at a sum of -1
+        /// this method answers 255. TWO of its parameters can take the sum
+        /// there, and BOTH are now held UPSTREAM rather than here — an earlier
+        /// wording claimed the answer was bounded "for every input the function
+        /// can be given", which was false on the second until the owner's round
+        /// decision 4б gave it a rule (fix-round, A-1/B-4).
         ///   `pictureTicks` IS HELD, and by a written home: NetInvariants rule
         /// #11 pins `Arena.RewindPictureTicks` to `Net.InterpBufferTicks`, rule
         /// #1 of the same validator holds that above zero, and `ServerBootstrap`
         /// fails the process on any violation. `SimStates`' own note on the
         /// same field refuses a second clamp for the same reason (ruling 139),
         /// and a second answer here would be the same duplication.
-        ///   `sanityTicks` IS NOT HELD BY ANYTHING OF THE KIND.
-        /// `NetConfig.RewindSanityTicks` has no rule in NetInvariants and no
-        /// clamp anywhere; its `[Range(0, 6)]` is an Inspector hint, which a
-        /// hand-edited YAML, a script or a test is not bound by. MEASURED: at
-        /// -4, with the shipped picture of 3 and the reading at zero, the
-        /// estimate is -1, the minimum is -1, and this method answers 255. What
-        /// catches it is `SimInputSanitizer.Sanitize` inside `TickAll`, which
-        /// clamps the depth to `Arena.RewindCapTicks` — so on THIS path that
-        /// clamp is load-bearing rather than a parallel guarantee, and the
-        /// operator-visible result is the check INVERTED: a tolerance set
-        /// stricter than zero grants every claim the full cap instead of
-        /// trimming it.
-        ///   ⛔ AND NEITHER A CLAMP NOR A NEW RULE IS ADDED FOR IT HERE. Ruling
-        /// 226 refused the rule for want of a plan, and a review finding is not
-        /// a plan either: the question goes to the owner rather than into the
-        /// code.
-        internal static byte SanitizeRewindDepthForTest(
+        ///   `sanityTicks` IS HELD TOO, SINCE THE OWNER'S ROUND DECISION 4б,
+        /// AND BY A HOME OF THE SAME KIND: NetInvariants rule #12 refuses a
+        /// negative `NetConfig.RewindSanityTicks`, and `ServerBootstrap` fails
+        /// the process on it like any other violation. Before that rule the
+        /// field had nothing behind it at all — its `[Range(0, 6)]` is an
+        /// Inspector hint, which a hand-edited YAML, a script or a test is not
+        /// bound by. THE MEASUREMENT IS KEPT HERE, because it is what the rule
+        /// refuses rather than a hazard this method still carries: at -4, with
+        /// the shipped picture of 3 and the reading at zero, the estimate is
+        /// -1, the minimum is -1, and this method answers 255. The only thing
+        /// downstream of that is `SimInputSanitizer.Sanitize` inside `TickAll`,
+        /// which clamps the depth to `Arena.RewindCapTicks` — so the
+        /// operator-visible result would be the check INVERTED: a tolerance of
+        /// -4 or below granting every claim the full cap instead of trimming it
+        /// (fix-round, A-1/B-4). Between -1 and -3 the sum stays non-negative
+        /// and nothing wraps — those merely make the estimate stricter than the
+        /// owner asked for, and rule #12 refuses them for that.
+        ///   ⛔ AND STILL NO CLAMP IS ADDED HERE, for the reason the
+        /// `pictureTicks` paragraph above gives about its own field: with a
+        /// written home upstream, a second answer in this method would be the
+        /// duplication ruling 139 refuses. Ruling 226 had refused the RULE for
+        /// want of a plan; decision 4б is that plan, and the rule went where
+        /// rules live.
+        internal static byte SanitizedRewindDepth(
             byte claimed, float roundTripMs, int sanityTicks, int capTicks, int pictureTicks)
         {
             int estimate = SimulationWorld.TicksFromSeconds(roundTripMs * 0.001f * 0.5f)
