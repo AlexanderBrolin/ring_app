@@ -143,8 +143,21 @@ namespace Ring.Simulation.Core
         /// or the ring boundary — and FLEW ON. Emitted by ProjectileSystem in
         /// the branch where ProjectileFlight.TryRicochet accepted the contact,
         /// which is the branch that used to retire the round silently: until
-        /// this kind existed a reflection put nothing on the wire at all, and a
-        /// client saw only that the round had inexplicably changed direction.
+        /// this kind existed a reflection put nothing on the wire at all.
+        ///
+        /// ⚠ WHAT THAT SILENCE COSTS IS A MEASUREMENT, NOT THE OBVIOUS
+        /// GUESS. An earlier wording here — "a client saw the round
+        /// inexplicably change direction" — is true only of the OFFLINE
+        /// and HOST paths, where `ViewRegistry.SyncProjectiles` draws the
+        /// world's own bodies. A NETWORKED client's tracer is a closed form:
+        /// `TracerProjectiles` computes `SpawnPos + Vel * (dt * age)`, and its
+        /// router knows exactly two kinds, `ProjectileSpawned` and
+        /// `ProjectileEnded`. It therefore never turned at all — it flew
+        /// STRAIGHT ON THROUGH the wall until the round's real ending retired
+        /// it. So what this kind buys over the wire before Т32 is the
+        /// SPARK AND THE SOUND at the true contact while the tracer still flies
+        /// past it; making the tracer itself stop there is Р420, i.e. spec
+        /// §3.8, i.e. Т32.
         ///
         /// ⚠ THE ONLY `Projectile*` KIND THAT IS NOT AN ENDING, and that is the
         /// whole difficulty rather than a detail. Every other one reports that
@@ -165,8 +178,14 @@ namespace Ring.Simulation.Core
         /// existing spark reads; `Amount` = 0f — a reflection deals no damage,
         /// and `Amount` means damage everywhere else in this struct;
         /// `Height` = the contact height, its own field since app-88jb Т3.
-        /// `PlayerIndex`/`MobType`/`Zone`/`SecondaryEntityId` unused, same
-        /// "unused for every other kind" contract the rest of the struct
+        /// EVERY OTHER FIELD OF THE STRUCT IS UNUSED — written as a
+        /// closed statement rather than as a list, because the list this line
+        /// used to carry (`PlayerIndex`/`MobType`/`Zone`/`SecondaryEntityId`)
+        /// was already two short on the day it was written: `ImpactSpeed` and
+        /// `AttackerIndex` have been fields since app-88jb Т8 and are just
+        /// as unused for this kind. An enumeration of what a struct does NOT
+        /// hold goes stale the moment a field is added, and does it silently.
+        /// Same "unused for every other kind" contract the rest of the struct
         /// carries.
         ProjectileRicocheted
     }

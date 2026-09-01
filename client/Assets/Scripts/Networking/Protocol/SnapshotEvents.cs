@@ -70,9 +70,19 @@ namespace Ring.Networking.Protocol
 
         /// Stage 3 Т30 (spec §3.7, coordinator Ruling 234): a round mirrored
         /// off static geometry and FLEW ON — the contact point plus the
-        /// surface normal, so the client can put a spark where the hit
-        /// happened instead of watching a tracer change direction for no
-        /// visible reason.
+        /// surface normal, so the client can put a spark and a sound where the
+        /// contact actually happened.
+        ///
+        /// ⚠ AND ONLY THAT, UNTIL Т32 — measured rather than assumed. A
+        /// networked client's tracer is `TracerProjectiles`' closed form
+        /// (`SpawnPos + Vel * (dt * age)`, with `ProjectileSpawned` and
+        /// `ProjectileEnded` the only two kinds its router reads), so it does
+        /// not turn on a reflection: it flies straight on THROUGH the wall
+        /// until the round's real ending retires it. This record moves the
+        /// spark and the sound to the right spot; moving the TRACER there is
+        /// Р420, i.e. spec §3.8, i.e. Т32. (The tracer that visibly turns is
+        /// the offline/host path, where `ViewRegistry.SyncProjectiles` draws
+        /// the world's real bodies.)
         ///
         /// APPENDED PAST `ContainerEmptied`, NOT INSERTED BESIDE THE OTHER
         /// `Projectile*` VALUES, and that is the same rule the five Т29 kinds
@@ -502,12 +512,16 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.DirectorDied: return 0;
 
                 // Stage 3 Т30: `id u16 | pos.x u16 | pos.y u16 | normal u8`.
-                // THE WIDEST NON-SPAWN RECORD IN THE CATALOG, and four of the
-                // seven are the contact point — the only payload here that
-                // carries a position of its own (plan deviation 3; see
-                // `SnapshotEventPayload.Pos` for the measured relationship
-                // with the record header's own point, recorded for the owner
-                // by coordinator Ruling 238 rather than acted on here).
+                // AS WIDE AS `PlayerDamaged`, the widest non-spawn payload
+                // today: the two TIE at seven bytes (an earlier wording here
+                // claimed a sole maximum, which the `PlayerDamaged` case above
+                // falsifies), and only `ProjectileSpawned`'s eight is wider in
+                // the whole catalog. Four of the seven are the contact point —
+                // the only payload here that carries a position of its own
+                // (plan deviation 3; see `SnapshotEventPayload.Pos` for the
+                // measured relationship with the record header's own point,
+                // recorded for the owner by coordinator Ruling 238 rather than
+                // acted on here).
                 case SnapshotEventKind.ProjectileRicocheted: return 7;
 
                 default:
@@ -981,7 +995,7 @@ namespace Ring.Networking.Protocol
                     // normal back through `DirBack` — the pair `Quantize`
                     // guarantees idempotent (Р34). `Dir` carries the surface
                     // normal here, exactly as it does for `DashRicocheted`
-                    // one branch up; the two are the same fact about a
+                    // in the same switch; the two are the same fact about a
                     // contact, seen from the round's side and the actor's.
                     value.Id = ReadU16(payload, 0);
                     value.Pos = new float2(

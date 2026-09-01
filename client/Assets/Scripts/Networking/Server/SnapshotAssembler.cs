@@ -821,8 +821,8 @@ namespace Ring.Networking.Server
                         // subscription, `IsSubscribed(c, we.RoundId)` — and a
                         // `RoundId` left at its zero matches no subscription,
                         // so every connection simply breaks out of the arm.
-                        // `AddProjectileEnded` sets the same field one method
-                        // below for the same reason.
+                        // `AddProjectileEnded` sets the same field below in
+                        // this file for the same reason.
                         _wire[slot].RoundId = ev.EntityId;
                         break;
                     }

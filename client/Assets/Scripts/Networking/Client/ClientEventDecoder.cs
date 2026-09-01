@@ -173,9 +173,16 @@ namespace Ring.Networking.Client
                 case SnapshotEventKind.ContainerEmptied:
                 // Stage 3 Т30: the reflection. Without this line the record
                 // would be walked past as an ordinary Р29 forward-compatibility
-                // skip — the exact silence that lost the raid's own three kinds
-                // for two stages — and the client would show a tracer changing
-                // direction with no spark and no sound.
+                // skip — the exact silence that lost the raid's own FIVE kinds
+                // listed just above for two stages. (An earlier wording here
+                // said THREE: that is the count in the ASSEMBLER's own
+                // `default` arm, which measures a different set — the three
+                // kinds that never reached the wire at all — while this
+                // predicate's own doc and its Т32 comment above both say five.)
+                // And what the client would lose is the CONTACT: no spark and
+                // no sound. Not a turning tracer — `TracerProjectiles` is a
+                // closed form that flies straight on through the wall either
+                // way, until Т32 (Р420) makes it converge on the point.
                 case SnapshotEventKind.ProjectileRicocheted:
                     return true;
                 default:
@@ -424,6 +431,16 @@ namespace Ring.Networking.Client
                     e.PlayerIndex = localPlayerIndex;
                     break;
 
+                case SnapshotEventKind.ContainerEmptied:
+                    e.Kind = SimEventKind.ContainerEmptied;
+                    e.EntityId = p.Id;
+                    // No player slot: this one is delivered by VISIBILITY
+                    // (R-236 — the assembler decides it against
+                    // `ContainersCurrent`), so the receiver is a witness, not
+                    // a subject, and filling their slot in would be a fiction
+                    // a consumer could act on.
+                    break;
+
                 case SnapshotEventKind.ProjectileRicocheted:
                     e.Kind = SimEventKind.ProjectileRicocheted;
                     // The ROUND's own id, the convention of the Blocked and
@@ -444,16 +461,6 @@ namespace Ring.Networking.Client
                     // payload's copy here would give one number two sources on
                     // this side of the wire, and the day they disagree there
                     // would be no rule saying which is right.
-                    break;
-
-                case SnapshotEventKind.ContainerEmptied:
-                    e.Kind = SimEventKind.ContainerEmptied;
-                    e.EntityId = p.Id;
-                    // No player slot: this one is delivered by VISIBILITY
-                    // (R-236 — the assembler decides it against
-                    // `ContainersCurrent`), so the receiver is a witness, not
-                    // a subject, and filling their slot in would be a fiction
-                    // a consumer could act on.
                     break;
 
                 default:

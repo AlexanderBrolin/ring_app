@@ -506,15 +506,26 @@ namespace Ring.Simulation.Combat
                     //
                     // ONE EVENT ON SUCCESS, AND IT IS NOT AN ENDING
                     // (app-88jb Т30, coordinator Ruling 234). Until this task
-                    // a reflection was silent on the wire and Presentation saw
-                    // only the round's own moved Pos, which is a tracer that
-                    // changes direction for no visible reason. The fields are
-                    // the neighboring ProjectileBlocked emit's, not a fresh
-                    // choice: the same contact, the same normal, the same
-                    // contact height, and the ROUND in EntityId because a
-                    // reflection has no victim to spend it on. Amount stays 0f
-                    // -- a reflection deals no damage, and Amount means damage
-                    // everywhere else in that struct.
+                    // a reflection was silent on the wire, and what that cost
+                    // is a MEASUREMENT rather than the obvious guess. OFFLINE
+                    // and on the HOST, Presentation saw only the round's own
+                    // moved Pos through ViewRegistry.SyncProjectiles -- a
+                    // tracer that changes direction for no visible reason. On
+                    // a NETWORKED client nothing turned at all:
+                    // TracerProjectiles is a closed form,
+                    // SpawnPos + Vel * (dt * age), fed by exactly two kinds,
+                    // so the tracer flew straight on THROUGH the wall until
+                    // the round's real ending retired it. Until Т32 this event
+                    // therefore buys the spark and the sound at the true
+                    // contact, not a tracer that bends -- that is Р420, spec
+                    // §3.8.
+                    //
+                    // The fields are the neighboring ProjectileBlocked emit's,
+                    // not a fresh choice: the same contact, the same normal,
+                    // the same contact height, and the ROUND in EntityId
+                    // because a reflection has no victim to spend it on.
+                    // Amount stays 0f -- a reflection deals no damage, and
+                    // Amount means damage everywhere else in that struct.
                     //
                     // ⚠ IT MUST NOT BE MISTAKEN FOR THE TWO LINES BELOW. The
                     // assembler maps THIS kind to a wire record that leaves the

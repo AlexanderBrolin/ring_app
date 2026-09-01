@@ -1119,9 +1119,9 @@ namespace Ring.Simulation.Tests
 
         // --- Т30: the reflection is MID-FLIGHT news ---
 
-        /// app-88jb Т30 (coordinator Rulings 228/231). THREE CLAIMS IN ONE
-        /// FIXTURE BECAUSE THEY FAIL INDEPENDENTLY, and each one has no other
-        /// witness in the suite:
+        /// app-88jb Т30 (coordinator Rulings 228/231, extended by the review
+        /// round). FOUR CLAIMS IN ONE FIXTURE BECAUSE THEY FAIL INDEPENDENTLY,
+        /// and each one has no other witness in the suite:
         ///
         ///  1. ASSEMBLY DOES NOT THROW on a tick carrying the new kind. The
         ///     expanding switch in `SnapshotAssembler.BeginTick` is the fourth
@@ -1146,13 +1146,44 @@ namespace Ring.Simulation.Tests
         ///     OUTSIDE the enumeration, so it stays green while a real member
         ///     goes unmapped. Its input is a whole `SimEvent` inside the tick,
         ///     so the only way to ask it is through a world.
-        ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT POINT
-        ///     — the sim-to-wire mapping, which nothing else observes.
+        ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT
+        ///     POINT — asserted TWICE, on the payload's copy and on the record
+        ///     HEADER's, which is NOT one assertion written down twice. The
+        ///     two copies answer two different questions, and either can be
+        ///     right while the other is wrong:
+        ///       • the PAYLOAD's point proves the CODEC — that
+        ///         `SnapshotEvents.WriteProjectileRicocheted` put four bytes on
+        ///         the wire and `TryReadPayload` got the same point back;
+        ///       • the HEADER's point proves the ASSEMBLER's sim-to-wire
+        ///         MAPPING — the single `Enqueue(c, i, we.Source.Pos)` in the
+        ///         shared arm of `RouteEvents`, which is what fills
+        ///         `EventRecord.Pos`.
+        ///     And the header's is the copy that DRAWS THE SPARK:
+        ///     `ClientEventDecoder` fills `SimEvent.Pos` from `record.Pos` and
+        ///     deliberately NOT from the payload (its own Т30 branch says so
+        ///     and why), so a payload that round-trips perfectly still leaves
+        ///     the spark at the world origin if the header point is wrong.
+        ///     Before this pair, NO test in the tree asserted the header
+        ///     point of any `Projectile*` record: grepping every line of
+        ///     `Tests/EditMode/*.cs` that names `ProjectileEnded` or
+        ///     `ProjectileRicocheted` for an `Events` index yields zero.
         ///  3. THE ROUND'S REAL ENDING STILL REACHES THE SAME SUBSCRIBER
         ///     AFTERWARDS. This is "the subscription was not closed" in
         ///     OBSERVABLE form, and it is strictly stronger than asking the
         ///     predicate `EndsProjectileForTest` for its answer: a predicate no
         ///     production path calls proves only itself.
+        ///  4. AND A CONNECTION THAT WAS NEVER SENT THE SPAWN IS NOT SENT THE
+        ///     REFLECTION — critical rule 4, fog of war, and the half the
+        ///     fixture premise below has always PROMISED ("or the negative half
+        ///     below proves nothing") without any assertion keeping the
+        ///     promise, here or anywhere else in the tree. It matters because
+        ///     the contact point IS a position: the spot where a round fired
+        ///     from behind cover struck a wall. Delivered to a non-subscriber
+        ///     it hands that connection a fix on somebody else's shooting.
+        ///     ⚠ It is asserted in the BODY between claims 2 and 3, not after
+        ///     them, because the bystander's frame has to be built from the
+        ///     reflection's OWN tick — the next `BeginTick` has already
+        ///     replaced the event buffer.
         ///
         /// THE EVENT IS STATED THROUGH THE EMIT SEAM, not produced by flying a
         /// round into a wall, and that is this section's own convention rather
@@ -1219,10 +1250,14 @@ namespace Ring.Simulation.Tests
                 + "MatchServer.OnPostTick, and that file has no catch — so steps 4-5 die and NOT "
                 + "ONE client receives a snapshot on any tick carrying a reflection");
             var mid = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var midBy = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
 
             Assert.AreEqual(1, mid.CountOf(SnapshotEventKind.ProjectileRicocheted),
                 "the subscriber is told its tracer mirrored off something — without this record the "
-                + "round simply changes direction on screen for no visible reason");
+                + "contact leaves a networked client nothing at all: no spark and no sound. NOT a "
+                + "tracer that turns for no reason — TracerProjectiles is a closed form fed by two "
+                + "kinds, so it flies straight on through the wall either way until Т32 (Р420) makes "
+                + "it converge; the turning tracer is the offline/host path");
             Assert.IsTrue(mid.TryFirstOf(SnapshotEventKind.ProjectileRicocheted, out int r));
             Assert.AreEqual(roundId, mid.Payloads[r].Id,
                 "and the payload names the round it happened to");
@@ -1230,6 +1265,41 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(contact.x, mid.Payloads[r].Pos.x, tol,
                 "the contact point must ride the payload — it is the point of the whole record");
             Assert.AreEqual(contact.y, mid.Payloads[r].Pos.y, tol);
+
+            // THE SAME POINT AGAIN, OFF THE RECORD HEADER, and the class doc's
+            // claim 2 says at length why this is a second question rather than
+            // the same assertion twice: the payload's copy proves the CODEC,
+            // this one proves the ASSEMBLER's sim-to-wire mapping — the single
+            // `Enqueue(c, i, we.Source.Pos)` in the shared arm — and this is
+            // the copy `ClientEventDecoder` actually reads into `SimEvent.Pos`,
+            // i.e. the one that decides where the spark is drawn. Same
+            // tolerance, because the header rides the SAME quantizer at the
+            // SAME scale (`Quantize.Pos(…, cfg.Arena.Radius)`, one code = one
+            // step of `2 * Radius / 65535`).
+            // ⚠ The x half of this pair, and of the payload pair above, is
+            // one-sided by the fixture's own geometry: `contact.x` is 0, which
+            // is also what an unfilled field holds. Recorded as a finding
+            // rather than fixed here — closing it means moving the contact off
+            // the y axis, i.e. changing the fixture, not adding an assertion.
+            Assert.AreEqual(contact.x, mid.Events[r].Pos.x, tol,
+                "the contact point must ride the record HEADER too — that is the copy the client "
+                + "decodes into SimEvent.Pos and the one the spark is drawn at");
+            Assert.AreEqual(contact.y, mid.Events[r].Pos.y, tol,
+                "the record header's own point must be the contact, not the origin: an assembler "
+                + "that enqueued anything else would put the spark somewhere the round never was");
+
+            // Claim 4, the negative half (critical rule 4 — fog of war). The
+            // premise above asserts connection 1 got no spawn; this is what
+            // that premise is FOR. A reflection delivered to a connection with
+            // no subscription would hand it the contact point — the position of
+            // somebody else's round striking a wall, possibly from behind cover
+            // it cannot see past. The frame is built from the reflection's own
+            // tick, alongside `mid`, because the next BeginTick clears the
+            // event buffer.
+            Assert.AreEqual(0, midBy.CountOf(SnapshotEventKind.ProjectileRicocheted),
+                "a connection that never received the spawn must not receive the reflection either "
+                + "— the record carries a contact POINT, so delivering it to a non-subscriber is a "
+                + "fix on another player's shooting, which is exactly what critical rule 4 forbids");
 
             // Claim 3. The round is STILL ALIVE as far as the wire is
             // concerned, so its real ending — a tick or a hundred later — must
