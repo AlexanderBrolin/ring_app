@@ -243,12 +243,23 @@ namespace Ring.Data
         // 2 AND NOT 4, AND THE RATIO IS THE ARGUMENT. The rewind cap is six
         // ticks (Arena.RewindCapTicks — the 200 ms of CRITICAL RULE 5), so a
         // tolerance of 4 hands 67 % of the whole compensation window over on
-        // trust, against the ~20 % the industry's published practice keeps;
-        // 2 is 20 % of 6. Concretely, and this is why the number is not a
-        // matter of taste: with the round trip reading at zero, a client on a
-        // perfect connection could claim four ticks more than his picture is
-        // actually behind and keep every one of them — and PvP is switched on,
-        // so that slack is paid for by the collector who gets shot.
+        // trust and 2 hands 33 % — half as much.
+        // ⚠ THE ~20 % IS THE INDUSTRY'S PUBLISHED PRACTICE, NOT THIS NUMBER,
+        // and an earlier wording here compressed the two into "2 is 20 % of 6",
+        // which is arithmetically false (fix-round, B-3): 20 % of a cap of 6 is
+        // 1.2 ticks, and this field is stated in WHOLE ticks, so the guideline
+        // falls between 1 (16.7 %, under it) and 2 (33.3 %, over it). The
+        // owner's 2 is that guideline rounded UP to a whole tick; it is not
+        // claimed to BE the guideline.
+        // Concretely, and this is why the number is not a matter of taste: with
+        // the round trip reading at zero (MatchServer.
+        // SanitizeRewindDepthForTest measures why it does) the estimate is 5,
+        // while a client on a perfect connection is honestly 3 ticks behind —
+        // his whole depth IS the interpolation buffer — so TWO unearned ticks
+        // are believed, not the four an earlier wording claimed (fix-round,
+        // B-5). At a tolerance of 4 it would be three: the estimate becomes 7,
+        // the wire holds the claim at 6, and 6 - 3 = 3. PvP is switched on, so
+        // that slack is paid for by the collector who gets shot.
         //
         // BOTH ENDS OF THE RANGE ARE MODES, NOT MISTAKES, which is why neither
         // is excluded. 0 is the STRICTEST form of the check — no tolerance at
@@ -259,13 +270,29 @@ namespace Ring.Data
         // the check trims nothing ever again. That is a deliberate mode too,
         // and the ceiling is stated as 6 rather than as some number pretending
         // the field cannot be neutralized.
+        // ⚠ 6 IS WHERE NEUTRALITY HOLDS FOR EVERY READING; ON THE SHIPPED
+        // SERVER IT ARRIVES ALREADY AT 3 (fix-round, B-5). The round trip time
+        // a dedicated server reads is identically zero, so the estimate is
+        // 0 + Arena.RewindPictureTicks + this field: at 3 that is 6, the cap
+        // itself, and nothing is trimmed from there on. Between 3 and 6 the
+        // field changes nothing at all on such a server.
         //
-        // The [Range] above is an Inspector hint and nothing more — see this
-        // class's own type doc, which says it of every [Range] here. This
-        // number has no cross-config rule in NetInvariants to catch a
-        // hand-edited YAML, and none is added: there is no plan for one, and
-        // the arithmetic that reads the field is bounded by the rewind cap on
-        // either side of the range regardless.
+        // The [Range] on the declaration BELOW is an Inspector hint and nothing
+        // more — see this class's own type doc, which says it of every [Range]
+        // here — so it refuses nothing a hand-edited YAML, a script or a test
+        // assigns. (It sits below this paragraph, not above it; an earlier
+        // wording pointed the wrong way — fix-round, B-9.)
+        // ⛔ AND THERE IS NO SECOND GUARD BEHIND IT. This number has no
+        // cross-config rule in NetInvariants, and none is added: there is no
+        // plan for one (ruling 226). An earlier wording excused that with "the
+        // arithmetic that reads the field is bounded by the rewind cap on
+        // either side of the range regardless" — false below zero (fix-round,
+        // A-1/B-4). A negative tolerance drags MatchServer's estimate under
+        // zero, its `(byte)` cast wraps the answer to 255, and what keeps that
+        // out of the world is the arena clamp inside TickAll
+        // (SimInputSanitizer.Sanitize) — which bounds it by granting the FULL
+        // CAP, i.e. by inverting the check rather than by enforcing it. Below
+        // zero this field's only line of defense is the [Range] hint itself.
         //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),

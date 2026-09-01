@@ -443,12 +443,15 @@ namespace Ring.Simulation.Tests
             // A SECOND REASON THE PAIR HAS TO AGREE, AS OF app-88jb Т29, and it
             // is on the SERVER's side rather than the doll's: the rewind sanity
             // check weighs a claimed depth against half the round trip plus
-            // Arena.RewindPictureTicks (MatchServer.SanitizeRewindDepthForTest
-            // carries the formula), so a pair that had drifted apart would make
-            // that comparison wrong by the drift on every shot — and wrong
-            // SILENTLY, since the estimate stays a plausible tick count and
-            // nothing downstream can tell it apart from a correct one. This
-            // rule is what keeps the two numbers the same number.
+            // Arena.RewindPictureTicks plus the owner's tolerance
+            // (NetConfig.RewindSanityTicks — dropped from an earlier wording of
+            // this paragraph, fix-round B-10; MatchServer.
+            // SanitizeRewindDepthForTest carries the whole formula), so a pair
+            // that had drifted apart would make that comparison wrong by the
+            // drift on every shot — and wrong SILENTLY, since the estimate
+            // stays a plausible tick count and nothing downstream can tell it
+            // apart from a correct one. This rule is what keeps the two
+            // numbers the same number.
             NetConfig net = DefaultNet();
             SimConfig sim = TestConfigs.Default();
             sim.Arena.RewindPictureTicks = net.InterpBufferTicks + 1;

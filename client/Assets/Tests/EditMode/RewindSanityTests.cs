@@ -4,18 +4,20 @@ using Ring.Simulation.Core;
 
 namespace Ring.Simulation.Tests
 {
-    /// THE REWIND DEPTH A CLIENT CLAIMS, WEIGHED AGAINST WHAT ITS SOCKET SAYS
-    /// IS POSSIBLE (app-88jb Т29, spec §3.6, Р374/Р404). The depth arrives in
-    /// `SimInput.RewindTicks`, because the client is the only party that knows
-    /// which picture it was shooting at; the server therefore takes the number
-    /// but does not take it on trust. `MatchServer.SanitizeRewindDepthForTest`
-    /// is the arithmetic of that second opinion — it builds an estimate out of
-    /// the socket's round trip time and trims a claim that runs past it.
+    /// THE REWIND DEPTH A CLIENT CLAIMS, WEIGHED AGAINST WHAT THE SERVER'S OWN
+    /// SOCKET READING SAYS IS POSSIBLE (app-88jb Т29, spec §3.6, Р374/Р404).
+    /// The depth arrives in `SimInput.RewindTicks`, because the client is the
+    /// only party that knows which picture it was shooting at; the server
+    /// therefore takes the number but does not take it on trust. `MatchServer.
+    /// SanitizeRewindDepthForTest` is the arithmetic of that second opinion —
+    /// it builds an estimate out of the round trip time the server reads and
+    /// trims a claim that runs past it.
     ///
-    /// ONE FORMULA, AND ALL FOUR EXPECTATIONS BELOW ARE COMPUTED FROM IT
-    /// rather than chosen (review finding A-C1: an earlier draft carried three
+    /// ONE FORMULA, AND ALL SIX EXPECTATIONS BELOW ARE COMPUTED FROM IT rather
+    /// than chosen (review finding A-C1: an earlier draft carried three
     /// expectations descended from three different formulas, and no single
-    /// implementation could have satisfied all three at once):
+    /// implementation could have satisfied all three at once; the last two
+    /// cases arrived with this task's fix-round, finding B-1):
     ///
     ///     min(claimed,
     ///         TicksFromSeconds(roundTripMs * 0.001f * 0.5f)
@@ -28,7 +30,12 @@ namespace Ring.Simulation.Tests
     /// client states its depth as "predicted tick minus rendered tick", so an
     /// estimate without the buffer would punish an honest client with no ping
     /// at all; `sanityTicks` is the tolerance on top — 2 by Р404, which is
-    /// 20 % of a cap of 6 rather than the 67 % a tolerance of 4 would be.
+    /// 33 % of a cap of 6 rather than the 67 % a tolerance of 4 would be. The
+    /// ~20 % often quoted alongside it is the industry's published practice and
+    /// not this number: at a cap of 6 that guideline is 1.2 ticks, and whole
+    /// ticks leave 1 under it and 2 over it (fix-round, B-3 — an earlier
+    /// wording here called 2 "20 % of a cap of 6", which it is not).
+    /// `NetConfig.RewindSanityTicks`' own doc carries the full arithmetic.
     ///
     /// TRIMMING IS NOT A REFUSAL. The input is legal and is simulated like any
     /// other; the one thing the server withholds is belief in the single
@@ -131,6 +138,70 @@ namespace Ring.Simulation.Tests
                     claimed: 7, roundTripMs: 400f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 3),
                 "оценка выше капа обязана остаться ограниченной капом — ждём 6");
+        }
+
+        [Test]
+        public void ThePictureBufferComesFromItsParameter_NotAShippedLiteral()
+        {
+            // ⭐ WHY THIS CASE EXISTS: WITHOUT IT THE PARAMETER COULD BE A
+            // SHIPPED LITERAL AND THE WHOLE FILE WOULD STAY GREEN. All four
+            // fixtures above hand `pictureTicks: 3`, the shipped value, so the
+            // substitution
+            //     `... TicksFromSeconds(...) + 3 + sanityTicks;`
+            // survives every one of them — checked case by case rather than
+            // assumed: their answers stay 5, 5, 4 and 6.
+            //
+            // AND THE AXIS IS LOAD-BEARING, NOT DECORATIVE. The estimate reads
+            // `Arena.RewindPictureTicks`, and that is the whole reason
+            // NetInvariants rule #11 (RewindPictureTicks == InterpBufferTicks)
+            // has a second reason to exist — spec §6h and the paragraph this
+            // task added to `NetInvariantsTests` both rest on it. With a
+            // literal in its place the tie to the rule would be cut silently,
+            // and the estimate would keep answering plausible tick counts.
+            //
+            // THE EXPECTATION IS COMPUTED FROM THE ONE FORMULA, like every
+            // other in this file: the one-way term is
+            // TicksFromSeconds(0f) = 0, the buffer adds 2 (not the shipped 3),
+            // the tolerance adds 2 — an estimate of 4, and the claimed 6 is cut
+            // to it. Under the literal the answer would be 5, so the fixture
+            // cannot come out green by accident.
+            //
+            // ⚠ AND UNLIKE `claimed: 7` ABOVE, THIS INPUT IS REACHABLE: a
+            // picture buffer of 2 is a legal tuning (rule #11 only asks that
+            // Net.InterpBufferTicks name the same number), so nothing here is a
+            // contract-only fixture.
+            Assert.AreEqual((byte)4, MatchServer.SanitizeRewindDepthForTest(
+                    claimed: 6, roundTripMs: 0f, sanityTicks: 2, capTicks: 6,
+                    pictureTicks: 2),
+                "буфер картинки обязан читаться из параметра: при 2 оценка равна 4");
+        }
+
+        [Test]
+        public void TheCapComesFromItsParameter_NotAShippedLiteral()
+        {
+            // ⭐ THE SAME HOLE ON THE OTHER AXIS, AND IT IS A DIFFERENT ONE
+            // FROM THE CAP FIXTURE ABOVE. That one pins the cap as the CEILING
+            // OF THE ANSWER; this one pins that the ceiling is the caller's
+            // number rather than a literal. `Arena.RewindCapTicks` is 6 in the
+            // shipped asset and 6 in all four fixtures above, so
+            //     `return (byte)math.min((int)claimed, math.min(estimate, 6));`
+            // survives every one of them too (their answers stay 5, 5, 4
+            // and 6).
+            //
+            // Computed from the same formula: 400 ms gives a one-way term of
+            // TicksFromSeconds(0.2f) = 6, the buffer adds 3 and the tolerance
+            // adds 2, so the estimate is 11 and only the cap can produce the
+            // answer — 5, the number handed in. Under the literal it would be
+            // 6.
+            //
+            // ⚠ REACHABLE, AGAIN UNLIKE `claimed: 7`: a rewind cap of 5 is a
+            // legal config (SimConfigBuilder refuses one below 1 or above
+            // TicksFromSeconds(0.2f) = 6), so this is an ordinary tuning and
+            // not a contract-only input.
+            Assert.AreEqual((byte)5, MatchServer.SanitizeRewindDepthForTest(
+                    claimed: 6, roundTripMs: 400f, sanityTicks: 2, capTicks: 5,
+                    pictureTicks: 3),
+                "кап обязан читаться из параметра: при капе 5 ответ равен 5");
         }
     }
 }

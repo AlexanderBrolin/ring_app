@@ -358,31 +358,118 @@ namespace Ring.Networking.Server
         SpectateRefusal[] _lastLoggedRefusal;
         int[] _lastLoggedRefusalTick;
 
-        // app-88jb Т29 (spec §3.6): whether slot `i`'s claimed rewind depth was
-        // being trimmed as of the last tick — the memory that turns a per-tick
-        // CONDITION into an EDGE, so the operator log carries "it started" and
-        // "it stopped" instead of thirty identical lines a second.
-        // `SimInput.RewindTicks` is a LEVEL and not an edge (its own doc), so a
-        // client whose claim sits above the estimate produces the condition on
-        // every single tick of the match, and `OnPostTick` runs on every one of
-        // them.
+        // app-88jb Т29 (spec §3.6), and the pair is the TRIM LOG'S THROTTLE
+        // MEMORY: two fields per slot, exactly like `_lastLoggedRefusal` +
+        // `_lastLoggedRefusalTick` above, because either one of them alone
+        // throttles nothing. `_rewindTrimmed[i]` is the state the LOG LAST
+        // REPORTED for slot `i` — not the state of the previous tick, so
+        // `false` at match start reads as both "the log has said nothing yet"
+        // and the truth it would have said; `_rewindTrimmedLogTick[i]` is the
+        // world tick that report was written at, or `NoRewindTrimLogYet` while
+        // nothing has been written for this slot at all.
         //
-        // THE PRECEDENT IS IN THIS FILE ALREADY, not borrowed from elsewhere:
-        // `SpectatePolicy.ShouldLogRefusal` throttles the spectate refusal for
-        // exactly this reason — a client may legitimately produce it every
-        // tick — and `OnSpectateRequest` holds that throttle's memory in the
-        // same per-slot shape as this array.
-        // ⚠ AND THE DIFFERENCE IS NAMED RATHER THAN SMOOTHED OVER: that one
-        // got a policy class with a predicate a test can reach, and this one
-        // deliberately does not. The decision here is a boolean edge with no
-        // subject matter of its own — two bools compared — so a test over it
-        // would measure the comparison rather than a rule; and this class is by
-        // construction beyond EditMode's reach anyway (see the class doc). The
-        // edge therefore has NO EditMode witness, on purpose.
+        // WHY A THROTTLE IS NEEDED AT ALL. `SimInput.RewindTicks` is a LEVEL
+        // and not an edge (its own doc), so a client whose claim sits above
+        // the estimate produces the condition on every single tick of the
+        // match, and `OnPostTick` runs on every one of them: thirty lines a
+        // second, per slot, into the container's stdout.
+        //
+        // ⛔ THE PRECEDENT IN THIS FILE IS A MODEL OF THE FORM, NOT A PERMIT
+        // FOR "LOG ON CHANGE" (fix-round, A-2/B-2 — an earlier version of this
+        // wiring logged on the change alone and cited that precedent as its
+        // warrant). `SpectatePolicy.ShouldLogRefusal` states outright that it
+        // is "NOT A 'LOG ON CHANGE' GATE — and that is a deliberate departure",
+        // and it measured the reason: against a flapping client the "it
+        // changed" half is true on every tick, so a change test alone bounds
+        // nothing. This condition can flap for the same kind of reason, and
+        // the arithmetic is on hand rather than feared — the claim is
+        // `predictionLead + interpolationLag` (`RewindDepthMeter.Measure`),
+        // both halves move with packet arrival, and with the round trip time
+        // reading zero (see `SanitizeRewindDepthForTest`'s own ⛔ paragraph)
+        // the estimate is a flat 5 at the shipped picture of 3 and tolerance
+        // of 2. "Is this trimmed" therefore degenerates to "is the claim
+        // exactly 6", the top of the wire's own domain and one tick above the
+        // honest 5 that `RewindSanityTests`' second fixture states for an
+        // 80 ms link. Crossing that line and falling back is therefore an
+        // ordinary operating condition rather than an exotic one — reasoned
+        // from those two sources, not measured on a live link — and every
+        // crossing would be TWO lines.
+        //   Hence the line needs BOTH halves: the state must differ from the
+        // one last REPORTED, and a bond of `_netConfig.TickRate` ticks — one
+        // second — must have passed since that report. The read site in
+        // `OnPostTick` carries why the bond is derived rather than declared.
+        //
+        // THE COSTS OF THE BOND, NAMED HERE RATHER THAN LEFT TO BE FOUND, the
+        // way the precedent names its own three — and stated per case, because
+        // a short episode fares differently depending on where it falls:
+        //   * IF THE BOND HAD ALREADY ELAPSED when the episode began, its
+        //     start is logged at once and its END waits until a bond after
+        //     that line — so the log can read "trimming" for up to a second
+        //     after the trimming stopped.
+        //   * IF THE BOND HAD NOT ELAPSED, the episode never reaches the log
+        //     at all: the start is suppressed, and the return to the state the
+        //     log already reported is not a change to report. Lost, not
+        //     delayed — the precedent names the same cost for a transient
+        //     reason of its own.
+        //   * WHAT IS NOT LOST is a state that STAYS: within one bond of the
+        //     last line, any state differing from the one reported is written
+        //     out, and the line names what is happening NOW rather than the
+        //     episode that was swallowed.
+        //
+        // ⚠ AND THE DIFFERENCE FROM THE PRECEDENT IS NAMED RATHER THAN
+        // SMOOTHED OVER: that one got a policy class with a predicate a test
+        // can reach, and this one deliberately does not (ruling 224). The
+        // decision here carries no subject matter of its own — two bools and a
+        // tick difference — so a test over it would measure the comparison
+        // rather than a rule; and this class is by construction beyond
+        // EditMode's reach anyway (see the class doc). The throttle therefore
+        // has NO EditMode witness, on purpose.
         //
         // Same fresh-every-`StartMatch`/released-in-`StopMatch` treatment, and
         // the same Р151 reason, as the arrays above.
         bool[] _rewindTrimmed;
+        int[] _rewindTrimmedLogTick;
+
+        /// "No trim line has been written for this slot yet" (app-88jb Т29
+        /// fix-round) — the value `StartMatch` fills `_rewindTrimmedLogTick`
+        /// with, and what lets a match's very FIRST line through the bond
+        /// instead of making it wait a second to be allowed out.
+        ///
+        /// ⚠ `int.MinValue`, AND NOT THE `-1` THE NEIGHBORING SENTINEL PICKED
+        /// — the difference is the point rather than an oversight.
+        /// `SpectatePolicy.NoPriorSwitch` is `-1` precisely to keep
+        /// `currentTick - lastSwitchTick` a safe `int` subtraction, and it can
+        /// afford that because its own predicate SHORT-CIRCUITS on the sentinel
+        /// and never subtracts it. This one has to ANSWER on it: at tick 0 a
+        /// `-1` would give a difference of 1, below any bond, and would silence
+        /// a match's opening line for its whole first second. `int.MinValue`
+        /// clears every bond instead — and the underflow the neighbor avoided
+        /// is avoided too, by doing the one subtraction that can meet this
+        /// value in `long`.
+        const int NoRewindTrimLogYet = int.MinValue;
+
+        // app-88jb Т29 fix-round (A-8): the two arena numbers the trim needs,
+        // taken ONCE per match instead of once per tick.
+        // `SimulationWorld.Config` is a by-VALUE property — `SnapshotAssembler.
+        // BeginTick` records the same trap in a note of its own — so reading
+        // `_world.Config.Arena` inside `OnPostTick` copied the WHOLE
+        // `SimConfig` struct on every tick to reach two ints.
+        //
+        // ⛔ WHY THE CACHE IS LEGAL AND NOT A STALE COPY WAITING TO BE FOUND,
+        // said here so the next session does not read it as a bug: the
+        // hot-tweak path cannot reach this world at all.
+        // `SimulationWorld.ApplyConfig` is the only thing that moves a running
+        // world's numbers, and its only callers are `LocalSimBackend` (which
+        // owns its own offline world) and `NetworkSimBackend`, which REFUSES
+        // the call with a log rather than migrating anything. The world this
+        // class builds in `StartMatch` is private to it and handed to nobody,
+        // so nothing can retune it underneath these two copies; a restart goes
+        // through `StartMatch` again and re-reads both from that match's own
+        // `simConfig`.
+        // Value types, so `StopMatch` leaves them alone: there is no reference
+        // to release, and `_running` is what makes a stopped instance inert.
+        int _rewindCapTicks;
+        int _rewindPictureTicks;
 
         // Stage 3 Т24 (spec §3.10): the two facts about a finished raid that
         // the WORLD does not record, kept here for the summary to read — same
@@ -615,12 +702,21 @@ namespace Ring.Networking.Server
             var lastLoggedRefusal = new SpectateRefusal[playerCount];
             var lastLoggedRefusalTick = new int[playerCount];
 
-            // app-88jb Т29: `false` — "nothing trimmed yet" — is
-            // `default(bool)`, so no fill loop, exactly like the pair above.
+            // app-88jb Т29: `false` — "the log has reported nothing being
+            // trimmed" — is `default(bool)` AND the truth at match start, so
+            // that half needs no fill loop, exactly like the pair above. The
+            // tick half does need one: `NoRewindTrimLogYet` is what lets this
+            // match's first line out at once instead of a bond after tick 0
+            // (see that constant's own doc).
             // Fresh every match for the Р151 reason the arrays above carry: a
-            // restart whose first tick already trims would otherwise inherit a
-            // `true` from the previous match and swallow its own opening line.
+            // restart's world starts back at tick 0, so a `true` inherited from
+            // the previous match would swallow this one's opening line, and an
+            // inherited TICK STAMP would silence it until the new match's own
+            // clock passed a stamp it may never reach at all.
             var rewindTrimmed = new bool[playerCount];
+            var rewindTrimmedLogTick = new int[playerCount];
+            for (int i = 0; i < playerCount; i++)
+                rewindTrimmedLogTick[i] = NoRewindTrimLogYet;
 
             _world = world;
             _assembler = assembler;
@@ -641,6 +737,12 @@ namespace Ring.Networking.Server
             _lastLoggedRefusal = lastLoggedRefusal;
             _lastLoggedRefusalTick = lastLoggedRefusalTick;
             _rewindTrimmed = rewindTrimmed;
+            _rewindTrimmedLogTick = rewindTrimmedLogTick;
+            // app-88jb Т29 fix-round (A-8): from the config THIS match was
+            // built on, not from `_world.Config` a tick at a time — see both
+            // fields' own doc for why the copy cannot go stale under a match.
+            _rewindCapTicks = simConfig.Arena.RewindCapTicks;
+            _rewindPictureTicks = simConfig.Arena.RewindPictureTicks;
             _extractedTick = extractedTick;
             _raidEndNotified = new bool[extractedTick.Length];
             _disconnectKilled = disconnectKilled;
@@ -904,6 +1006,7 @@ namespace Ring.Networking.Server
             _lastLoggedRefusal = null;
             _lastLoggedRefusalTick = null;
             _rewindTrimmed = null;
+            _rewindTrimmedLogTick = null;
             _extractedTick = null;
             _raidEndNotified = null;
             _disconnectKilled = null;
@@ -1197,12 +1300,27 @@ namespace Ring.Networking.Server
             }
 
             // 1a. app-88jb Т29 (spec §3.6): the rewind depth each collector
-            // claimed this tick, weighed against what his socket says is
-            // possible. The whole rule is `SanitizeRewindDepthForTest` and this
-            // step is wiring — read that method's doc before this loop, in
-            // particular for what the round trip time it is fed actually reads
-            // on a dedicated server, and for the single witness of the wiring's
-            // liveness (the Ф4 lag gate, never a green EditMode run).
+            // claimed this tick, weighed against what THE SERVER'S OWN SOCKET
+            // READING says is possible. The whole rule is
+            // `SanitizeRewindDepthForTest` and this step is wiring — read that
+            // method's doc before this loop, in particular for what the round
+            // trip time it is fed actually reads on a dedicated server, and for
+            // the single witness of the wiring's liveness (the Ф4 lag gate,
+            // never a green EditMode run).
+            //
+            // ⚠ WHAT A GREEN RUN DOES NOT WITNESS HERE, BEYOND THE LIVENESS OF
+            // THAT READING (fix-round, A-3). The one statement below that makes
+            // Т29 BEHAVIORAL is the write-back — `_effectiveInputsScratch[i].
+            // RewindTicks = allowed` — and no EditMode case executes it:
+            // `RewindSanityTests` calls the pure function directly, and no test
+            // drives `OnPostTick` at all (it needs a live `NetworkManager`).
+            // Delete that one line and the whole suite stays green while the
+            // server goes on rewinding by exactly the number the client asked
+            // for. The Ф4 lag gate is what has to catch it, and it has to catch
+            // it by the OBSERVABLE consequence — a claim above the estimate is
+            // answered at the TRIMMED depth, in the line logged below and in
+            // the hit it produces — not merely by checking that the server's
+            // round trip reading is non-zero.
             //
             // BETWEEN STEP 1 AND STEP 2 BY NECESSITY. `Gather` is what puts a
             // claimed depth into `_effectiveInputsScratch` — a repeat carries
@@ -1210,43 +1328,66 @@ namespace Ring.Networking.Server
             // consumes it, so this is the only window in which the number can
             // still be corrected. Nothing between the two reads the depth.
             //
-            // THE THREE READINGS ARE TAKEN ONCE, OUTSIDE THE LOOP, because
-            // they are the same for every slot — and `_world.Config` returns a
-            // COPY of the whole `SimConfig` struct, so a per-player read would
-            // copy the entire struct PlayerCount times to reach two ints.
-            // `TiltSystem`'s own note records that trap for `Hero`.
+            // THE READINGS ARE TAKEN ONCE, OUTSIDE THE LOOP, because they are
+            // the same for every slot: the round trip time is a PROCESS-wide
+            // number and not a per-connection one (the method's own ⛔
+            // paragraph measures why FishNet 4.7.2 offers the server no
+            // per-connection reading at all), and the tolerance is one asset
+            // field. The two arena numbers are not read here at all any more —
+            // they were taken once for the whole match in `StartMatch`; see
+            // `_rewindCapTicks`' own doc for why that copy cannot go stale, and
+            // for the per-tick `SimConfig` copy it removes.
             //
             // The trim is deliberately NOT the same statement as the arena
             // clamp `SimInputSanitizer.Sanitize` applies inside `TickAll`: that
             // one brings any depth into the arena's cap, this one asks whether
             // a depth inside the cap is one this connection could have earned.
-            // Passing `arena.RewindCapTicks` here keeps the answer bounded for
-            // every input the function can be given, the sanitizer keeps it
-            // bounded for every input the WORLD can be given, and neither is
-            // load-bearing for the other.
+            // ⚠ AND THE TWO ARE NOT INDEPENDENT, WHICH AN EARLIER WORDING HERE
+            // CLAIMED THEY WERE (fix-round, A-1/B-4). Handing `_rewindCapTicks`
+            // in bounds the answer from ABOVE for every input; nothing here
+            // bounds it from BELOW, and a negative `NetConfig.RewindSanityTicks`
+            // makes this method answer 255 — at which point the arena clamp
+            // inside `TickAll` is the only thing standing between that and the
+            // world, i.e. load-bearing rather than independent. The method's
+            // own ⛔ "NO FLOOR AT ZERO" paragraph carries the measurement and
+            // what it looks like to an operator.
             float rttMs = _nm.TimeManager.RoundTripTime;
             int sanityTicks = _netConfig.RewindSanityTicks;
-            ArenaSimConfig arena = _world.Config.Arena;
+            // THE THROTTLE'S BOND IS ONE SECOND, DERIVED AND NOT DECLARED.
+            // `NetConfig.TickRate` is the tick rate itself (its own field
+            // comment: "Mirrors TimeManager._tickRate"), so this many ticks is
+            // one second at whatever rate the process runs — and it is exactly
+            // the interval FishNet keeps for its own timing update
+            // (`TimeManager.TimingTickInterval` IS `_tickRate`, and the modulo
+            // in `SendTimingAdjustment` carries the comment "Send every
+            // second"). No asset field of its own is added for it, on purpose:
+            // this is the frequency of a DIAGNOSTIC, not a number the game
+            // plays by — CRITICAL RULE 6 governs the second kind — and a knob
+            // nobody could see the effect of tuning is precisely what
+            // `EntityFadeTicks`' own history warns against. The precedent
+            // borrows its bond the same way, from the cooldown the switch
+            // itself already uses.
+            int logBondTicks = _netConfig.TickRate;
             for (int i = 0; i < _effectiveInputsScratch.Length; i++)
             {
                 byte claimed = _effectiveInputsScratch[i].RewindTicks;
                 byte allowed = SanitizeRewindDepthForTest(claimed, rttMs, sanityTicks,
-                    arena.RewindCapTicks, arena.RewindPictureTicks);
+                    _rewindCapTicks, _rewindPictureTicks);
                 bool trimmed = allowed != claimed;
                 // `SimInput` is a STRUCT, so the write has to land in the ARRAY
                 // ELEMENT the span handed to `TickAll` reads, never in a copy
                 // of it lifted out into a local.
                 if (trimmed) _effectiveInputsScratch[i].RewindTicks = allowed;
 
-                // ON THE EDGE, NOT ON EVERY TICK — see `_rewindTrimmed`'s own
-                // doc for the precedent this follows (`SpectatePolicy.
-                // ShouldLogRefusal` throttles the spectate refusal because a
-                // client may legitimately produce it every tick) and for why
-                // this edge gets neither a policy class nor an EditMode witness
-                // of its own. BOTH SIDES ARE WRITTEN: an operator who reads
-                // that trimming started needs to read that it stopped, or the
-                // log reports a match going wrong and never reports it
-                // recovering.
+                // ON A CHANGE, AND NEVER MORE OFTEN THAN ONCE PER BOND — see
+                // `_rewindTrimmed`'s own doc for the precedent whose FORM this
+                // follows, for why the change test alone would bound nothing
+                // here, and for the costs of the bond. BOTH SIDES ARE
+                // WRITTEN: an operator who reads that trimming started needs to
+                // read that it stopped, or the log reports a match going wrong
+                // and never reports it recovering. The line always names the
+                // CURRENT state, so the first one out of a quiet window says
+                // what is happening now.
                 //
                 // Diagnostic wording only, the same discipline the refusal
                 // tails keep — never "exploit"/"cheat"/"illegitimate". An
@@ -1257,14 +1398,18 @@ namespace Ring.Networking.Server
                 // The tick is the PRE-`TickAll` reading, the one step 1's own
                 // arithmetic is done in (see the class doc's "TWO READINGS"
                 // paragraph) — this line is about the input going INTO the
-                // tick, not about the tick that just completed.
+                // tick, not about the tick that just completed. It is also the
+                // domain the bond is measured in, so both sides of that
+                // subtraction come from one clock.
                 //
                 // UnityEngine.Debug, not _nm.Log (app-aor), and outside any
                 // `#if`: under UNITY_SERVER the FishNet logger's ceiling is
                 // Error, and this line has to reach the container's stdout.
-                if (trimmed != _rewindTrimmed[i])
+                if (trimmed != _rewindTrimmed[i]
+                    && preTickWorldTick - (long)_rewindTrimmedLogTick[i] >= logBondTicks)
                 {
                     _rewindTrimmed[i] = trimmed;
+                    _rewindTrimmedLogTick[i] = preTickWorldTick;
                     UnityEngine.Debug.Log(trimmed
                         ? $"MatchServer: trimming claimed rewind depth — slot={i} "
                             + $"claimed={claimed} allowed={allowed} tick={preTickWorldTick}."
@@ -1837,13 +1982,14 @@ namespace Ring.Networking.Server
             return (int)finalTick;
         }
 
-        /// THE REWIND DEPTH A CLIENT CLAIMS, WEIGHED AGAINST WHAT ITS SOCKET
-        /// SAYS IS POSSIBLE (app-88jb Т29, spec §3.6, Р374/Р404). The depth arrives
-        /// inside `SimInput.RewindTicks` because the client is the only party
-        /// that knows which picture it was shooting at — that field's own doc
-        /// carries why it travels in the input rather than off the socket. The
-        /// server takes the number and does not take it on trust; this method
-        /// is the arithmetic of the second opinion:
+        /// THE REWIND DEPTH A CLIENT CLAIMS, WEIGHED AGAINST WHAT THE SERVER'S
+        /// OWN SOCKET READING SAYS IS POSSIBLE (app-88jb Т29, spec §3.6,
+        /// Р374/Р404). The depth arrives inside `SimInput.RewindTicks` because
+        /// the client is the only party that knows which picture it was
+        /// shooting at — that field's own doc carries why it travels in the
+        /// input rather than off the socket. The server takes the number and
+        /// does not take it on trust; this method is the arithmetic of the
+        /// second opinion:
         ///
         ///     min(claimed,
         ///         TicksFromSeconds(roundTripMs * 0.001f * 0.5f)
@@ -1864,22 +2010,42 @@ namespace Ring.Networking.Server
         /// like any other. The single thing the server withholds is belief in
         /// the one number the client cannot prove.
         ///
+        /// ⚠ AND THE POSSESSIVE IS GONE FROM THIS DOC ON PURPOSE (fix-round,
+        /// B-8): "what HIS socket says" promised a per-connection measurement
+        /// that the paragraph below then disproves. There is ONE reading, it
+        /// belongs to the process, and `OnPostTick` takes it once before the
+        /// loop and applies it to every slot alike.
+        ///
         /// ⛔ WHAT `roundTripMs`' SOURCE ACTUALLY READS ON A DEDICATED SERVER,
         /// MEASURED AGAINST THE PINNED FishNet 4.7.2 AND NOT ASSUMED:
-        /// identically zero, by three closed paths.
-        ///   `TimeManager.RoundTripTime` has exactly one writer, `ModifyPing`,
-        /// and its only caller is the ping-response parser in `ClientManager`;
-        /// the ping itself goes out under a client guard, and a dedicated
-        /// server never becomes a client — `ClientManager.StartConnection` is
-        /// reached from the client bootstrap alone, and the server scene
-        /// carries no client component at all.
-        ///   `NetworkConnection` does carry `PacketTick`/`ReplicateTick`, but
-        /// those are the CLIENT's tick, counted from another origin: FishNet
-        /// keeps a pair of conversions for exactly that, and their own doc says
-        /// "Server will always have local and tick aligned" — which is the
-        /// statement that on a client they are not.
-        ///   `Transport`/`Tugboat` expose no per-connection delay in their
-        /// public surface whatsoever.
+        /// identically zero. ONE path produces the zero and TWO more close the
+        /// ways around it — an earlier wording credited all three with the zero
+        /// itself, which only the first of them does (fix-round, B-6).
+        ///   THE ZERO: `TimeManager.RoundTripTime` has exactly one writer,
+        /// `ModifyPing`, and its only caller is the ping-response parser in
+        /// `ClientManager`; the ping itself goes out under a client guard, and
+        /// a dedicated server never becomes a client — `ClientManager.
+        /// StartConnection` is reached from the client bootstrap alone, and the
+        /// server scene carries no client component at all. Nothing ever
+        /// assigns the field, so it holds its initial value for the life of the
+        /// process.
+        ///   THE FIRST WAY AROUND, CLOSED — AND FOR A CORRECTED REASON
+        /// (fix-round, B-7). `NetworkConnection.PacketTick` IS a server-side
+        /// stamp, its own doc saying "only available on the server", and
+        /// FishNet does subtract it: `EstimatedTick.LocalTickDifference` is
+        /// `TimeManager.LocalTick` minus the tick that packet landed on. What
+        /// that yields is the AGE of this connection's newest packet, not a
+        /// round trip — there is no return leg in it at all — and FishNet uses
+        /// it for exactly that, as the "ticksBehind" test in
+        /// `NetworkConnection.WriteState` that skips a client which has not
+        /// "communicated within 5 seconds". For a client replicating every tick
+        /// it reads near zero however long the link is. The earlier wording
+        /// dismissed this path as "the CLIENT's tick, counted from another
+        /// origin", which describes the REMOTE half of those estimates and not
+        /// the server-local stamp the subtraction actually uses — a right
+        /// conclusion resting on the wrong fact.
+        ///   THE SECOND WAY AROUND, CLOSED: `Transport`/`Tugboat` expose no
+        /// per-connection delay in their public surface whatsoever.
         ///   THE CONSEQUENCE, STATED AS A NUMBER RATHER THAN AS A RISK: with
         /// the reading at zero the middle term degenerates to
         /// `pictureTicks + sanityTicks`, an effective ceiling of 5 ticks at the
@@ -1900,14 +2066,34 @@ namespace Ring.Networking.Server
         /// checked by a running process instead of by an assertion.
         ///
         /// ⛔ NO FLOOR AT ZERO IS ADDED HERE, and the boundary is named rather
-        /// than left for a reader to find: a negative `pictureTicks` would drag
-        /// the minimum below zero and the `(byte)` cast would wrap it. That
-        /// floor already has a written home — NetInvariants rule #11 pins
-        /// `Arena.RewindPictureTicks` to `Net.InterpBufferTicks`, rule #1 of
-        /// the same validator holds that above zero, and `ServerBootstrap`
+        /// than left for a reader to find. Drag the sum below zero and the
+        /// minimum goes with it, and the `(byte)` cast wraps: at -1 this method
+        /// answers 255. TWO of its parameters can take the sum there, AND ONLY
+        /// ONE OF THEM IS HELD — an earlier wording claimed the answer was
+        /// bounded "for every input the function can be given", which is false
+        /// on the second (fix-round, A-1/B-4).
+        ///   `pictureTicks` IS HELD, and by a written home: NetInvariants rule
+        /// #11 pins `Arena.RewindPictureTicks` to `Net.InterpBufferTicks`, rule
+        /// #1 of the same validator holds that above zero, and `ServerBootstrap`
         /// fails the process on any violation. `SimStates`' own note on the
         /// same field refuses a second clamp for the same reason (ruling 139),
         /// and a second answer here would be the same duplication.
+        ///   `sanityTicks` IS NOT HELD BY ANYTHING OF THE KIND.
+        /// `NetConfig.RewindSanityTicks` has no rule in NetInvariants and no
+        /// clamp anywhere; its `[Range(0, 6)]` is an Inspector hint, which a
+        /// hand-edited YAML, a script or a test is not bound by. MEASURED: at
+        /// -4, with the shipped picture of 3 and the reading at zero, the
+        /// estimate is -1, the minimum is -1, and this method answers 255. What
+        /// catches it is `SimInputSanitizer.Sanitize` inside `TickAll`, which
+        /// clamps the depth to `Arena.RewindCapTicks` — so on THIS path that
+        /// clamp is load-bearing rather than a parallel guarantee, and the
+        /// operator-visible result is the check INVERTED: a tolerance set
+        /// stricter than zero grants every claim the full cap instead of
+        /// trimming it.
+        ///   ⛔ AND NEITHER A CLAMP NOR A NEW RULE IS ADDED FOR IT HERE. Ruling
+        /// 226 refused the rule for want of a plan, and a review finding is not
+        /// a plan either: the question goes to the owner rather than into the
+        /// code.
         internal static byte SanitizeRewindDepthForTest(
             byte claimed, float roundTripMs, int sanityTicks, int capTicks, int pictureTicks)
         {

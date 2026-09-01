@@ -376,6 +376,13 @@ namespace Ring.Networking
             // GhostConfirmTicks and Visibility.LingerTicks are raised with it,
             // and nothing then ties Arena.RewindPictureTicks to the new value.
             //
+            // A SECOND READER SINCE app-88jb Т29, on the SERVER's side rather
+            // than the doll's: MatchServer.SanitizeRewindDepthForTest adds
+            // Arena.RewindPictureTicks to half the round trip to judge how deep
+            // a client may claim to have rewound, and names THIS rule as what
+            // keeps that term equal to the buffer the client actually renders
+            // behind. A session weakening #11 weakens that estimate too.
+            //
             // IT IS NOT A DUPLICATED NUMBER (Р52). The two live in
             // deliberately separate homes — NetConfig never enters SimConfig
             // or SimConfigHash, because the simulation may not read a network
