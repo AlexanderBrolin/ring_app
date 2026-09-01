@@ -504,12 +504,32 @@ namespace Ring.Simulation.Combat
                     // which is why the barrier suite stays green on any
                     // fixture that states MaxRicochets = 0.
                     //
-                    // NO EVENT ON SUCCESS. `ProjectileRicocheted` is Т30's;
-                    // until then a reflection is silent on the wire, and
-                    // Presentation sees only the round's own moved Pos.
+                    // ONE EVENT ON SUCCESS, AND IT IS NOT AN ENDING
+                    // (app-88jb Т30, coordinator Ruling 234). Until this task
+                    // a reflection was silent on the wire and Presentation saw
+                    // only the round's own moved Pos, which is a tracer that
+                    // changes direction for no visible reason. The fields are
+                    // the neighboring ProjectileBlocked emit's, not a fresh
+                    // choice: the same contact, the same normal, the same
+                    // contact height, and the ROUND in EntityId because a
+                    // reflection has no victim to spend it on. Amount stays 0f
+                    // -- a reflection deals no damage, and Amount means damage
+                    // everywhere else in that struct.
+                    //
+                    // ⚠ IT MUST NOT BE MISTAKEN FOR THE TWO LINES BELOW. The
+                    // assembler maps THIS kind to a wire record that leaves the
+                    // round's per-connection spawn subscription OPEN, while
+                    // ProjectileBlocked below maps to ProjectileEnded, which
+                    // closes it. Emitting the ending here as well would report
+                    // a flight over while the round is still flying, and every
+                    // viewer would retire its tracer and then never be sent the
+                    // real ending -- the same failure mode Т20's pierce had to
+                    // avoid one arm further down, for the same reason.
                     if (ProjectileFlight.TryRicochet(ref proj, in config, blockedNormal,
                             contact, hitHeight))
                     {
+                        w.Emit(SimEventKind.ProjectileRicocheted, contact, proj.Id, default,
+                            0f, hitDir: blockedNormal, height: hitHeight);
                         break;
                     }
 

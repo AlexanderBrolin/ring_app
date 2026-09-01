@@ -73,6 +73,14 @@ namespace Ring.Simulation.Tests
         /// header and never the payload.
         static float2 EventPos => new float2(3.5f, -7.25f);
 
+        /// Stage 3 Т30: the SECOND copy of a contact point, the one that rides
+        /// `ProjectileRicocheted`'s payload (the only payload in the catalog
+        /// carrying a point of its own). It differs from `EventPos` above in
+        /// BOTH axes and in BOTH signs on purpose — the decoder must fill
+        /// `SimEvent.Pos` from the record header, and two points that agreed
+        /// could not say which of them it read.
+        static float2 PayloadContact => new float2(-11.75f, 4.5f);
+
         static SnapshotBlocks.EventRecord Record(SnapshotEventKind kind)
             => new SnapshotBlocks.EventRecord
             {
@@ -335,6 +343,83 @@ namespace Ring.Simulation.Tests
                 "SimEvent.EntityId must stay 0 and MUST NOT BE READ on this kind: it means the "
                 + "victim's player SLOT, and slot 0 is a real seat rather than 'nobody'");
             Assert.AreEqual(HitZone.Body, e.Zone, "SimEvent.Zone must survive the mapping");
+        }
+
+        // ------------------------------------------------------------------
+        // Т30: the one Projectile* kind that is NOT an ending — the banner
+        // `SnapshotCodecTests` files its codec half under, kept word for word
+        // so the two halves of one kind are found by one search.
+        // ------------------------------------------------------------------
+
+        /// app-88jb Т30. THE CLIENT'S HALF OF THE REFLECTION, and the only
+        /// place in the tree that asks whether the record survives the trip
+        /// back into a `SimEvent` at all.
+        ///
+        /// IT EXISTS BECAUSE THREE FAILURES WERE MEASURED SILENT, not because
+        /// the family deserved a matching test: the Т30 mutation cycle applied
+        /// M138/M139/M140 to this decoder and all three survived the whole
+        /// 1784-case run, because no test in the tree fed `ProjectileRicocheted`
+        /// into `ClientEventDecoder` by any route. Their cost, in order:
+        ///
+        ///  - dropping the kind from `IsMapped` turns the record into an
+        ///    ordinary Р29 forward-compatibility skip — no spark, no sound and
+        ///    not one line of log, which is exactly the silence that cost the
+        ///    raid's own five kinds two stages (`IsMapped`'s own doc);
+        ///  - leaving `EntityId` unfilled hands Presentation a reflection that
+        ///    names round 0, and the spark is matched to a tracer by that id;
+        ///  - leaving `HitDir` unfilled leaves the normal at zero, and
+        ///    `PersistentPropsDirector.HandleRicocheted` returns early on a
+        ///    zero normal — so the record rides the wire in full and the player
+        ///    still sees nothing.
+        ///
+        /// THE NORMAL IS +Y AND NOT +X, AND THE CHOICE IS LOAD-BEARING: a
+        /// `HitDir` left at `default` answers `atan2(0, 0) == 0`, which is
+        /// precisely the angle a +X normal has, so a fixture that pointed the
+        /// normal along +X would agree with the mutation it exists to catch.
+        /// `DashRicocheted` above states its normal the same way.
+        ///
+        /// `Pos` IS ASSERTED AGAINST THE RECORD HEADER WHILE THE PAYLOAD
+        /// CARRIES A DIFFERENT POINT ON PURPOSE. This is the one kind in the
+        /// catalog whose payload has a contact point of its own
+        /// (`SnapshotEventPayload.Pos`), and the decoder deliberately does not
+        /// read it: `e.Pos = record.Pos` is filled for EVERY kind before the
+        /// per-kind switch, that header is where the assembler put this very
+        /// contact, and it is the copy the whole Presentation fan-out — the
+        /// spark included — already reads. Which of the two copies travels in
+        /// the `SimEvent` is therefore asserted here, and two points that
+        /// agreed could not tell them apart. Whether the second copy should
+        /// exist at all is NOT decided here: it is an open question for the
+        /// owner (spec §6j, coordinator Ruling 238), and the payload copy keeps
+        /// its own witness where it belongs, in
+        /// `SnapshotCodecTests.ProjectileRicocheted_RoundTripsPointAndNormal`.
+        [Test]
+        public void ProjectileRicocheted_CarriesTheRoundInEntityIdAndTheSurfaceNormalInHitDir()
+        {
+            // Sender: `SnapshotAssembler.BeginTick` writes the ROUND's own id
+            // and the surface normal for this kind (Ruling 234's field table —
+            // the neighboring ProjectileBlocked emit's conventions, not a fresh
+            // choice), and the point rides the record HEADER the assembler
+            // fills per connection.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ProjectileRicocheted);
+            SnapshotEvents.WriteProjectileRicocheted(bytes, RoundId, PayloadContact,
+                new float2(0f, 1f), in cfg);
+
+            SimEvent e = Decode(SnapshotEventKind.ProjectileRicocheted, bytes, in cfg);
+
+            Assert.AreEqual(SimEventKind.ProjectileRicocheted, e.Kind,
+                "SimEvent.Kind — the reflection is mid-flight news and must not arrive as one of "
+                + "the four endings that retire the tracer");
+            Assert.AreEqual(RoundId, e.EntityId,
+                "SimEvent.EntityId must be the ROUND's own id: a reflection has no victim to spend "
+                + "that field on, and the spark is matched to its tracer by it");
+            Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
+                "SimEvent.HitDir must be the surface NORMAL the wire carried — HandleRicocheted "
+                + "aims the spark with it and returns early when it is zero");
+            Assert.AreEqual(EventPos.x, e.Pos.x, 0f,
+                "SimEvent.Pos must be the RECORD HEADER's point and not the payload's second copy: "
+                + "the header is per-connection and is where every other kind's position comes from");
+            Assert.AreEqual(EventPos.y, e.Pos.y, 0f);
         }
 
         // ------------------------------------------------------------------

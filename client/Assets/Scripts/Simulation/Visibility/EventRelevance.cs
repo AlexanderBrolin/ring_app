@@ -118,6 +118,24 @@ namespace Ring.Simulation.Visibility
                 // Task 28's SnapshotAssembler" — and that is exactly where the
                 // decision now lives, against `c.ContainersCurrent`.
                 case SimEventKind.ContainerEmptied:
+                // Stage 3 Т30 (coordinator Ruling 229): a round MIRRORING off
+                // a wall asks the very question the five projectile kinds
+                // above ask, and it is the only kind here that asks it in the
+                // MIDDLE of a flight rather than at its end. Who should see
+                // the spark is decided by the round's own trajectory — by
+                // whoever was sent its spawn — and this per-kind table has no
+                // trajectory to consult, exactly as it has none for the
+                // ending. `None` is this file's own word for "decided
+                // elsewhere", and elsewhere is `SnapshotAssembler.RouteEvents`,
+                // against the per-connection spawn subscription.
+                //
+                // ⚠ AND `VisibleSubjectId` GETS NO CASE FOR IT. That method is
+                // reachable only from the `Visible` arm of `ShouldDeliver`
+                // below, so a case for a `None`-channel kind would be a branch
+                // with no caller and no possible witness — see this file's own
+                // `ContainerEmptied` entry, which declined the same thing for
+                // the same reason.
+                case SimEventKind.ProjectileRicocheted:
                     return DeliveryChannel.None;
 
                 default:

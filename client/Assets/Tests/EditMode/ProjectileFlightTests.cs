@@ -36,7 +36,7 @@ namespace Ring.Simulation.Tests
     /// contact that does not reflect, which is why three of the tests below
     /// were green before the ricochet existed at all.
     ///
-    /// SEVEN OF THE TWENTY-TWO ARE GUARDS, NOT WITNESSES, and they say so in their
+    /// SEVEN OF THE TWENTY-THREE ARE GUARDS, NOT WITNESSES, and they say so in their
     /// own names or docs (lesson 427) — each name whole, on its own line, so a
     /// sweep by name finds them:
     ///   `ProjectileFlyingAwayFromTheWall_DoesNotReflect`
@@ -716,6 +716,141 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(1, w.ProjectileCount,
                 "отражённый от обода раунд не пережил следующий тик");
+        }
+
+        /// app-88jb Т30 (spec §3.7, coordinator Ruling 237): THE REFLECTION
+        /// SAYS SO. Every other test of the ricochet in this file asks the
+        /// ROUND what happened to it — the counter, the velocity, the landing
+        /// point — and every wire-side fixture of Т30 STATES the event through
+        /// `SimulationWorld.Emit` rather than earning it. Between them they
+        /// leave one thing unwitnessed: that `ProjectileSystem` emits at all.
+        /// The mutation "delete the emit" survived the whole suite, and this is
+        /// the test that kills it.
+        ///
+        /// FOUR CLAIMS, AND EACH ONE FAILS ON ITS OWN. That the event exists
+        /// is the emit; that it names the ROUND is the field convention the
+        /// assembler's routing depends on (a wrong id addresses a subscription
+        /// nobody holds, and the record reaches no one); that the normal is
+        /// non-zero is what decides whether anything is DRAWN at all —
+        /// `PersistentPropsDirector.HandleRicocheted` returns early on a zero
+        /// `HitDir`, so an emit that forgot the normal would put a record on
+        /// the wire and still show the player nothing; and that the vector in
+        /// `HitDir` is the SURFACE NORMAL rather than the round's own velocity,
+        /// which is the fourth and was NOT asserted until the mutation cycle
+        /// measured its absence (M144 survived the whole suite). The two
+        /// assertions that carry the fourth claim — the inward direction and
+        /// the unit length — carry their measurement beside them at the bottom
+        /// of the method.
+        ///
+        /// THE RIM, NOT AN OBSTACLE, and the choice costs nothing: both
+        /// contacts reach `TryRicochet` through the ONE arm in
+        /// `ProjectileSystem`, so either witnesses the emit. `RingBoundaryFixture`
+        /// is taken for the property its own doc states — an interior with
+        /// nothing in it, so the rim is the only static geometry a round leaving
+        /// the center can meet, and the fixture cannot be quietly broken by an
+        /// obstacle-layout tuning pass.
+        [Test]
+        public void RicochetEmitsItsOwnEvent_NamingTheRoundAndCarryingTheSurfaceNormal()
+        {
+            SimConfig cfg = RingBoundaryFixture();
+            var w = new SimulationWorld(7, cfg);
+            float pr = cfg.Weapon.ProjectileRadius;
+            float2 outward = new float2(-1f, 0f);
+            const float ttl = 2f;
+
+            // FIXTURE PREMISE, STATED AS FOUR ASSERTIONS RATHER THAN AS PROSE:
+            // all four gates inside TryRicochet must be open, or this test
+            // would be asserting the absence of an event it never made
+            // possible. The gates are the counter, the speed floor, the TTL and
+            // `dot(vel, normal) < 0` — the last of which is geometry and is
+            // stated by the rim assertion instead of a number.
+            Assert.AreEqual(0,
+                cfg.Arena.ObstacleCount + cfg.Arena.WallCount + cfg.Arena.ZoneWallCount,
+                "fixture premise: no interior geometry stands between the muzzle and the rim, "
+                + "so the rim is the candidate the min-scan has to pick");
+            Assert.Greater(cfg.Weapon.MaxRicochets, 0,
+                "fixture premise: the ricochet counter allows a first reflection at all");
+            Assert.GreaterOrEqual(cfg.Weapon.ProjectileSpeed * cfg.Weapon.RicochetRetention,
+                cfg.Weapon.RicochetMinSpeed,
+                "fixture premise: the damped speed clears the floor, so the gate that refuses is "
+                + "not the speed one");
+            Assert.Greater(ttl, (cfg.Arena.Radius - pr) / cfg.Weapon.ProjectileSpeed,
+                "fixture premise: the round outlives the flight to the rim, so what is measured "
+                + "below is the reflection and not the lifetime");
+
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
+                outward * cfg.Weapon.ProjectileSpeed, height: 1f, velZ: 0f,
+                damage: 1f, radius: pr, ttl: ttl);
+            Assert.Greater(roundId, 0, "fixture premise: the round actually spawned");
+
+            // The buffer is cleared BEFORE each tick, not after the loop: the
+            // world never clears it itself, and the spawn's own ProjectileFired
+            // would otherwise still be sitting in front of what this test reads.
+            // What survives the loop is exactly the reflecting tick's events.
+            // Forty ticks against the eighteen the flight costs — a safety
+            // margin on the loop, never the thing under test.
+            for (int i = 0; i < 40 && w.ProjectileCount > 0
+                 && w.Projectiles[0].Ricochets == 0; i++)
+            {
+                w.ClearEvents();
+                w.Tick(default);
+            }
+            Assert.AreEqual(1, w.ProjectileCount,
+                "fixture premise: the round survived its contact, i.e. it really did reflect "
+                + "rather than being extinguished by a gate this fixture meant to leave open");
+            Assert.AreEqual(1, w.Projectiles[0].Ricochets,
+                "fixture premise: exactly one reflection happened on the tick the assertions "
+                + "below read");
+
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileRicocheted,
+                    out SimEvent e),
+                "рикошет случился, а события нет — отскок остался немым на проводе");
+            Assert.AreEqual(roundId, e.EntityId,
+                "событие рикошета не назвало раунд — ассемблер адресует запись по этому id, и "
+                + "с чужим она не дойдёт ни до кого");
+            Assert.Greater(math.lengthsq(e.HitDir), 0f,
+                "нормаль нулевая — Presentation выйдет по гварду и искры не будет вовсе");
+            // Stronger than "non-zero", and it costs one line: the rim's normal
+            // points INWARD, so a HitDir filled from the round's PRE-contact
+            // travel direction — which points outward — dies here.
+            //
+            // ⚠ AND THE VELOCITY IS NOT THAT VECTOR, WHICH THIS COMMENT USED TO
+            // CLAIM IT WAS. The wording was «an emit that filled HitDir from the
+            // velocity — the nearest wrong vector in scope — passes the
+            // assertion above and dies here», and the mutation cycle falsified
+            // it BY RUNNING IT: M144 (`hitDir: proj.Vel`) survived the whole
+            // 1784-case suite. The mechanism is two lines apart in the source.
+            // `ProjectileFlight.TryRicochet` reflects the velocity INSIDE
+            // itself (`p.Vel = math.reflect(p.Vel, normal) * n.Retention`) and
+            // the emit stands AFTER it returned `true`, so `proj.Vel` at the
+            // emit site is the ALREADY REFLECTED velocity: it points inward,
+            // collinear with the normal, and on this fixture's perpendicular
+            // contact exactly parallel to it. Both assertions above pass on it.
+            Assert.Less(math.dot(e.HitDir, math.normalize(e.Pos)), 0f,
+                "в HitDir не нормаль поверхности: она смотрит внутрь арены, а не наружу");
+            // WHAT SEPARATES THE TWO VECTORS IS THEIR LENGTH, and the property
+            // is read off the producer rather than invented: the rim's normal
+            // is `Geometry.RingWallNormal` = `-math.normalizesafe(contact,
+            // (1,0))`, a UNIT vector by construction and at any contact angle,
+            // while a reflected velocity carries `ProjectileSpeed *
+            // RicochetRetention` = 35 * 0.8 = 28 m/s. `SimulationWorld.Emit`
+            // stores `hitDir` raw — it normalizes nothing — so the difference
+            // reaches the event intact. This is the assertion M144 dies on.
+            //
+            // ⚠ WHAT IT STILL DOES NOT WITNESS, named rather than left to be
+            // rediscovered: no fixture in this file varies the contact ANGLE,
+            // and at a perpendicular contact the normal and the reflected
+            // velocity are parallel, so LENGTH is the only property that can
+            // tell them apart here. A HitDir filled with a NORMALIZED reflected
+            // velocity would pass every assertion above and still turn the
+            // spark away from the surface at an oblique contact — the defect
+            // that actually costs. Closing it needs a fixture whose round meets
+            // the rim off-axis; that is a fixture change, not an assertion, and
+            // it is recorded for the review round instead of being smuggled in
+            // here.
+            Assert.AreEqual(1f, math.length(e.HitDir), 1e-3f,
+                "в HitDir не нормаль поверхности, а вектор чужой длины: нормаль обода единична по "
+                + "построению, отражённая скорость несёт ProjectileSpeed * RicochetRetention");
         }
 
         /// THE PIERCE, AND THE FIRST OF ITS ELEVEN TESTS (app-88jb Т20, spec §3.4,

@@ -6,6 +6,10 @@ using Ring.Networking.Client;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
 using Ring.Simulation.Core;
+// app-88jb Т30: EveryThrowingTable_KnowsTheNewKind asks EventRelevance.ChannelFor,
+// which lives here — the fourth of the four homes that throw on a kind they have
+// no entry for, and the only one of them outside Ring.Networking.
+using Ring.Simulation.Visibility;
 using Unity.Mathematics;
 using UnityEngine;
 // AllocatingGCMemory is an extension method (UnityEngine.TestTools.Constraints) —
@@ -2339,6 +2343,12 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)17, (byte)SnapshotEventKind.PickupTaken);
             Assert.AreEqual((byte)18, (byte)SnapshotEventKind.ContainerEmptied);
 
+            // Stage 3 Т30: the catalog's one mid-flight kind, appended past the
+            // raid's five rather than slotted beside the other Projectile*
+            // values — a wire byte's meaning cannot move under a client that is
+            // already in flight.
+            Assert.AreEqual((byte)19, (byte)SnapshotEventKind.ProjectileRicocheted);
+
             // The catalog is DENSE and ContainerEmptied really is its top — the
             // decoder's own "is this kind known" test is a range check, so a
             // kind added above WaveCleared without moving that bound would be
@@ -2350,16 +2360,23 @@ namespace Ring.Simulation.Tests
             foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
                 declared.Add((byte)kind);
             // Stage 3 Т29 moved the top from WaveCleared to ContainerEmptied
-            // and the count from 14 to 19 — the five raid kinds. The
-            // range check below is exactly the tripwire this comment
-            // predicted: SnapshotEvents.IsKnown bounds against the top
-            // member, so appending a kind without moving that bound leaves it
-            // silently unreadable on the receiver.
-            Assert.AreEqual(19, declared.Count, "None plus eighteen kinds — no duplicate values");
-            for (byte v = 0; v <= (byte)SnapshotEventKind.ContainerEmptied; v++)
+            // and the count from 14 to 19 — the five raid kinds; Stage 3 Т30
+            // moved it once more, to ProjectileRicocheted, and the count to 20.
+            // The range check below is exactly the tripwire this comment
+            // predicted, and it fired on cue: SnapshotEvents.IsKnown bounds
+            // against the top member, so appending a kind without moving that
+            // bound leaves it silently unreadable on the receiver.
+            //
+            // ⚠ THE LOOP'S BOUND MOVES WITH THE TOP, and that is not
+            // bookkeeping: left at ContainerEmptied the walk would stop one
+            // value short of the catalog it claims has no gaps, so the newest
+            // kind — the only one a fresh mistake can be in — would be the one
+            // value never checked for.
+            Assert.AreEqual(20, declared.Count, "None plus nineteen kinds — no duplicate values");
+            for (byte v = 0; v <= (byte)SnapshotEventKind.ProjectileRicocheted; v++)
                 Assert.IsTrue(declared.Contains(v), $"value {v} must be declared — the catalog has no gaps");
-            Assert.AreEqual((byte)(declared.Count - 1), (byte)SnapshotEventKind.ContainerEmptied,
-                "and ContainerEmptied is the top of the range every decoder bounds against");
+            Assert.AreEqual((byte)(declared.Count - 1), (byte)SnapshotEventKind.ProjectileRicocheted,
+                "and ProjectileRicocheted is the top of the range every decoder bounds against");
         }
 
         [Test]
@@ -2432,6 +2449,13 @@ namespace Ring.Simulation.Tests
                 [SnapshotEventKind.PlayerExtracted] = SnapshotEvents.PriorityState,
                 [SnapshotEventKind.PickupTaken] = SnapshotEvents.PriorityCosmetic,
                 [SnapshotEventKind.ContainerEmptied] = SnapshotEvents.PriorityCosmetic,
+                // Stage 3 Т30. A spark on a wall, and the rank is the claim
+                // rather than a default: the round is already on the receiving
+                // client's screen (it got the spawn, or this record would not
+                // be addressed to it), so a reflection carried into the next
+                // frame costs a moment of visual truth — while a death deferred
+                // to make room for it costs the frame its most important fact.
+                [SnapshotEventKind.ProjectileRicocheted] = SnapshotEvents.PriorityCosmetic,
             };
 
             foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
@@ -2478,6 +2502,15 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ContainerEmptied));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveStarted));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveCleared));
+            // Stage 3 Т30: the reflection — id 2 + point 4 + normal 1. Pinned
+            // BY NAME like every kind above it, and the enumeration sweep below
+            // cannot stand in for this line: it only asks that a payload FITS
+            // `MaxPayloadBytes`, and any width up to 8 fits. Without this line
+            // a widening of this kind alone was caught by exactly one test in
+            // the tree (`ProjectileRicocheted_RoundTripsPointAndNormal`), and
+            // the next kind appended by this one's example would be pinned by
+            // none at all.
+            Assert.AreEqual(7, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted));
 
             Assert.AreEqual(8, SnapshotEvents.MaxPayloadBytes,
                 "MaxPayloadBytes sizes the assembler's carry-queue slots — it must be the real maximum, "
@@ -2845,6 +2878,77 @@ namespace Ring.Simulation.Tests
             Assert.DoesNotThrow(() => SnapshotEvents.WritePlayerExtracted(
                 new System.Span<byte>(buffer), (byte)(EvtCfg.Arena.MaxPlayers - 1), EvtCfg),
                 "the last real seat is legal — the bound is exclusive, not off by one");
+        }
+
+        // ---- Т30. The one Projectile* kind that is NOT an ending ----
+
+        /// app-88jb Т30: the contact point and the surface normal, through the
+        /// catalog's own codec. The id is deliberately ABOVE 255 (a writer that
+        /// stored one byte instead of a u16 loses the high half), and the two
+        /// axes of the point differ in magnitude AND in sign, so a writer that
+        /// swapped x for y is caught rather than agreed with.
+        [Test]
+        public void ProjectileRicocheted_RoundTripsPointAndNormal()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            System.Span<byte> buf = stackalloc byte[SnapshotEvents.MaxPayloadBytes];
+            var point = new float2(12.5f, -7.25f);
+            int n = SnapshotEvents.WriteProjectileRicocheted(buf, id: 4242, pos: point,
+                normal: new float2(0f, 1f), in cfg);
+            Assert.AreEqual(7, n);
+
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileRicocheted,
+                buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
+            Assert.AreEqual(4242, v.Id);
+            float tol = 2f * cfg.Arena.Radius / 65535f;
+            Assert.AreEqual(point.x, v.Pos.x, tol, "точка контакта не доехала");
+            Assert.AreEqual(point.y, v.Pos.y, tol);
+            Assert.Greater(v.Dir.y, 0.9f, "нормаль не доехала");
+        }
+
+        /// The rule that separates this kind from every other `Projectile*` one
+        /// (coordinator Ruling 231): an ending closes the round's per-connection
+        /// spawn subscription, a reflection must leave it open. BOTH halves are
+        /// asserted because they fail independently — a predicate that answered
+        /// `false` for everything would satisfy the first and destroy the
+        /// second, and with it every tracer's retirement.
+        [Test]
+        public void Ricochet_DoesNotCloseTheSpawnSubscription()
+        {
+            Assert.IsFalse(SnapshotAssembler.EndsProjectileForTest(
+                SnapshotEventKind.ProjectileRicocheted),
+                "рикошет закрывает подписку спавна");
+            Assert.IsTrue(SnapshotAssembler.EndsProjectileForTest(
+                SnapshotEventKind.ProjectileEnded),
+                "конец полёта перестал закрывать подписку");
+        }
+
+        /// FOUR homes throw on a kind they have no entry for, not three, and
+        /// three of them can be asked here because their input IS a kind:
+        /// `SnapshotEvents.PayloadBytesFor`, `SnapshotEvents.PriorityOf` and
+        /// `EventRelevance.ChannelFor`.
+        ///
+        /// THE FOURTH IS THE EXPANDING `switch` IN `SnapshotAssembler.BeginTick`,
+        /// whose `default:` arm throws — and it cannot be called from here at
+        /// all: its input is a whole `SimEvent` inside a server tick, not an
+        /// argument. It is also the worst of the four to leave unhandled, being
+        /// the only one that throws inside a LIVE tick rather than in a codec.
+        /// Its witness therefore goes through a world instead of through this
+        /// file, and lives in `EventDeliveryTests` under the name
+        /// `ProjectileRicocheted_ReachesTheSubscriber_AndTheEndingStillFollows`.
+        ///
+        /// The rank is asserted, not merely the absence of a throw: a cosmetic
+        /// rank is the claim, and a reflection ranked any higher would push a
+        /// death out of a full frame's event budget.
+        [Test]
+        public void EveryThrowingTable_KnowsTheNewKind()
+        {
+            Assert.DoesNotThrow(() => SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted));
+            Assert.DoesNotThrow(() => SnapshotEvents.PriorityOf(SnapshotEventKind.ProjectileRicocheted));
+            Assert.AreEqual(SnapshotEvents.PriorityCosmetic,
+                SnapshotEvents.PriorityOf(SnapshotEventKind.ProjectileRicocheted),
+                "ранг рикошета не косметический — он вытеснит смерть из кадра");
+            Assert.DoesNotThrow(() => EventRelevance.ChannelFor(SimEventKind.ProjectileRicocheted));
         }
 
         // ---- T28.8-11. Hostile payloads: refused, never thrown ----

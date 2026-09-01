@@ -136,7 +136,39 @@ namespace Ring.Simulation.Core
         /// own word for "decided elsewhere"; the decision lives in
         /// `SnapshotAssembler`, against `ContainersCurrent`. Do not "fix" the
         /// routing table here — see its own entry for this kind.
-        ContainerEmptied
+        ContainerEmptied,
+
+        /// Stage 3 Т30 (spec §3.7, coordinator Ruling 234): a round MIRRORED
+        /// off static geometry — an obstacle, an interior wall, a zone-wall arc
+        /// or the ring boundary — and FLEW ON. Emitted by ProjectileSystem in
+        /// the branch where ProjectileFlight.TryRicochet accepted the contact,
+        /// which is the branch that used to retire the round silently: until
+        /// this kind existed a reflection put nothing on the wire at all, and a
+        /// client saw only that the round had inexplicably changed direction.
+        ///
+        /// ⚠ THE ONLY `Projectile*` KIND THAT IS NOT AN ENDING, and that is the
+        /// whole difficulty rather than a detail. Every other one reports that
+        /// the flight is OVER, which is what lets `SnapshotAssembler` close the
+        /// per-connection spawn subscription the round opened; this one is the
+        /// MIDDLE of a life. Closing the subscription on it would stop the
+        /// round's REAL ending from ever reaching that connection, and the
+        /// tracer would hang there until the client's own confirm timeout.
+        ///
+        /// PAYLOAD (fields by the convention of the neighboring
+        /// `ProjectileBlocked` branch, which reports the same contact, not by
+        /// a fresh choice): `EntityId` = the ROUND's own id — like
+        /// Blocked/Expired and unlike the two victim-bearing kinds, `EntityId`
+        /// is spent on a victim only where there is one, and a reflection has
+        /// none; `Pos` = the contact point, which is the point of the kind;
+        /// `HitDir` = the SURFACE NORMAL at contact, exactly what
+        /// `DashRicocheted` already carries and what the presentation layer's
+        /// existing spark reads; `Amount` = 0f — a reflection deals no damage,
+        /// and `Amount` means damage everywhere else in this struct;
+        /// `Height` = the contact height, its own field since app-88jb Т3.
+        /// `PlayerIndex`/`MobType`/`Zone`/`SecondaryEntityId` unused, same
+        /// "unused for every other kind" contract the rest of the struct
+        /// carries.
+        ProjectileRicocheted
     }
 
     public struct SimEvent

@@ -413,6 +413,15 @@ namespace Ring.Presentation
                     PlayParticle(_pickupPopPool, SimSpace.ToWorld(e.Pos), Quaternion.identity);
                     break;
                 case SimEventKind.DashRicocheted:
+                // Stage 3 Т30: a ROUND mirroring off a wall is the same
+                // picture as a collector's dash doing it — a spark at a
+                // contact point, turned to face the surface normal — and both
+                // arrive carrying exactly those two fields. Delegating rather
+                // than writing a second handler is the whole of the change:
+                // the pool, the rotation and the zero-normal guard are already
+                // there, and a copy would be a second place for the guard to
+                // be forgotten in.
+                case SimEventKind.ProjectileRicocheted:
                     HandleRicocheted(in e);
                     break;
             }

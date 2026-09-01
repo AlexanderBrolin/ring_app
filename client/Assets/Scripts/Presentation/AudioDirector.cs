@@ -462,6 +462,15 @@ namespace Ring.Presentation
                 case SimEventKind.PlayerDamaged: return _playerHitClip;
                 case SimEventKind.StaminaDenied: return _staminaDeniedClip; // Task 22
                 case SimEventKind.DashRicocheted: return _ricochetClip; // Task 22
+                // Stage 3 Т30 (owner decision 2b, 2026-09-01): a round off a
+                // wall shares the dash's ricochet clip — acoustically it IS
+                // the same event, and the two are told apart by what else
+                // fires around them, exactly as ProjectileHitPlayer shares
+                // _hitClip above. SHARING THE CLIP DOES NOT SHARE THE
+                // ANTI-SPAM BUDGET: PlayClip keys MinSfxInterval/VoicesPerSfx
+                // on the KIND, so a firefight's wall hits can never silence a
+                // collector's dash off a corner or the reverse.
+                case SimEventKind.ProjectileRicocheted: return _ricochetClip;
                 default: return null;
             }
         }

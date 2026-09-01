@@ -806,6 +806,27 @@ namespace Ring.Networking.Server
                         break;
                     }
 
+                    // Stage 3 Т30: the catalog's one MID-FLIGHT record. The
+                    // round's own id is in `EntityId` here — the convention of
+                    // the neighboring Blocked/Expired branches, since a
+                    // reflection has no victim to spend it on.
+                    case SimEventKind.ProjectileRicocheted:
+                    {
+                        int slot = Add(ref seq, i, in ev, SnapshotEventKind.ProjectileRicocheted);
+                        SnapshotEvents.WriteProjectileRicocheted(PayloadSpan(slot), ev.EntityId,
+                            ev.Pos, ev.HitDir, in _cfg);
+                        // ⚠ WITHOUT THIS LINE THE RECORD REACHES NOBODY, and
+                        // it fails SILENTLY rather than loudly: `RouteEvents`
+                        // addresses this kind by the per-connection spawn
+                        // subscription, `IsSubscribed(c, we.RoundId)` — and a
+                        // `RoundId` left at its zero matches no subscription,
+                        // so every connection simply breaks out of the arm.
+                        // `AddProjectileEnded` sets the same field one method
+                        // below for the same reason.
+                        _wire[slot].RoundId = ev.EntityId;
+                        break;
+                    }
+
                     default:
                         // Gate Ф6 (review A-1): THIS SWITCH IS THE NINTH HOME
                         // OF THE EVENT CATALOG, and spec Р281 asks every home
@@ -826,8 +847,10 @@ namespace Ring.Networking.Server
                         // already-assembled `_wire` — which is exactly what an
                         // unmapped kind never reaches.
                         //
-                        // Unreachable today by construction (all twenty
-                        // SimEventKind members are mapped above, and
+                        // Unreachable today by construction (all twenty-one
+                        // SimEventKind members are mapped above — Stage 3 Т30
+                        // added the twenty-first, ProjectileRicocheted, and
+                        // this count moves with the enum by rule; and
                         // UnmappedEventKind_ThrowsInsteadOfVanishing proves the
                         // branch itself rather than asserting it in prose): it
                         // guards the kind Stage 4 adds, on the tick it is first
@@ -1121,6 +1144,14 @@ namespace Ring.Networking.Server
                     }
 
                     case SnapshotEventKind.ProjectileEnded:
+                    // Stage 3 Т30: ONE ARM FOR THE ROUND'S WHOLE LIFE, because
+                    // the addressing question is identical — both records go to
+                    // exactly whoever was sent the spawn — and only the
+                    // AFTERMATH differs. Writing the reflection its own arm
+                    // would be this arm's three lines copied with one of them
+                    // dropped, which is the shape a rule takes just before the
+                    // two copies stop agreeing.
+                    case SnapshotEventKind.ProjectileRicocheted:
                     {
                         // To exactly whoever received the SPAWN, by id, with no
                         // check on the point of contact — that point is the
@@ -1136,9 +1167,19 @@ namespace Ring.Networking.Server
                         // the death would reach nobody. The two events are the
                         // same instant; the subscriber set has to be the same
                         // for both.
+                        //
+                        // AND IT CLOSES ONLY FOR AN ENDING. A reflection is the
+                        // MIDDLE of a flight: unsubscribing on it would send
+                        // this connection the spark and then withhold the
+                        // round's real ending, leaving its tracer burning until
+                        // the client's own confirm timeout. The predicate below
+                        // is the one home of that distinction, and it is read
+                        // HERE rather than restated as a `we.Kind ==` test, so
+                        // the rule the tests ask about is the rule this line
+                        // obeys.
                         if (!IsSubscribed(c, we.RoundId)) break;
                         Enqueue(c, i, we.Source.Pos);
-                        QueueUnsubscribe(c, we.RoundId);
+                        if (EndsProjectileForTest(we.Kind)) QueueUnsubscribe(c, we.RoundId);
                         break;
                     }
 
@@ -1225,6 +1266,50 @@ namespace Ring.Networking.Server
 
             for (int i = 0; i < c.PendingUnsubCount; i++) Unsubscribe(c, c.PendingUnsub[i]);
             c.PendingUnsubCount = 0;
+        }
+
+        /// Stage 3 Т30: does a wire kind END the round's flight, and therefore
+        /// close the per-connection spawn subscription it opened?
+        ///
+        /// A PRODUCTION RULE, NOT A TEST HELPER, and the shared arm above is
+        /// what makes it one: until Т30 the rule had no name because it was
+        /// written into the `ProjectileEnded` branch itself, one
+        /// `QueueUnsubscribe` call after the enqueue, and there was nothing to
+        /// disagree with. `ProjectileRicocheted` is the first kind for which
+        /// the answer is no, so the distinction became a decision — and a
+        /// decision with two homes is a decision that drifts.
+        ///
+        /// ⚠ THE `ForTest` SUFFIX IS A MISNOMER AND IS KEPT ANYWAY (coordinator
+        /// Ruling 231, on the precedent Ruling 227 set for
+        /// `SanitizeRewindDepthForTest`): the approved plan quotes this name
+        /// verbatim in the text of its own test. The divergence is recorded as
+        /// a candidate for the review round rather than fixed silently — a
+        /// rename here would put the plan and the code out of step in the
+        /// middle of the task that implements it.
+        ///
+        /// EVERY WIRE KIND THAT REACHES THE SHARED ARM IS ANSWERED EXPLICITLY,
+        /// and anything else answers `false`. The `default` is safe in the
+        /// direction that matters: an unaccounted kind that wrongly answered
+        /// `true` would close a live round's subscription and strand its real
+        /// ending, while one that wrongly answers `false` leaks one slot of a
+        /// per-connection set, which the expiry sweep already reclaims
+        /// (`SweepExpiredSubscriptions`). Being wrong cheaply is the whole
+        /// reason this is not a throwing table like the four in the catalog.
+        internal static bool EndsProjectileForTest(SnapshotEventKind kind)
+        {
+            switch (kind)
+            {
+                case SnapshotEventKind.ProjectileEnded:
+                    return true;
+
+                // The round flew ON. Closing here would hand this connection
+                // the spark and then withhold the ending it is waiting for.
+                case SnapshotEventKind.ProjectileRicocheted:
+                    return false;
+
+                default:
+                    return false;
+            }
         }
 
         /// Marks a subscription for closing once the whole tick has been

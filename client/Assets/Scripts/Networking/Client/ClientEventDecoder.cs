@@ -171,6 +171,12 @@ namespace Ring.Networking.Client
                 case SnapshotEventKind.PlayerExtracted:
                 case SnapshotEventKind.PickupTaken:
                 case SnapshotEventKind.ContainerEmptied:
+                // Stage 3 Т30: the reflection. Without this line the record
+                // would be walked past as an ordinary Р29 forward-compatibility
+                // skip — the exact silence that lost the raid's own three kinds
+                // for two stages — and the client would show a tracer changing
+                // direction with no spark and no sound.
+                case SnapshotEventKind.ProjectileRicocheted:
                     return true;
                 default:
                     return false;
@@ -416,6 +422,28 @@ namespace Ring.Networking.Client
                     // one connection — the collector's. Same inference
                     // `StaminaDenied` above already makes, and the same reason.
                     e.PlayerIndex = localPlayerIndex;
+                    break;
+
+                case SnapshotEventKind.ProjectileRicocheted:
+                    e.Kind = SimEventKind.ProjectileRicocheted;
+                    // The ROUND's own id, the convention of the Blocked and
+                    // Expired endings this record sits between in a flight's
+                    // life — a reflection has no victim to spend `EntityId` on.
+                    e.EntityId = p.Id;
+                    // The surface normal, which is what `DashRicocheted` above
+                    // puts in the same field and what
+                    // `PersistentPropsDirector.HandleRicocheted` reads to aim
+                    // the spark.
+                    e.HitDir = p.Dir;
+                    // ⚠ `Pos` IS DELIBERATELY NOT TAKEN FROM THE PAYLOAD, even
+                    // though this is the one kind whose payload carries a point
+                    // (`SnapshotEventPayload.Pos`). `e.Pos = record.Pos` above
+                    // has already filled it from the record HEADER, which is
+                    // where every other kind's position comes from and which
+                    // the assembler filled with this very contact. Reading the
+                    // payload's copy here would give one number two sources on
+                    // this side of the wire, and the day they disagree there
+                    // would be no rule saying which is right.
                     break;
 
                 case SnapshotEventKind.ContainerEmptied:

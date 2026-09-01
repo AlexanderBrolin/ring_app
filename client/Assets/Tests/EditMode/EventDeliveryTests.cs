@@ -564,7 +564,14 @@ namespace Ring.Simulation.Tests
                 SimEventKind.ProjectileBlocked, SimEventKind.ProjectileExpired,
                 // Stage 2 Task 44a: a round ending on a player is a round
                 // ending — same trajectory-relevance question, same answer.
-                SimEventKind.ProjectileHitPlayer
+                SimEventKind.ProjectileHitPlayer,
+                // Stage 3 Т30 (R-229): a round that did NOT end. It belongs
+                // here for the trajectory question it shares with the five
+                // above, not for the ending it does not have — and this list is
+                // hand-written, so it had to be told. Both halves below hold
+                // for it: the channel is None, and the seam throws rather than
+                // silently answering "nobody nearby".
+                SimEventKind.ProjectileRicocheted
             };
 
             foreach (SimEventKind kind in projectileKinds)
@@ -672,7 +679,14 @@ namespace Ring.Simulation.Tests
                 [SimEventKind.ProjectileHit] = DeliveryChannel.None,
                 [SimEventKind.ProjectileBlocked] = DeliveryChannel.None,
                 [SimEventKind.ProjectileExpired] = DeliveryChannel.None,
-                [SimEventKind.ProjectileHitPlayer] = DeliveryChannel.None
+                [SimEventKind.ProjectileHitPlayer] = DeliveryChannel.None,
+                // Stage 3 Т30 (R-229): the same question the five above ask,
+                // asked in the MIDDLE of a flight instead of at its end — who
+                // should see the spark is decided by the round's own
+                // trajectory, which this per-kind table has no way to consult.
+                // `None` means "decided elsewhere", and elsewhere is the
+                // assembler's per-connection spawn subscription.
+                [SimEventKind.ProjectileRicocheted] = DeliveryChannel.None
             };
 
             foreach (SimEventKind kind in System.Enum.GetValues(typeof(SimEventKind)))
@@ -1101,6 +1115,134 @@ namespace Ring.Simulation.Tests
             var again = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
             Assert.AreEqual(0, again.CountOf(SnapshotEventKind.ProjectileEnded),
                 "the subscription is closed by the ending it was waiting for — a round cannot end twice");
+        }
+
+        // --- Т30: the reflection is MID-FLIGHT news ---
+
+        /// app-88jb Т30 (coordinator Rulings 228/231). THREE CLAIMS IN ONE
+        /// FIXTURE BECAUSE THEY FAIL INDEPENDENTLY, and each one has no other
+        /// witness in the suite:
+        ///
+        ///  1. ASSEMBLY DOES NOT THROW on a tick carrying the new kind. The
+        ///     expanding switch in `SnapshotAssembler.BeginTick` is the fourth
+        ///     of the four homes that throw on a kind they do not know, and the
+        ///     only one that throws inside a LIVE server tick.
+        ///     ⚠ WHAT THAT COSTS IS A MEASUREMENT, and an earlier wording here
+        ///     («it drops the match rather than the frame») overstated it.
+        ///     `BeginTick` is step 3 of `MatchServer.OnPostTick`, and
+        ///     `MatchServer.cs` contains no `catch` at all — the `try` around
+        ///     steps 2a–5b carries a `finally` and nothing else, which is a
+        ///     `grep` over that file rather than a reading of it: the count of
+        ///     `catch` clauses in `Networking/Server/MatchServer.cs` is zero.
+        ///     So the throw destroys steps 4–5 — the per-connection frames and
+        ///     the reconcile — while the `finally` still clears the event
+        ///     buffer and `_running` stays true. The real cost: on every tick
+        ///     carrying a reflection NOT ONE CLIENT RECEIVES A SNAPSHOT, an
+        ///     error goes into the log, and it repeats on the next bounce. The
+        ///     picture freezes and the gate log turns red; the match goes on
+        ///     running.
+        ///     `SnapshotAssemblerTests.UnmappedEventKind_ThrowsInsteadOf
+        ///     Vanishing` cannot stand in for this: it is fed a value from
+        ///     OUTSIDE the enumeration, so it stays green while a real member
+        ///     goes unmapped. Its input is a whole `SimEvent` inside the tick,
+        ///     so the only way to ask it is through a world.
+        ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT POINT
+        ///     — the sim-to-wire mapping, which nothing else observes.
+        ///  3. THE ROUND'S REAL ENDING STILL REACHES THE SAME SUBSCRIBER
+        ///     AFTERWARDS. This is "the subscription was not closed" in
+        ///     OBSERVABLE form, and it is strictly stronger than asking the
+        ///     predicate `EndsProjectileForTest` for its answer: a predicate no
+        ///     production path calls proves only itself.
+        ///
+        /// THE EVENT IS STATED THROUGH THE EMIT SEAM, not produced by flying a
+        /// round into a wall, and that is this section's own convention rather
+        /// than a shortcut — `ProjectileEnded_GoesToSpawnSubscribers` above
+        /// states its ending the same way, and `SnapshotAssemblerTests`' class
+        /// doc spells out why (driving real systems into one specific kind at
+        /// one specific position couples every routing assertion to unrelated
+        /// balance numbers). It is also what makes claim 1 a REAL red while the
+        /// emit site does not exist yet: a fixture that waited for
+        /// `ProjectileSystem` to emit would see no event at all, the assembler
+        /// would not throw, and the fourth home's guard would go untested in
+        /// exactly the phase that exists to test it.
+        ///
+        /// FIXTURE PREMISE, ASSERTED RATHER THAN ASSUMED: connection 0 is on
+        /// the round's trajectory and connection 1 is not, so there is a
+        /// subscription to keep open and a negative half that means something;
+        /// and the contact point is far outside sight, so a record that arrives
+        /// arrived BY SUBSCRIPTION and not by happening to be visible.
+        [Test]
+        public void ProjectileRicocheted_ReachesTheSubscriber_AndTheEndingStillFollows()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            // Connection 1's viewpoint is nowhere near the round.
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+            Assert.Greater(roundId, 0, "fixture premise: the round must actually have spawned");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 2);
+            asm.BeginTick(w);
+            var subscriber = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            var bystander = AssembledFrame.Decode(asm.BufferFor(1), asm.BuildFor(1, 1, 1, AsmEpoch), cfg);
+            Assert.AreEqual(1, subscriber.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: connection 0 must be on the round's trajectory, or there is no "
+                + "subscription for the reflection to be delivered through and none to keep open");
+            Assert.AreEqual(0, bystander.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: connection 1 must NOT be, or the negative half below proves nothing");
+
+            // The reflection happens far from both, on a point neither can see:
+            // a record that arrives came through the subscription, not through
+            // visibility. The normal points back down -Y, i.e. INTO the round's
+            // path, which is the only shape a real contact normal takes.
+            var contact = new float2(0f, 62f);
+            var normal = new float2(0f, -1f);
+            Assert.Greater(math.distance(contact, float2.zero),
+                cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
+                "fixture premise: the contact point is invisible even to the subscriber");
+            w.ClearEvents();
+            // Field conventions are the emit site's own (coordinator Ruling 234):
+            // the ROUND's id in EntityId, the contact in Pos, the surface normal
+            // in HitDir, no damage, and the contact height in its own field.
+            w.Emit(SimEventKind.ProjectileRicocheted, contact, roundId, default, 0f,
+                hitDir: normal, height: 1.1f);
+
+            Assert.DoesNotThrow(() => asm.BeginTick(w),
+                "a reflection must not cost the tick its frames: the assembler's expanding switch "
+                + "throws on a SimEventKind it has no wire mapping for, it runs as step 3 of "
+                + "MatchServer.OnPostTick, and that file has no catch — so steps 4-5 die and NOT "
+                + "ONE client receives a snapshot on any tick carrying a reflection");
+            var mid = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, mid.CountOf(SnapshotEventKind.ProjectileRicocheted),
+                "the subscriber is told its tracer mirrored off something — without this record the "
+                + "round simply changes direction on screen for no visible reason");
+            Assert.IsTrue(mid.TryFirstOf(SnapshotEventKind.ProjectileRicocheted, out int r));
+            Assert.AreEqual(roundId, mid.Payloads[r].Id,
+                "and the payload names the round it happened to");
+            float tol = 2f * cfg.Arena.Radius / 65535f;
+            Assert.AreEqual(contact.x, mid.Payloads[r].Pos.x, tol,
+                "the contact point must ride the payload — it is the point of the whole record");
+            Assert.AreEqual(contact.y, mid.Payloads[r].Pos.y, tol);
+
+            // Claim 3. The round is STILL ALIVE as far as the wire is
+            // concerned, so its real ending — a tick or a hundred later — must
+            // still find the same connection subscribed. A reflection that
+            // closed the subscription would leave this connection's tracer
+            // burning until its own confirm timeout.
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileExpired, contact, roundId, default, 0f);
+            asm.BeginTick(w);
+            var end = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            Assert.AreEqual(1, end.CountOf(SnapshotEventKind.ProjectileEnded),
+                "the ending after a reflection must still reach the subscriber — this is what "
+                + "'a reflection does not close the subscription' means where it can be observed");
         }
 
         // --- Stage 2 Task 44a: a round that ended on a PLAYER ---
