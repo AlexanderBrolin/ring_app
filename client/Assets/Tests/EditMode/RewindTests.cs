@@ -898,6 +898,97 @@ namespace Ring.Simulation.Tests
                 "Ttl не вычтен на догоняющих шагах");
         }
 
+        [Test]
+        public void BirthEvent_CarriesTheStepsTheRoundTookOnItsBirthTick()
+        {
+            // ⭐⭐ THE SEAM WITNESS OF app-88jb Т32 (coordinator Ruling 291;
+            // review finding D2-C7, bd app-56kx). The birth event reports the
+            // MUZZLE, which is a pre-step point, while every body a client
+            // receives is an end-of-tick state — so the event has to say how
+            // many steps the round had already taken by the time its tick
+            // ended, or a networked tracer is seeded permanently behind the
+            // round it draws. That count is the catch-up steps of Т27 plus the
+            // one ordinary step ProjectileSystem.Update gives every live round:
+            // the weapon phase runs BEFORE the projectile phase in TickAll, so
+            // a round born in this tick is always walked once more after
+            // SpawnShot returns.
+            //
+            // ⛔ THE SHOT GOES THROUGH THE WEAPON PHASE, AND THAT IS THE WHOLE
+            // REASON THE SEAM WAS NOT CAUGHT EARLIER (RULING 296).
+            // SpawnProjectileForTest hands a round neither catch-up steps nor a
+            // shooter's depth, so through that seam this count is identically
+            // one — a fixture built on it would be green with the defect and
+            // green without it, which is exactly what three rounds of plan
+            // review looked at.
+            //
+            // ⛔ TWO DEPTHS, NOT ONE, and each one kills a mutant the other
+            // survives. At the shipped picture depth of 3 and cap of 6 they are
+            // k = 4 -> 2 steps and k = 6 -> 4 steps:
+            //   * a weapon phase that spent the ARENA'S CAP instead of this
+            //     shooter's own claimed depth (the easiest wrong read of
+            //     `input`) passes k = 6 and dies on k = 4;
+            //   * one that reported a CONSTANT dies on whichever of the two it
+            //     does not equal;
+            //   * neither expectation collides with `k` itself, with the cap,
+            //     with the picture depth, with the input half alone (i.e. the
+            //     dropped `+ 1`), with the picture half, or with zero — so no
+            //     neighboring quantity can stand in for the right one.
+            //
+            // ⚠ THE EXPECTATION IS WRITTEN OUT OF THE ARENA, NOT OUT OF
+            // `RewindSplit`. It is the same number either way — the split's
+            // input half is `k - min(k, picture)`, and above the picture depth
+            // that is `k - picture` — but routing the expectation back through
+            // the seam under test would make a mutation INSIDE the split
+            // invisible here. The three direct-call tests at the head of this
+            // file own that half; this one owns "the number reaches the event".
+            // The form used is the neighboring Т27 fixture's own
+            // (CatchUpSteps_AgeTheRound_ByDistanceNotByTicks).
+            //
+            // OpenField(), not Open() or Quiet(): the collector stands at the
+            // origin, the aim point lies in +X, and no obstacle or zone wall
+            // can end the round inside its own birth tick — which would remove
+            // it from the board and take the event's meaning with it.
+            SimConfig cfg = TestConfigs.OpenField();
+            Assert.Greater(cfg.Arena.RewindCapTicks, cfg.Arena.RewindPictureTicks,
+                "премисса фикстуры: у базовой конфигурации нет глубины сверх картинки — догона " +
+                "не будет ни на одной глубине, число выродится в единицу и свидетель ослепнет");
+
+            int[] depths = { cfg.Arena.RewindPictureTicks + 1, cfg.Arena.RewindCapTicks };
+            Assert.AreNotEqual(depths[0], depths[1],
+                "премисса фикстуры: обе глубины совпали — вторая перестала быть вторым свидетелем");
+
+            foreach (int k in depths)
+            {
+                // The claimed depth must survive the sanitizer intact:
+                // SimInputSanitizer clamps RewindTicks to the arena cap, and a
+                // fixture that stated more would be measuring the cap's answer
+                // under another name.
+                Assert.LessOrEqual(k, cfg.Arena.RewindCapTicks,
+                    $"премисса фикстуры: заявленная глубина {k} выше капа арены — санитайзер " +
+                    "срежет её, и тест померит не то, что заявил");
+
+                int expected = k - cfg.Arena.RewindPictureTicks + 1;
+                var w = new SimulationWorld(7, cfg);
+                var lagged = new SimInput
+                {
+                    FireHeld = true,
+                    AimPoint = new float2(30f, 0f),
+                    AimHeight = cfg.Hero.MuzzleHeight,
+                    RewindTicks = (byte)k,
+                };
+                w.Tick(lagged);
+
+                Assert.AreEqual(1, w.ProjectileCount,
+                    $"глубина {k}: выстрела не было — фикстура ничего не мерит");
+                Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired,
+                        out SimEvent fired),
+                    $"глубина {k}: события рождения нет вовсе");
+                Assert.AreEqual(expected, fired.BirthSteps,
+                    "событие рождения несёт не то число шагов, которое раунд успел сделать " +
+                    $"к концу своего тика (глубина {k})");
+            }
+        }
+
         /// THE PREMISE OF EVERY "MET ON A CATCH-UP STEP" FIXTURE IN THIS FILE,
         /// ASSERTED RATHER THAN ASSUMED (coordinator RULING 185). Each of them
         /// stands a collector short of something round -- an obstacle, or

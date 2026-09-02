@@ -363,10 +363,25 @@ namespace Ring.Simulation.Combat
             // halves: `input` is the SANITIZED input, so `RewindTicks` is
             // already inside [0, Arena.RewindCapTicks], and the builder caps
             // that at 6.
+            //
+            // app-88jb Т32 (coordinator Ruling 291): the INPUT half is worked
+            // out ONCE, here, and spent twice — once as this round's birth-tick
+            // step count and once as the catch-up bound below. Two calls would
+            // be one number with two homes (rule 2), and the two would have to
+            // be read together by anyone checking either.
+            int inputTicks = RewindSplit.InputTicks(input.RewindTicks, in cfg.Arena);
+            // `birthSteps` (Т32): the catch-up steps below PLUS the one
+            // ordinary step ProjectileSystem.Update gives every live round in
+            // the tick it was born in — the weapon phase runs before the
+            // projectile phase, so a fresh round is always walked once more
+            // after this call returns. It is known BEFORE the spawn, which is
+            // what lets it ride out on the ProjectileFired event this call
+            // emits, without moving a single emit (see SimEvent.BirthSteps).
             int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos,
                 vel3.xy, height, vel3.z,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime,
-                (byte)RewindSplit.PictureTicks(input.RewindTicks, in cfg.Arena));
+                (byte)RewindSplit.PictureTicks(input.RewindTicks, in cfg.Arena),
+                birthSteps: inputTicks + 1);
             w.StatsRef(ownerIndex).ShotsFired++;
             // app-88jb Т27 (spec §3.6, owner decision Н24/Р407): the round is
             // born at the muzzle IN THE PRESENT and is then cranked forward by
@@ -405,8 +420,7 @@ namespace Ring.Simulation.Combat
             // still decides no game outcome.
             if (projectileId >= 0)
             {
-                ProjectileSystem.CatchUp(w, w.ProjectileCount - 1,
-                    RewindSplit.InputTicks(input.RewindTicks, in cfg.Arena));
+                ProjectileSystem.CatchUp(w, w.ProjectileCount - 1, inputTicks);
             }
         }
     }

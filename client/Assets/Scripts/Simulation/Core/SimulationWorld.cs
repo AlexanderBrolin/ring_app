@@ -1046,6 +1046,11 @@ namespace Ring.Simulation.Core
         /// SimEvent.Height's own doc for the exact "Filled for" list — and
         /// defaults to 0f ("no contact behind this event"), same
         /// trailing-optional shape as secondaryEntityId above.
+        /// `birthSteps` (app-88jb Т32, coordinator Ruling 291) is meaningful
+        /// for ProjectileFired alone — how many flight steps the round had
+        /// already taken when its birth tick ended, see SimEvent.BirthSteps'
+        /// own doc — and defaults to 0, the same trailing-optional shape every
+        /// parameter added since Т3 has taken.
         internal void Emit(SimEventKind kind, float2 pos, int entityId, MobType mobType, float amount,
             ProjectileOwner owner = ProjectileOwner.Player,
             HitZone zone = HitZone.None, float2 hitDir = default,
@@ -1058,7 +1063,10 @@ namespace Ring.Simulation.Core
             // and NOT to 0: zero is a real seat, so a byte default would have
             // every event of every kind quietly claim collector 0 fired it.
             float impactSpeed = 0f,
-            byte attackerIndex = ProjectileIds.NoOwner)
+            byte attackerIndex = ProjectileIds.NoOwner,
+            // app-88jb Т32: one more tail parameter with a default, the same
+            // way Т3 added `height` and Т8 added the two above it.
+            int birthSteps = 0)
         {
             if (_eventCount < _events.Length)
             {
@@ -1068,7 +1076,8 @@ namespace Ring.Simulation.Core
                     EntityId = entityId, MobType = mobType, Amount = amount, Owner = owner,
                     Zone = zone, HitDir = hitDir, PlayerIndex = playerIndex,
                     SecondaryEntityId = secondaryEntityId, Height = height,
-                    ImpactSpeed = impactSpeed, AttackerIndex = attackerIndex
+                    ImpactSpeed = impactSpeed, AttackerIndex = attackerIndex,
+                    BirthSteps = birthSteps
                 };
             }
             else
@@ -1347,9 +1356,23 @@ namespace Ring.Simulation.Core
         /// Required, no default: both battle call sites say the depth out loud,
         /// and MobAiSystem's zero is a rule with its own note (RULING 177), not
         /// an omission. The test seam is where the trailing default lives.
+        /// `birthSteps` (app-88jb Т32, coordinator Ruling 291) is how many
+        /// flight steps this round will have taken by the end of the tick it is
+        /// born in — the catch-up steps below plus the one ordinary step
+        /// ProjectileSystem gives every live round — and it rides out on the
+        /// ProjectileFired event so a networked client can seed its tracer
+        /// where the round actually IS rather than at the muzzle
+        /// (SimEvent.BirthSteps' own doc carries the whole account).
+        /// ⛔ IT IS A TRAILING PARAMETER WITH A DEFAULT, unlike `rewindLeft`
+        /// above, and the asymmetry is deliberate: the number is knowable
+        /// BEFORE the spawn at both battle call sites, but the test seam
+        /// SpawnProjectileForTest and its dozens of call sites state their own
+        /// geometry in the present and have no shooter's lag to speak of, so 0
+        /// — "nothing is known about the birth tick" — is the honest value
+        /// there and the one that keeps every one of them compiling unchanged.
         internal int SpawnProjectile(ProjectileOwner owner, byte ownerIndex, int ownerEntityId,
             float2 pos, float2 vel, float height, float velZ, float damage, float radius, float ttl,
-            byte rewindLeft)
+            byte rewindLeft, int birthSteps = 0)
         {
             if (_projectileCount >= _projectiles.Length)
             {
@@ -1378,9 +1401,13 @@ namespace Ring.Simulation.Core
             // determinism/replay surface. playerIndex (Stage 2 Task 7) mirrors
             // ownerIndex exactly — NoOwner for a Mob-owned shot, the shooter's
             // index otherwise — same "unused for every other kind" contract
-            // SimEvent.PlayerIndex's own doc describes.
+            // SimEvent.PlayerIndex's own doc describes. birthSteps (app-88jb
+            // Т32) rides out the same way and is covered by the same exclusion:
+            // it is written into the EVENT and nowhere else — no ProjectileState
+            // field takes it, nothing in this method branches on it — so it adds
+            // no determinism/replay surface either.
             Emit(SimEventKind.ProjectileFired, pos, id, default, math.atan2(vel.y, vel.x), owner,
-                playerIndex: ownerIndex);
+                playerIndex: ownerIndex, birthSteps: birthSteps);
             return id;
         }
 

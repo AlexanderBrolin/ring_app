@@ -369,5 +369,53 @@ namespace Ring.Simulation.Core
         /// for every other kind" contract as `Amount`/`Owner`/`Zone` above.
         /// Not part of StateHash — events are excluded from the hash entirely.
         public byte AttackerIndex;
+
+        /// How many flight steps the round had already taken when the tick it
+        /// was born in ended (app-88jb Т32, coordinator Ruling 291; review
+        /// finding D2-C7, bd app-56kx). `ProjectileFired` ONLY; zero for every
+        /// other kind, same "unused for every other kind" contract as
+        /// `Amount`/`Owner`/`Zone` above.
+        ///
+        /// WHY IT EXISTS. This event's own `Pos` is the MUZZLE — the pre-step
+        /// point where the shot happened — while every BODY on the wire is an
+        /// END-OF-TICK state, captured after the tick has run. On top of that
+        /// app-88jb Т27 gives a fresh round `RewindSplit.InputTicks` catch-up
+        /// steps for the shooter's own input lag, and `ProjectileSystem.Update`
+        /// then steps it once more in the same tick (the weapon phase runs
+        /// before the projectile phase, so a freshly spawned round is always
+        /// walked once by the ordinary loop as well). A client seeding a tracer
+        /// at the muzzle therefore draws the round permanently short by exactly
+        /// this many steps — 1.75 m each at the shipped ProjectileSpeed of 52.5
+        /// over a 1/30 tick, and up to four of them at the shipped cap of 6 and
+        /// picture depth of 3.
+        ///
+        /// ⛔ AND THE FIX IS THIS COUNT RATHER THAN A MOVED `Pos`, because the
+        /// point has readers and every one of them wants the MUZZLE. Measured
+        /// by sweeping `SimEventKind.ProjectileFired` across the tree, they
+        /// are three, and only two of them are cosmetic:
+        ///   * the SHOT SOUND — `AudioDirector.HandleEvent` plays the clip at
+        ///     `e.Pos`;
+        ///   * a MOB's MUZZLE FLASH — `MuzzleFlashView.HandleEvent` bursts at
+        ///     `e.Pos` plus the gunner's muzzle height. A collector's flash is
+        ///     NOT on this list: since Stage 2 it comes off the doll's own
+        ///     socket;
+        ///   * and `Ring.Networking.Server.SnapshotAssembler`, which is not
+        ///     cosmetic at all: it builds the round's whole relevance SEGMENT
+        ///     from this point (Р32 — the segment runs from here to
+        ///     `Pos + vel * lifetime`), enqueues it as the record's own header
+        ///     position, and measures a `ShotHeard`'s audibility from it.
+        ///     Walking the point forward would change WHO is sent the round,
+        ///     not merely where a spark lands.
+        /// ⚠ THE SHELL CASING IS NOT A READER OF THIS POINT, said out loud
+        /// because it is the obvious guess: `PersistentPropsDirector` records
+        /// only `e.PlayerIndex` on this kind and its `SpawnCasing` ejects the
+        /// brass from the doll's own `EjectSocket`.
+        ///
+        /// IT IS A COUNT, NOT A DISTANCE, so it crosses the wire exactly: the
+        /// receiver multiplies it by its own `dir * horizSpeed * TickDt`, both
+        /// of which the spawn payload already carries.
+        /// Not part of StateHash — events are excluded from the hash entirely
+        /// (see this struct's own doc comment).
+        public int BirthSteps;
     }
 }

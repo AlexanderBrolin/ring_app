@@ -2033,5 +2033,82 @@ namespace Ring.Simulation.Tests
                 + "the same shot must NOT be heard — otherwise the positive result above proves nothing about "
                 + "which position is actually read");
         }
+
+        // --- 24: ProjectileSpawned carries the round's birth-step count ------
+        //   (app-88jb Т32, coordinator Ruling 291; review finding D2-C7, bd
+        //   app-56kx)
+
+        /// THE WORLD-TO-WIRE WITNESS OF THE BIRTH SEAM, and the defect class it
+        /// closes is `app-cpdq` — "the assembler handed the writer the wrong
+        /// argument". Every other axis of this number has a witness of its own:
+        /// the simulation half is `RewindTests.BirthEvent_CarriesTheStepsThe
+        /// RoundTookOnItsBirthTick`, and the byte layout is
+        /// `SnapshotCodecTests.EventPayload_ProjectileSpawned_ByteLayout_
+        /// OnBothOwnerRails`. What NEITHER of them can see is the join: a
+        /// writer that is handed a constant, or handed some other field of the
+        /// event, satisfies the codec test (the byte it is given is the byte it
+        /// writes) and never runs in the simulation test at all.
+        ///
+        /// ⛔ IT FIRES THROUGH THE WEAPON PHASE, not through
+        /// `SpawnProjectileForTest`, and this is the same reason RULING 296
+        /// gives for the simulation-side witness: the direct seam gives a round
+        /// no catch-up steps at all, so the count would be identically one and
+        /// the fixture could not tell "the seam works" from "somebody wrote a
+        /// literal".
+        ///
+        /// ⚠ THE EXPECTATION IS DERIVED FROM THE ARENA, NOT FROM `RewindSplit`.
+        /// Routing it back through the very seam under test would hide a mutant
+        /// inside `RewindSplit.InputTicks` from this fixture; the three direct
+        /// arithmetic tests at the head of `RewindTests` own that half. The
+        /// form used here — cap minus picture, plus the round's own ordinary
+        /// step — is the one the neighboring Т27 fixture
+        /// `CatchUpSteps_AgeTheRound_ByDistanceNotByTicks` already writes its
+        /// own expectation in.
+        [Test]
+        public void ProjectileSpawned_CarriesTheBirthStepsTheWorldPut()
+        {
+            // OpenField(), not Open(): Open() spawns the collector far out on
+            // the ring, and this fixture needs him at the origin with an aim
+            // point in +X so the shot is the only thing in the frame (the same
+            // choice, for the same reason, as the Т27 fixtures in RewindTests).
+            SimConfig cfg = TestConfigs.OpenField();
+            Assert.Greater(cfg.Arena.RewindCapTicks, cfg.Arena.RewindPictureTicks,
+                "премисса фикстуры: у базовой конфигурации нет глубины сверх картинки, значит "
+                + "догоняющих шагов не будет ни одного, число выродится в единицу и свидетель "
+                + "ослепнет по построению");
+            // The whole depth the sanitizer will let through — it clamps
+            // RewindTicks to exactly this cap, so nothing is lost on the way in.
+            int depth = cfg.Arena.RewindCapTicks;
+            int expected = cfg.Arena.RewindCapTicks - cfg.Arena.RewindPictureTicks + 1;
+
+            var w = new SimulationWorld(7, cfg);
+            var lagged = new SimInput
+            {
+                FireHeld = true,
+                AimPoint = new float2(30f, 0f),
+                AimHeight = cfg.Hero.MuzzleHeight,
+                RewindTicks = (byte)depth,
+            };
+            w.Tick(lagged);
+
+            Assert.AreEqual(1, w.ProjectileCount,
+                "выстрела не было — фикстура ничего не мерит");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired, out SimEvent fired),
+                "события рождения нет — ассемблеру нечего разворачивать в ProjectileSpawned");
+            Assert.AreEqual(expected, fired.BirthSteps,
+                "премисса: мир кладёт в событие рождения число шагов, которые снаряд успел "
+                + "сделать к концу своего тика — без него ассемблеру нечего передавать, и тест "
+                + "мерил бы ноль против нуля");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 1);
+            AssembledFrame frame = BuildOne(asm, w, cfg, 0, 0, 0);
+            Assert.AreEqual(1, frame.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "стрелок обязан получить собственный раунд — отрезок начинается на его же дуле");
+            Assert.IsTrue(frame.TryFirstOf(SnapshotEventKind.ProjectileSpawned, out int idx));
+
+            Assert.AreEqual(fired.BirthSteps, frame.Payloads[idx].BirthSteps,
+                "ассемблер отдал писателю не то число, которое положил мир — трассер чужой пули "
+                + "сядет на дуло и поедет на k_ввод+1 шагов позади (D2-C7)");
+        }
     }
 }

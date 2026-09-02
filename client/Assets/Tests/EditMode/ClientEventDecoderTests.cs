@@ -134,7 +134,12 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileSpawned);
             SnapshotEvents.WriteProjectileSpawned(bytes, RoundId, OtherSlot,
-                new float2(0f, 1f), horizSpeed: 20f, velZ: 0f, height: 1.2f, in cfg);
+                new float2(0f, 1f), horizSpeed: 20f, velZ: 0f, height: 1.2f,
+                // app-88jb Т32: the birth-step count is a new byte of this
+                // payload, and this file's subject is the DECODER's mapping —
+                // nothing here reads the field, so the fixture states a legal
+                // count and moves on.
+                birthSteps: 2, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileSpawned, bytes, in cfg);
 
@@ -169,7 +174,11 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileSpawned);
             SnapshotEvents.WriteProjectileSpawned(bytes, RoundId, ProjectileIds.NoOwner,
-                new float2(1f, 0f), horizSpeed: 14f, velZ: 0f, height: 1f, in cfg);
+                new float2(1f, 0f), horizSpeed: 14f, velZ: 0f, height: 1f,
+                // app-88jb Т32: a mob's round takes exactly one step on its
+                // birth tick (MobAiSystem's own note, Ruling 177 + the ordinary
+                // projectile step), which is what this rail models.
+                birthSteps: 1, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileSpawned, bytes, in cfg);
 
@@ -899,7 +908,12 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileSpawned);
             SnapshotEvents.WriteProjectileSpawned(bytes, RoundId, OtherSlot,
-                new float2(0f, 1f), horizSpeed: 20f, velZ: 0f, height: 1.2f, in cfg);
+                new float2(0f, 1f), horizSpeed: 20f, velZ: 0f, height: 1.2f,
+                // app-88jb Т32: the birth-step count is a new byte of this
+                // payload, and this file's subject is the DECODER's mapping —
+                // nothing here reads the field, so the fixture states a legal
+                // count and moves on.
+                birthSteps: 2, in cfg);
 
             SimEvent e = DecodeWithPayload(SnapshotEventKind.ProjectileSpawned, bytes, in cfg,
                 out SnapshotEventPayload payload);

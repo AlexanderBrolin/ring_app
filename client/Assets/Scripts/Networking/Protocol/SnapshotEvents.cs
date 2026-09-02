@@ -295,6 +295,29 @@ namespace Ring.Networking.Protocol
         /// `MobSpawned` only.
         public MobType MobType;
 
+        /// `ProjectileSpawned` only: how many flight steps the round had
+        /// already taken when the tick it was born in ended (app-88jb Т32,
+        /// coordinator Ruling 291; review finding D2-C7, bd app-56kx). Zero
+        /// for every other kind.
+        ///
+        /// WHY IT RIDES. The record's own header position is the MUZZLE — the
+        /// pre-step point the shot happened at, which is what the shot sound
+        /// and a mob's muzzle flash are placed by, and what this assembler
+        /// measures the round's own relevance segment from — while every
+        /// BODY in a snapshot is an end-of-tick state. On top of that app-88jb
+        /// Т27 gives a fresh round `RewindSplit.InputTicks` catch-up steps for
+        /// the shooter's own input lag, and the projectile phase steps it once
+        /// more in the same tick. A receiver seeding a tracer at the header
+        /// point therefore draws the round permanently short by exactly this
+        /// many steps — 1.75 m each at the shipped speed, and up to four of
+        /// them.
+        ///
+        /// IT IS A COUNT, NOT A DISTANCE, and it crosses the wire exactly
+        /// rather than quantized: the receiver spends it as
+        /// `Dir * HorizSpeed * TickDt * BirthSteps`, and both factors are
+        /// fields of this same payload.
+        public int BirthSteps;
+
         /// `WaveStarted`/`WaveCleared` only.
         ///
         /// ⚠ THE NUMBER IS THE RAID'S DIFFICULTY STEP from bd app-ggvz Т4 on,
@@ -327,8 +350,8 @@ namespace Ring.Networking.Protocol
     /// is always through `Quantize`, with the scale taken from `cfg` — no
     /// formula and no balance number is restated here (rule 2).
     ///
-    ///   ProjectileSpawned  8 B  id u16 | ownerIndex u8 | dir u8 | horizSpeed u8
-    ///                           | velZ u16 | height u8
+    ///   ProjectileSpawned  9 B  id u16 | ownerIndex u8 | dir u8 | horizSpeed u8
+    ///                           | velZ u16 | height u8 | birthSteps u8
     ///   ProjectileEnded    8 B  id u16 | endKind u8 | zone u8 | height u8
     ///                           | hitDir u8 | victimId u16
     ///   ShotHeard          1 B  ownerIndex u8
@@ -378,8 +401,14 @@ namespace Ring.Networking.Protocol
     /// corrupted byte arriving from the wire is ordinary traffic (Р82). The
     /// read side also refuses rather than passing content through — a slot
     /// index at or above `cfg.Arena.MaxPlayers`, an enumerator that does not
-    /// exist — because Task 32 and Tasks 43-45 index per-slot view pools and
-    /// prefab tables by exactly these values.
+    /// exist, a step count larger than the arena could have produced — because
+    /// Task 32 and Tasks 43-45 index per-slot view pools and prefab tables by
+    /// exactly these values, and because a count spent on GEOMETRY draws the
+    /// round where it never was (app-88jb Т32, coordinator Ruling 300: the
+    /// third class of refusal here, and the first whose reason is not
+    /// indexing). Every one of them is refused PER RECORD — the block walker
+    /// above keeps parsing, so a hostile byte costs one round its tracer and
+    /// never costs the frame.
     ///
     /// ERRORS REUSE `SnapshotBlockError` RATHER THAN DECLARING A PARALLEL ENUM
     /// (task-28-brief §2.2 leaves the choice open, so it is recorded here). A
@@ -405,21 +434,38 @@ namespace Ring.Networking.Protocol
     /// may edit Tasks 26/27's files.
     public static class SnapshotEvents
     {
-        /// The largest payload any kind produces. TWO KINDS TIE AT IT since
-        /// app-88jb Т31 — `ProjectileSpawned` and `ProjectileEnded` — where
-        /// this note used to name a sole widest kind. The assembler sizes its
-        /// per-record payload slots by this, so a carried-over event never
-        /// needs a variable-length pool.
+        /// The largest payload any kind produces. ONE KIND STANDS AT IT again
+        /// since app-88jb Т32 — `ProjectileSpawned`, at nine bytes — where the
+        /// tie `ProjectileEnded` held with it since Т31 is broken: the round's
+        /// birth-step count went onto the spawn and nothing went onto the
+        /// ending, which stayed at eight. The assembler sizes its per-record
+        /// payload slots by this, so a carried-over event never needs a
+        /// variable-length pool.
         ///
-        /// ⛔ AND THE CATALOG HAS NOWHERE LEFT TO GROW WITHOUT MOVING IT.
-        /// Eight bytes is exactly this constant, so the next field added to
-        /// EITHER of the two tying kinds lifts the ceiling — and the ceiling
-        /// is what a dozen stride expressions in `SnapshotAssembler` compute
-        /// their per-record slots from, plus every `stackalloc` and pooled
-        /// buffer sized by it. Т31 fit inside the existing ceiling and moved
-        /// no stride; the kind after it will not be so cheap, and that is a
-        /// fact to be budgeted rather than discovered.
-        public const int MaxPayloadBytes = 8;
+        /// ⛔ THE CEILING HAS ALREADY BEEN LIFTED ONCE, AND THIS IS WHAT IT
+        /// COST (app-88jb Т32, coordinator Ruling 292). The note that stood
+        /// here promised that the next field on either tying kind would lift
+        /// it; the field arrived, and the bill came to less than the handoff
+        /// had estimated. All nineteen uses of this constant in
+        /// `SnapshotAssembler` are of the shape `slot * MaxPayloadBytes` or a
+        /// pool length, so every one of them scaled itself and not a single
+        /// stride was rewritten — measured, not assumed. What was edited is
+        /// this constant, the width in `PayloadBytesFor`, the writer, the
+        /// reader and the named pins in `SnapshotCodecTests`. The FOUR pools
+        /// sized by this constant — `_wirePayload`, and the per-connection
+        /// `QueuePayload`, `HistoryPayload` and `EventPayloadScratch` — grew by
+        /// an eighth, and all four grew by themselves.
+        ///   `ProtocolVersion` did NOT move with it, and the reason is a
+        /// precedent rather than a convenience: app-88jb Т8 widened
+        /// `PlayerDamaged` from four bytes to seven without a bump. That
+        /// file's rule asks for a bump when the MEANING of bytes already on
+        /// the wire changes or a DOMAIN grows, and a kind that simply got
+        /// wider is neither.
+        ///   THE NEXT KIND TO GROW IS STILL THE ONE THAT PAYS: any field added
+        /// to `ProjectileSpawned` lifts this constant again, while
+        /// `ProjectileEnded` now has one byte of room under it and would cost
+        /// nothing until it reaches nine.
+        public const int MaxPayloadBytes = 9;
 
         /// Highest legal wire value of `HitZone` / `ProjectileEndKind`. Same
         /// tripwire role as `SnapshotBlocks.MaxMobTypeValue` and friends: the
@@ -519,14 +565,20 @@ namespace Ring.Networking.Protocol
         {
             switch (kind)
             {
-                case SnapshotEventKind.ProjectileSpawned: return 8;
+                // app-88jb Т32: one byte wider than it was — `birthSteps u8`
+                // rides along now, so a networked client can seed its tracer
+                // where the round already is at the end of its birth tick
+                // rather than at the muzzle it was reported from (Ruling 291,
+                // review finding D2-C7). It is the widest kind in the catalog
+                // and the only one standing at `MaxPayloadBytes`.
+                case SnapshotEventKind.ProjectileSpawned: return 9;
 
                 // app-88jb Т31: three bytes wider than it was — `hitDir u8 |
                 // victimId u16` ride along now, so a networked client can put
                 // the spark at the contact, flash the body that was hit and
-                // give it an axis to tilt about. Which makes it the SECOND
-                // kind at `MaxPayloadBytes` (see that constant's own note);
-                // the doc table above was rewritten with it.
+                // give it an axis to tilt about. That made it the second kind
+                // at `MaxPayloadBytes` until Т32 lifted the ceiling past it;
+                // it is now the RUNNER-UP, one byte under.
                 case SnapshotEventKind.ProjectileEnded: return 8;
                 case SnapshotEventKind.MobDied: return 4;
 
@@ -587,11 +639,45 @@ namespace Ring.Networking.Protocol
         // it wrote, which always equals PayloadBytesFor(kind). Arguments
         // outside their own domain throw — see the class doc.
 
+        /// A round's birth: `id u16 | ownerIndex u8 | dir u8 | horizSpeed u8 |
+        /// velZ u16 | height u8 | birthSteps u8` (app-88jb Т32 added the last).
+        ///
+        /// `birthSteps` IS A MEASUREMENT THAT RIDES RAW, which is what
+        /// separates it from every other byte here: the four physical
+        /// quantities before it (dir, horizSpeed, velZ, height) are quantized
+        /// against scales taken from `cfg`, and the three that are not (id,
+        /// ownerIndex) NAME something rather than measure it. A count is small
+        /// and exact, so quantizing it would only be a way to lose it. The
+        /// receiver spends it by multiplying its own decoded
+        /// `dir * horizSpeed * TickDt` by it. See
+        /// `SnapshotEventPayload.BirthSteps` for what the number means and
+        /// `Ring.Simulation.Core.SimEvent.BirthSteps` for where it comes from.
+        ///
+        /// THE COUNT IS GUARDED FOR FITTING ITS BYTE, AND FOR NOTHING ELSE
+        /// (app-88jb Т32, coordinator Ruling 301). The parameter is an `int`
+        /// and the slot is a byte, so the cast below is a lossy one — and it
+        /// loses into the worst value there is: 256 would arrive as 0, which
+        /// is exactly the code the receiver must read as "nothing is known
+        /// about the birth tick" and seed at the muzzle. A silent loss of that
+        /// shape is what `RequirePlayerSlot`, `RequireZone` and `Reserve`
+        /// exist for, so this argument gets the same treatment.
+        ///   ⛔ THE ARENA'S OWN DOMAIN — how many steps a round COULD have
+        /// taken — is deliberately NOT checked here, and its absence is the
+        /// decision rather than an oversight. The two sides ask different
+        /// questions: a writer is asked whether the number fits the slot the
+        /// format gave it, which is this file's own business, while whether a
+        /// number is BELIEVABLE is a question about someone else's traffic and
+        /// is answered on the read side against `cfg` (see `TryReadPayload`).
+        /// Asking it here too would give the bound a second home, and the
+        /// reader's whole argument for taking an UPPER bound rests on there
+        /// being only one home for the split rule it comes from.
         public static int WriteProjectileSpawned(System.Span<byte> dst, int id, byte ownerIndex,
-            float2 dir, float horizSpeed, float velZ, float height, in SimConfig cfg)
+            float2 dir, float horizSpeed, float velZ, float height, int birthSteps,
+            in SimConfig cfg)
         {
             Reserve(dst, SnapshotEventKind.ProjectileSpawned);
             RequirePlayerSlotOrNoOwner(ownerIndex, in cfg, nameof(ownerIndex));
+            RequireByteRange(birthSteps, nameof(birthSteps));
 
             float speedCap = SpeedCapFor(ownerIndex, in cfg);
             WriteU16(dst, 0, (ushort)(id & 0xFFFF));
@@ -600,6 +686,7 @@ namespace Ring.Networking.Protocol
             dst[4] = Quantize.Unit(horizSpeed, speedCap);
             WriteU16(dst, 5, Quantize.Pos(velZ, speedCap));
             dst[7] = Quantize.Unit(height, cfg.Hero.MaxAimHeight);
+            dst[8] = (byte)birthSteps;
             return SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned);
         }
 
@@ -631,13 +718,14 @@ namespace Ring.Networking.Protocol
         /// on the wire, and the field stays 0 rather than carrying a number
         /// the receiver would read as a mob's identity.
         ///
-        /// ⛔ EIGHT BYTES IS EXACTLY `MaxPayloadBytes`, AND THERE IS NOWHERE
-        /// LEFT TO GROW. This kind now TIES `ProjectileSpawned` at the
-        /// ceiling, so one more field on either of them lifts the ceiling
-        /// itself — and the ceiling is the stride a dozen expressions in
-        /// `SnapshotAssembler` size their per-record payload slots by. Т31
-        /// moved none of them because it fit; the next widening will move all
-        /// of them.
+        /// ⚠ EIGHT BYTES IS ONE UNDER `MaxPayloadBytes` SINCE app-88jb Т32,
+        /// where it used to be exactly the ceiling. This kind tied
+        /// `ProjectileSpawned` there from Т31 until Т32 put a ninth byte on
+        /// the spawn and lifted the ceiling past both; the tie is broken and
+        /// this kind is now the runner-up, with one byte of room under the
+        /// stride the assembler sizes its per-record payload slots by. So a
+        /// tenth field HERE is free and a tenth field on the SPAWN is not —
+        /// the opposite of the arrangement Т31 recorded.
         public static int WriteProjectileEnded(System.Span<byte> dst, int id, ProjectileEndKind endKind,
             HitZone zone, float height, float2 hitDir, int victimId, in SimConfig cfg)
         {
@@ -933,8 +1021,53 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.ProjectileSpawned:
                 case SnapshotEventKind.ShotHeard:
                 {
-                    byte owner = kind == SnapshotEventKind.ProjectileSpawned ? payload[2] : payload[0];
+                    // ⛔ THESE TWO KINDS SHARE A CASE AND DO NOT SHARE A
+                    // LENGTH — a `ShotHeard` payload is ONE byte — so every
+                    // index past 0 in this block is gated on the kind. The
+                    // owner byte is the exception that proves it: its OFFSET
+                    // differs per kind but its BOUND is the same one, so it is
+                    // selected once and checked once for both.
+                    bool spawned = kind == SnapshotEventKind.ProjectileSpawned;
+                    byte owner = spawned ? payload[2] : payload[0];
                     if (!IsPlayerSlotOrNoOwner(owner, in cfg)) { error = SnapshotBlockError.MalformedContent; return false; }
+
+                    // app-88jb Т32 (coordinator Ruling 300): the birth-step
+                    // count is the first byte of this catalog a hostile sender
+                    // could spend on GEOMETRY rather than on identity, so it
+                    // is the first one that needed a domain. The receiver
+                    // multiplies it by a step of the round's own speed — at
+                    // the shipped 52.5 m/s and a 1/30 s tick that is 1.75 m —
+                    // so a byte of 255 moves the seeded tracer 446 m, on an
+                    // arena of radius 173 m. It decides no outcome (Critical
+                    // Rule 3 leaves every outcome to the server); it draws
+                    // nonsense, and it was the only field here with no bound
+                    // at all.
+                    //
+                    // THE BOUND IS AN UPPER ONE AND NOT THE EXACT SET, which
+                    // is a decision rather than laziness. The exact set is
+                    // `RewindSplit.InputTicks(k) + 1` over every claimed depth
+                    // the sanitizer admits, and writing that here would give
+                    // the split rule a SECOND home — the codec would be
+                    // restating a balance rule it has no business knowing, and
+                    // the alternative (widening the split's own surface for
+                    // one validator) is worse. The precedent is Ruling 165,
+                    // which holds `InputCodec` to its own three-bit wire
+                    // ceiling and deliberately keeps the arena's cap out of
+                    // it: each side checks what it can check by itself. The
+                    // price is named — a hostile value between the true
+                    // maximum and this bound buys a few extra steps, i.e.
+                    // meters rather than hundreds of them, inside the same
+                    // class of error the tracer already tolerates.
+                    //
+                    // ZERO IS LEGAL AND MEANS "NOTHING IS KNOWN ABOUT THE
+                    // BIRTH TICK", not "no steps were taken": it is what a
+                    // round spawned through the simulation's own test seam
+                    // carries, and what the field degenerates to for any
+                    // sender that does not fill it. A receiver reads it as
+                    // "seed at the header point", which is the behavior that
+                    // predates this byte.
+                    if (spawned && payload[8] > cfg.Arena.RewindCapTicks + 1)
+                    { error = SnapshotBlockError.MalformedContent; return false; }
                     break;
                 }
                 case SnapshotEventKind.ProjectileEnded:
@@ -1037,6 +1170,11 @@ namespace Ring.Networking.Protocol
                     value.HorizSpeed = Quantize.UnitBack(payload[4], speedCap);
                     value.VelZ = Quantize.PosBack(ReadU16(payload, 5), speedCap);
                     value.Height = Quantize.UnitBack(payload[7], cfg.Hero.MaxAimHeight);
+                    // app-88jb Т32: the one field here that is READ RATHER
+                    // THAN DECODED — a count crosses as itself, so there is no
+                    // scale to undo. Its domain was settled in the validation
+                    // pass above, which is why nothing is clamped here.
+                    value.BirthSteps = payload[8];
                     break;
                 }
                 case SnapshotEventKind.ProjectileEnded:
@@ -1198,6 +1336,21 @@ namespace Ring.Networking.Protocol
                 throw new System.ArgumentException(
                     $"SnapshotEvents: HitZone {(byte)zone} is outside the declared domain "
                     + $"(<= {MaxHitZoneValue}).", nameof(zone));
+        }
+
+        /// app-88jb Т32 (coordinator Ruling 301): the guard for an `int`
+        /// argument that rides the wire as a single raw byte. It is about the
+        /// CAST, not about the quantity — a value past 255 would fold silently
+        /// into a small one, and 256 in particular into 0, which several of
+        /// this catalog's fields spend as a sentinel. Whether a value that
+        /// fits is also plausible is a per-field question and belongs to
+        /// whichever writer or reader owns that field.
+        static void RequireByteRange(int value, string argument)
+        {
+            if (value < 0 || value > byte.MaxValue)
+                throw new System.ArgumentException(
+                    $"SnapshotEvents: {argument} {value} does not fit the single byte it rides "
+                    + $"(domain [0, {byte.MaxValue}]) — the cast would lose it silently.", argument);
         }
 
         static void Reserve(System.Span<byte> dst, SnapshotEventKind kind)

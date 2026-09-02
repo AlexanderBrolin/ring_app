@@ -327,9 +327,15 @@ namespace Ring.Networking.Client
         ///
         /// THE SPEED IS THE OWNER'S CONFIGURED CAP, NOT THE ROUND'S SPEED AT
         /// CONTACT, and that is a priced approximation rather than an
-        /// oversight: the wire carries no speed on this ending (eight bytes is
-        /// the catalog's ceiling), so the only speed available is the one
-        /// `SnapshotEvents.SpeedCapFor` answers for the shooter's own rail.
+        /// oversight: the wire carries no speed on this ending, so the only
+        /// speed available is the one `SnapshotEvents.SpeedCapFor` answers for
+        /// the shooter's own rail. ⚠ THE REASON IS NO LONGER "THERE IS NO
+        /// ROOM", and the correction is app-88jb Т32's: that ending used to
+        /// sit exactly at the catalog's ceiling, and Т32 lifted the ceiling to
+        /// nine bytes for `ProjectileSpawned` alone — so `ProjectileEnded` now
+        /// has one free byte under it and nobody has spent it. What holds the
+        /// approximation in place is that no task has put a speed there, not
+        /// that the format forbids it.
         /// For a round that RICOCHETED on its way in, the server resolved the
         /// blow at a damped speed and this side sizes it at the full one — so
         /// the rebuilt lean is overstated by the reciprocal of the retention

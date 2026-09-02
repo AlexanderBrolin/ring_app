@@ -401,11 +401,21 @@ namespace Ring.Simulation.AI
                 // round will ask of the past, and a mob asks nothing -- it is
                 // answered against the bodies where they stand, exactly as
                 // every round was before lag compensation existed.
+                //   AND THE BIRTH-TICK STEP COUNT IS THEREFORE EXACTLY ONE,
+                // WRITTEN OUT RATHER THAN LEFT TO THE DEFAULT (app-88jb Т32,
+                // coordinator Ruling 291). The parameter's default is 0, which
+                // means "nothing is known about this round's birth tick" — the
+                // honest answer for the test seam and a FALSEHOOD here: this
+                // round takes no catch-up (the two lines above say why), but
+                // ProjectileSystem.Update still steps it once before the tick
+                // ends, because MobAiSystem runs ahead of the projectile phase
+                // in SimulationWorld.TickAll. One step is known, so one step is
+                // stated.
                 w.SpawnProjectile(ProjectileOwner.Mob, ProjectileIds.NoOwner, m.Id,
                     m.Pos + aimDir * cfg.Radius,
                     aimDir * cfg.ProjectileSpeed, cfg.MuzzleHeight, 0f,
                     cfg.ProjectileDamage, cfg.ProjectileRadius,
-                    cfg.ProjectileLifetime, 0);
+                    cfg.ProjectileLifetime, 0, birthSteps: 1);
                 m.FireCooldown += cfg.FireInterval;
             }
         }

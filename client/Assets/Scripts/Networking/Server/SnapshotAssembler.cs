@@ -1025,8 +1025,17 @@ namespace Ring.Networking.Server
 
             _wire[slot].RoundId = ev.EntityId;
             _wire[slot].SegmentEnd = ev.Pos + velXY * lifetime;
+            // app-88jb Т32 (coordinator Ruling 291): the birth-step count is
+            // FORWARDED, never recomputed. The world is the only place that
+            // knows how many steps this round took before its tick ended — the
+            // shooter's own input lag decides it (WeaponSystem.SpawnShot) — and
+            // the capture above holds the round's end-of-tick STATE, not its
+            // history. Unlike the velocity triple, therefore, it has no
+            // fallback to approximate from and needs none: a round that died
+            // inside its own birth tick (the branch above) never gets a tracer
+            // for the number to seed.
             SnapshotEvents.WriteProjectileSpawned(PayloadSpan(slot), ev.EntityId, ownerIndex,
-                velXY, math.length(velXY), velZ, height, in _cfg);
+                velXY, math.length(velXY), velZ, height, ev.BirthSteps, in _cfg);
         }
 
         void AddShotHeard(ref int seq, int sourceIndex, in SimEvent ev)

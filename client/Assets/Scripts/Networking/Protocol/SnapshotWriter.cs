@@ -66,7 +66,14 @@ namespace Ring.Networking.Protocol
     /// missing piece; the running history lives in spec §6i Р146). At the
     /// shipped caps (`MaxPlayers` 3, so 2 OTHER players; `MaxMobs` 96; a
     /// 16-event `SnapshotEventBudget` at the catalog's widest payload —
-    /// `ProjectileSpawned`, 8 B):
+    /// `ProjectileSpawned`, 8 B AT THE TIME). ⚠ THAT PAYLOAD WIDTH IS NOW A
+    /// STAGE-2 FIGURE TOO, exactly like the `MaxMobs` 96 above it: app-88jb
+    /// Т32 put a ninth byte on `ProjectileSpawned` and lifted
+    /// `SnapshotEvents.MaxPayloadBytes` with it, so the live event term is
+    /// `EventsBlockBytes(16, 16*9)` = 291 rather than the 275 this table
+    /// carries. The table is left summing its own era's numbers rather than
+    /// half-updated; the live arithmetic is the codec test named above, which
+    /// reads BOTH the mob cap and the payload width off the real catalog:
     ///
     ///   HeaderBytes                                    8
     ///   PlayersBlockBytes(2)                          19

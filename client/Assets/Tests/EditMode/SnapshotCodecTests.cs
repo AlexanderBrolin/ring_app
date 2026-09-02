@@ -2245,13 +2245,45 @@ namespace Ring.Simulation.Tests
         const float EvtWeaponSpeed = 61f;
         const float EvtGunnerSpeed = 17f;
 
+        /// app-88jb Т32: the rewind cap the birth-step bound is read off, and
+        /// it is DELIBERATELY NEITHER OF THE TWO NUMBERS IT COULD HAVE BEEN.
+        ///   * NOT ZERO — which is what this fixture's arena carried until
+        ///     this task, by omission rather than by choice. `TryReadPayload`
+        ///     refuses a count above `RewindCapTicks + 1`, so at zero the
+        ///     bound collapses to one and BOTH owner rails of the layout test
+        ///     (3 and 4 steps) would be thrown out by the codec that had just
+        ///     written them.
+        ///   * NOT THE SHIPPED 6 — the same discipline `SnapMaxPlayers` states
+        ///     one field over, and for the same kind of mutant: at 6 the bound
+        ///     is 7, and an implementation that hardcoded the shipped cap plus
+        ///     one would satisfy both halves of the boundary witness below. At
+        ///     4 the bound is 5, which no shipped constant produces.
+        /// Four also keeps both rails legal (the mob rail's 4 stands exactly
+        /// under the bound) and stays inside the domain the config validator
+        /// admits for the real field, so the fixture is unusual without lying.
+        /// ⚠ `RewindPictureTicks` is NOT set beside it, and that is deliberate
+        /// too: this codec knows nothing about how a depth is split and must
+        /// not learn — a picture depth here would invite the next reader to
+        /// write the exact bound instead of the upper one.
+        /// ⚠ Unlike the scales above this number is a small structural count,
+        /// so the balance-asset search the fixture note describes is not
+        /// meaningful for it — no code path could substitute a wave count or a
+        /// slot index for a tick cap, the same exemption `EvtSlot` carries.
+        const int EvtRewindCapTicks = 4;
+
         /// Extends the Task 27 fixture config with the four scales the event
-        /// payloads quantize against. Radius/MaxPlayers/MaxHp are REUSED from
-        /// SnapCfg's own constants rather than restated (rule 2), so the
-        /// boundary tests below inherit the same deliberately-not-3 MaxPlayers.
+        /// payloads quantize against, plus (app-88jb Т32) the one arena number
+        /// a payload is VALIDATED against rather than quantized by.
+        /// Radius/MaxPlayers/MaxHp are REUSED from SnapCfg's own constants
+        /// rather than restated (rule 2), so the boundary tests below inherit
+        /// the same deliberately-not-3 MaxPlayers.
         static readonly SimConfig EvtCfg = new SimConfig
         {
-            Arena = new ArenaSimConfig { Radius = SnapRadius, MaxPlayers = SnapMaxPlayers },
+            Arena = new ArenaSimConfig
+            {
+                Radius = SnapRadius, MaxPlayers = SnapMaxPlayers,
+                RewindCapTicks = EvtRewindCapTicks,
+            },
             Hero = new HeroSimConfig
             {
                 MaxHp = SnapHeroMaxHp, StaminaMax = EvtStaminaMax, MaxAimHeight = EvtMaxAimHeight,
@@ -2277,6 +2309,29 @@ namespace Ring.Simulation.Tests
         const float EvtDamage = 91f;             // /118 -> 197
         const float EvtStaminaMissing = 57f;     // /210 -> 69
         const int EvtWaveStartedIndex = 40507;   // 0x9E3B -> 0x3B, 0x9E
+
+        /// app-88jb Т32: the two rails' birth-step counts, and every constraint
+        /// on them is about a mutation rather than about taste.
+        ///   * NEITHER IS ZERO — a writer that dropped the argument and wrote
+        ///     a literal zero, and a reader that never read the byte back,
+        ///     both agree with a fixture of zero.
+        ///   * NEITHER IS ONE — "the writer always says one step" is the
+        ///     cheapest wrong implementation there is, since one is what a
+        ///     round with no catch-up really takes.
+        ///   * THEY DIFFER FROM EACH OTHER, which is what the two rails buy
+        ///     here and what a single shared value would throw away: a writer
+        ///     that stored a constant instead of its argument passes two rails
+        ///     carrying the same number (lesson 227, the discipline `EvtSlot`
+        ///     and `EvtAttackerSlot` already follow one field over).
+        ///   * AND NEITHER COLLIDES WITH ANY OTHER BYTE OF ITS OWN RAIL's
+        ///     layout, so a writer that put the count at the wrong offset —
+        ///     or read a neighbor for it — cannot pass by coincidence.
+        /// ⚠ The mob rail's value is NOT a claim that a mob's round takes four
+        /// steps (it takes exactly one, MobAiSystem's own note): this byte
+        /// rides no scale and no owner-dependent domain, so what the rail
+        /// varies here is the ARGUMENT, not the physics.
+        const int EvtBirthStepsPlayer = 3;
+        const int EvtBirthStepsMob = 4;
 
         // Non-palindromic headings whose Dir codes differ from each other and
         // from every rail value above (204 and 140).
@@ -2487,13 +2542,18 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EventPayloadSizes_ArePinned_AndNoneExceedsMaxPayloadBytes()
         {
-            Assert.AreEqual(8, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned));
+            // app-88jb Т32: eight became nine — `birthSteps u8` — which puts
+            // this kind ALONE at the ceiling again and makes the enumeration
+            // sweep at the bottom of this test useless as a stand-in for the
+            // line (it would only ask `9 <= 9`).
+            Assert.AreEqual(9, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned));
             // app-88jb Т31: five became eight, and the pin is the only NAMED
-            // witness to it. `MaxPayloadBytes` is also 8, so this kind now
-            // TIES `ProjectileSpawned` at the ceiling — which means the
-            // enumeration sweep at the bottom of this test cannot stand in
-            // for the line (it only asks `8 <= 8`), and neither can the
-            // round-trip, which is blind to a width both sides agree on.
+            // witness to it. It TIED `ProjectileSpawned` at the ceiling until
+            // Т32 lifted the ceiling past both; the tie is gone and this kind
+            // sits one byte under it, so the sweep below now only asks
+            // `8 <= 9` and the round-trip stays blind to a width both sides
+            // agree on. The line is still the only named witness this width
+            // has.
             Assert.AreEqual(8, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileEnded));
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ShotHeard));
             Assert.AreEqual(3, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobSpawned));
@@ -2527,7 +2587,12 @@ namespace Ring.Simulation.Tests
             // payload FITS `MaxPayloadBytes`, and any width up to 8 fits.
             Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted));
 
-            Assert.AreEqual(8, SnapshotEvents.MaxPayloadBytes,
+            // app-88jb Т32 (coordinator Ruling 292): eight became nine with
+            // the widest kind above, and the two numbers are pinned together
+            // here because they must move together — the constant sizes the
+            // assembler's per-record slots, and a catalog wider than its own
+            // stride would write one record over the next.
+            Assert.AreEqual(9, SnapshotEvents.MaxPayloadBytes,
                 "MaxPayloadBytes sizes the assembler's carry-queue slots — it must be the real maximum, "
                 + "not a round number chosen next to it");
             foreach (SnapshotEventKind kind in System.Enum.GetValues(typeof(SnapshotEventKind)))
@@ -2549,7 +2614,7 @@ namespace Ring.Simulation.Tests
 
             byte[] player = WritePayload(kind, b => SnapshotEvents.WriteProjectileSpawned(
                 new System.Span<byte>(b), EvtRoundId, EvtSlot, EvtDirA,
-                EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtCfg));
+                EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtBirthStepsPlayer, EvtCfg));
 
             Assert.AreEqual((byte)0x37, player[0], "byte 0: id low (4919 = 0x1337)");
             Assert.AreEqual((byte)0x13, player[1], "byte 1: id high");
@@ -2559,10 +2624,18 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)0x3A, player[5], "byte 5: velZ low (-2.75 over +/-61 -> 31290 = 0x7A3A)");
             Assert.AreEqual((byte)0x7A, player[6], "byte 6: velZ high");
             Assert.AreEqual((byte)108, player[7], "byte 7: height 2.75/6.5 -> code 108");
+            // app-88jb Т32. THE ONLY QUANTITY IN THIS PAYLOAD THAT IS NOT
+            // QUANTIZED — the four before it ride scales taken from `cfg`,
+            // and the three identity bytes (id, ownerIndex) ride raw because
+            // they name things rather than measure them. This one measures
+            // and still rides raw, so the expectation below is the fixture's
+            // own number and not a code.
+            Assert.AreEqual((byte)EvtBirthStepsPlayer, player[8],
+                $"byte 8: birthSteps {EvtBirthStepsPlayer} — сырой счёт, ни на какой шкале");
 
             byte[] mob = WritePayload(kind, b => SnapshotEvents.WriteProjectileSpawned(
                 new System.Span<byte>(b), EvtMobId, ProjectileIds.NoOwner, EvtDirB,
-                EvtHorizSpeedMob, EvtVelZ, EvtHeightLow, EvtCfg));
+                EvtHorizSpeedMob, EvtVelZ, EvtHeightLow, EvtBirthStepsMob, EvtCfg));
 
             Assert.AreEqual((byte)0x39, mob[0], "byte 0: id low (51001 = 0xC739)");
             Assert.AreEqual((byte)0xC7, mob[1], "byte 1: id high");
@@ -2572,6 +2645,10 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual((byte)0x4B, mob[5], "byte 5: velZ low (-2.75 over +/-17 -> 27467 = 0x6B4B)");
             Assert.AreEqual((byte)0x6B, mob[6], "byte 6: velZ high");
             Assert.AreEqual((byte)49, mob[7], "byte 7: height 1.25/6.5 -> code 49");
+            Assert.AreEqual((byte)EvtBirthStepsMob, mob[8],
+                $"byte 8: birthSteps {EvtBirthStepsMob} — и он ОТЛИЧАЕТСЯ от рельсы игрока: "
+                + "писатель, положивший константу вместо аргумента, прошёл бы обе рельсы "
+                + "с одним числом");
 
             // The rails' whole point: the SAME velZ produces DIFFERENT bytes,
             // because ownerIndex selects the scale (the Task 27 precedent of a
@@ -2589,6 +2666,12 @@ namespace Ring.Simulation.Tests
                 .Within(HalfStepUnit(EvtWeaponSpeed) + 1e-3f));
             Assert.That(dp.VelZ, Is.EqualTo(EvtVelZ).Within(HalfStepPos(EvtWeaponSpeed) + PosNoiseMeters));
             Assert.That(dp.Height, Is.EqualTo(EvtHeightHigh).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+            // app-88jb Т32: EXACT equality, not a tolerance, and that is the
+            // point of the field rather than a shortcut — a count crosses the
+            // wire as itself, so anything but an exact round trip is a defect.
+            Assert.AreEqual(EvtBirthStepsPlayer, dp.BirthSteps,
+                "SnapshotEventPayload.BirthSteps не доехал — клиенту нечем сдвинуть точку посева "
+                + "трассера, и пуля рисуется на k+1 шагов позади");
 
             SnapshotEventPayload dm = Decoded(mob, kind);
             Assert.AreEqual(EvtMobId, dm.Id);
@@ -2598,6 +2681,8 @@ namespace Ring.Simulation.Tests
                 .Within(HalfStepUnit(EvtGunnerSpeed) + 1e-3f));
             Assert.That(dm.VelZ, Is.EqualTo(EvtVelZ).Within(HalfStepPos(EvtGunnerSpeed) + PosNoiseMeters));
             Assert.That(dm.Height, Is.EqualTo(EvtHeightLow).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+            Assert.AreEqual(EvtBirthStepsMob, dm.BirthSteps,
+                "и на второй рельсе тоже — чтение, прибитое к одному числу, прошло бы первую");
         }
 
         [Test]
@@ -3108,8 +3193,19 @@ namespace Ring.Simulation.Tests
                 HitZone.Head, height, new float2(0f, 1f), victimId, in cfg);
 
             Assert.AreEqual(8, n);
-            Assert.AreEqual(SnapshotEvents.MaxPayloadBytes, n,
-                "ширина разошлась с MaxPayloadBytes — страйд буферов поедет");
+            // app-88jb Т32: THE CLAIM CHANGED, NOT THE NUMBER. This line used
+            // to read `AreEqual(MaxPayloadBytes, n)`, which was true only
+            // while this kind TIED the ceiling (Т31); Т32 put a ninth byte on
+            // `ProjectileSpawned` and the tie is gone, so "the width equals
+            // the ceiling" is simply false about this kind now. What the
+            // buffer stride actually depends on is that a writer reports its
+            // own declared width and that the width fits the stride, and that
+            // is what the two lines below ask.
+            Assert.AreEqual(SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileEnded), n,
+                "писатель отчитался не своей объявленной шириной — ассемблер бюджетирует кадр "
+                + "по PayloadBytesFor ДО записи, и расхождение переполнит слот");
+            Assert.LessOrEqual(n, SnapshotEvents.MaxPayloadBytes,
+                "ширина вида переросла потолок — страйд буферов поедет");
 
             Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded,
                 buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
@@ -3284,6 +3380,81 @@ namespace Ring.Simulation.Tests
                 "the mob-type bound is reused from SnapshotBlocks, not restated");
         }
 
+        /// app-88jb Т32 (coordinator Ruling 300): the birth-step byte's own
+        /// domain — the first field of this catalog that a hostile sender
+        /// could spend on GEOMETRY instead of on identity, and until this task
+        /// the only one with no bound at all.
+        ///
+        /// ⛔ BOTH HALVES, AND THE ACCEPTING ONE IS NOT DECORATION. A bound
+        /// witnessed only by refusals is satisfied by an implementation that
+        /// refuses every count there is, which would throw away every legal
+        /// round on the wire and never fail a test. What is being witnessed is
+        /// "refuses MORE than a round could have taken", not "refuses".
+        ///
+        /// ⚠ THE BOUND IS READ OFF `cfg` AND NEVER WRITTEN AS A LITERAL, and
+        /// the fixture cap exists to make that matter: the two constants a
+        /// wrong implementation reaches for first — the SHIPPED cap plus one,
+        /// and `InputCodec`'s own wire ceiling plus one — are both larger than
+        /// this fixture's bound, so either of them would let the hostile half
+        /// through. Spelling the expectation as a number here would hand that
+        /// protection back.
+        ///
+        /// ⚠ THE UPPER BOUND IS THE SUBJECT, NOT THE EXACT SET. The codec
+        /// checks what it can check by itself and deliberately does not
+        /// restate the split rule that produces the true maximum (Ruling 300
+        /// carries the whole argument, and `TryReadPayload`'s own branch
+        /// repeats it), so a value between the two is ACCEPTED by design and
+        /// is not what this test is looking for.
+        [Test]
+        public void EventPayload_BirthStepsAboveTheRewindCapPlusOne_IsRefused_AndOnTheBoundIsAccepted()
+        {
+            const SnapshotEventKind kind = SnapshotEventKind.ProjectileSpawned;
+
+            // Fixture premise, asserted rather than assumed (lesson 622): the
+            // day somebody "corrects" EvtCfg to the shipped cap, both halves
+            // below still pass and this test silently stops witnessing the one
+            // mutation it exists for.
+            Assert.AreNotEqual(TestConfigs.Default().Arena.RewindCapTicks,
+                EvtCfg.Arena.RewindCapTicks,
+                "премисса фикстуры: кап фикстуры сравнялся с отгруженным — реализация с зашитым "
+                + "отгруженным капом прошла бы обе половины границы, и тест остался бы зелёным, "
+                + "перестав что-либо проверять");
+
+            int bound = EvtCfg.Arena.RewindCapTicks + 1;
+
+            byte[] buffer = WritePayload(kind, b => SnapshotEvents.WriteProjectileSpawned(
+                new System.Span<byte>(b), EvtRoundId, EvtSlot, EvtDirA,
+                EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtBirthStepsPlayer, EvtCfg));
+
+            // Half one: ON the bound, accepted AND carried through intact.
+            buffer[8] = (byte)bound;
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(kind, Payload(buffer, kind), EvtCfg,
+                    out SnapshotEventPayload onBound, out SnapshotBlockError onBoundError),
+                "запись РОВНО на границе обязана приниматься: столько шагов раунд действительно "
+                + "делает при заявленной глубине в кап, и проверка, отвергающая её, выбрасывает "
+                + "законный трафик");
+            Assert.AreEqual(SnapshotBlockError.None, onBoundError);
+            Assert.AreEqual(bound, onBound.BirthSteps,
+                "и число обязано доехать целым — принять запись, потеряв байт, не лучше отказа");
+
+            // Half two: one step past the bound, refused.
+            buffer[8] = (byte)(bound + 1);
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(kind, Payload(buffer, kind), EvtCfg,
+                    out _, out SnapshotBlockError pastBound),
+                "шаг за границу обязан отвергаться — столько шагов раунд не мог сделать ни при "
+                + "какой заявленной глубине, потому что саму глубину срезает кап в санитайзере");
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, pastBound);
+
+            // Half two, at the hostile limit — the value the bound exists for.
+            buffer[8] = byte.MaxValue;
+            Assert.IsFalse(SnapshotEvents.TryReadPayload(kind, Payload(buffer, kind), EvtCfg,
+                    out _, out SnapshotBlockError hostile),
+                "враждебный предел байта обязан отвергаться: получатель умножает счёт на шаг "
+                + "полёта, и 255 шагов при отгруженных 1.75 м на шаг уводят точку посева "
+                + "трассера на 446 м — за пределы арены радиусом 173 м");
+            Assert.AreEqual(SnapshotBlockError.MalformedContent, hostile);
+        }
+
         [Test]
         public void EventPayload_UnknownKind_IsRefusedByTheCatalog_ButSkippedByTheBlockWalker()
         {
@@ -3355,12 +3526,19 @@ namespace Ring.Simulation.Tests
             Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteShotHeard(
                 new System.Span<byte>(buffer), (byte)SnapMaxPlayers, EvtCfg),
                 "a shooter slot this match does not have");
+            Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteProjectileSpawned(
+                new System.Span<byte>(buffer), EvtRoundId, EvtSlot, EvtDirA, EvtHorizSpeedPlayer,
+                EvtVelZ, EvtHeightHigh, byte.MaxValue + 1, EvtCfg),
+                "счёт шагов, не влезающий в свой байт: приведение (byte) потеряло бы 256 молча — "
+                + "и потеряло бы в НОЛЬ, то самое значение, которое получатель обязан читать как "
+                + "«о тике рождения ничего не известно» и сеять трассер в точку заголовка");
 
             // Too small a destination is a caller bug too — the assembler owns
             // the pool, so a short slot means its own arithmetic is wrong.
             Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteProjectileSpawned(
                     new System.Span<byte>(buffer, 0, SnapshotEvents.MaxPayloadBytes - 1),
-                    EvtRoundId, EvtSlot, EvtDirA, EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh, EvtCfg),
+                    EvtRoundId, EvtSlot, EvtDirA, EvtHorizSpeedPlayer, EvtVelZ, EvtHeightHigh,
+                    EvtBirthStepsPlayer, EvtCfg),
                 "a payload slot one byte short of the kind's own size");
 
             // Witness: the legal call the four above are variations of really
@@ -3405,7 +3583,12 @@ namespace Ring.Simulation.Tests
             // earlier figure — spec §3.8's 1043, Task 26's 1052, Task 27's 1116
             // — predates the event catalog it depends on, and Task 27's comment
             // says so in as many words: 4 B of payload was an assumption. The
-            // real maximum is ProjectileSpawned's 8.
+            // real maximum is ProjectileSpawned's, and app-88jb Т32 moved it
+            // from 8 to 9 — which is why every expression below now READS it
+            // off `SnapshotEvents.MaxPayloadBytes` instead of restating it.
+            // The literal that used to stand in the events term made this test
+            // fail retroactively the moment the ceiling rose, which is the
+            // opposite of what a recomputation is for.
             SimConfig shipped = TestConfigs.Default();
             var net = ScriptableObject.CreateInstance<NetConfig>();   // the shipped C# defaults
 
@@ -3448,23 +3631,32 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(3 + shipped.Arena.MaxMobs * 9, mobs,
                 $"3 + {shipped.Arena.MaxMobs} records * 9 B = {3 + shipped.Arena.MaxMobs * 9}");
             Assert.AreEqual(3 + 4, wave, "3 + 4 = 7");
-            Assert.AreEqual(3 + 16 * 9 + 16 * 8, eventsBytes, "3 + 16 * (9 header + 8 payload) = 275");
+            // The events term, DERIVED (app-88jb Т32): 3 tag bytes + 16 records
+            // of a 9-byte header each + 16 worst-case payloads. Only the two
+            // structural nines are literals here — the block tag and Task 27's
+            // record header, neither of which this task touches.
+            int events16 = 3 + 16 * 9 + 16 * worstEventPayload;
+            Assert.AreEqual(events16, eventsBytes,
+                $"3 + 16 * (9 header + {worstEventPayload} payload) = {events16}");
 
             int total = header + players + liveness + mobs + wave + eventsBytes;
             // Stage 3 Task 12: 1180 was that same Stage 2 cap carried into the
-            // sum (8 + 19 + 4 + 867 + 7 + 275). At MaxMobs 288 the live
-            // worst-case frame is 8 + 19 + 4 + 2595 + 7 + 275 = 2908 B — and
+            // sum (8 + 19 + 4 + 867 + 275 of Stage 2's own event term, + 7). At
+            // MaxMobs 288 the live worst-case frame is 8 + 19 + 4 + 2595 + 7 +
+            // the live events term — 2908 B while that term was 275, and 16 B
+            // more since app-88jb Т32 widened it to 291 — and
             // spec Р217 named this consequence before the numbers landed:
             // "блок мобов худшего случая — 288 x 9 = 2592 Б против
             // SnapshotMaxBytes 1000", i.e. entity truncation stops being
             // unreachable and becomes the ordinary shape of a saturated frame.
-            Assert.AreEqual(8 + 19 + 5 + (3 + shipped.Arena.MaxMobs * 9) + 7 + 275, total,
-                $"8 + 19 + 5 + {3 + shipped.Arena.MaxMobs * 9} + 7 + 275 — the live worst-case frame at "
-                + "the shipped caps. Task 27's 1116 assumed 4 B of event payload; the real catalog's "
-                + "widest is 8. The liveness term is 5 rather than 4 since Task 25 (Р257). This sum "
-                + "is the FIVE Stage 2 blocks and stays that way on purpose — the five Stage 3 ones "
-                + "are the sibling below (WorstCaseFrame_RecomputedWithNewBlocks), so the two halves "
-                + "of the history stay separately checkable");
+            Assert.AreEqual(8 + 19 + 5 + (3 + shipped.Arena.MaxMobs * 9) + 7 + events16, total,
+                $"8 + 19 + 5 + {3 + shipped.Arena.MaxMobs * 9} + 7 + {events16} — the live worst-case "
+                + "frame at the shipped caps. Task 27's 1116 assumed 4 B of event payload; the real "
+                + $"catalog's widest is {worstEventPayload}. The liveness term is 5 rather than 4 "
+                + "since Task 25 (Р257). This sum is the FIVE Stage 2 blocks and stays that way on "
+                + "purpose — the five Stage 3 ones are the sibling below "
+                + "(WorstCaseFrame_RecomputedWithNewBlocks), so the two halves of the history stay "
+                + "separately checkable");
             Assert.Greater(total, net.SnapshotMaxBytes,
                 "and it still exceeds our own cap, which is why the budget exists at all");
 
