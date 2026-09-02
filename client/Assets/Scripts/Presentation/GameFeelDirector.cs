@@ -123,16 +123,19 @@ namespace Ring.Presentation
         ///
         /// WHY THIS KIND AND NOT `ProjectileHitPlayer`, WHICH IS THE ONE THAT
         /// NAMES THE HIT. Because the victim is not on the wire there.
-        /// `ClientEventDecoder`'s `HitPlayer` branch fills exactly `Kind`,
-        /// `SecondaryEntityId` and `Zone`; `EntityId` keeps the zero it was
-        /// initialized with, and that class's own doc spells out the trap: "it
-        /// is not 'no victim', it is 'seat 0', and the victim is simply not on
-        /// the wire". Addressing anything by that field would give every hit in
-        /// the match to whoever sits in slot 0 and nothing at all to everybody
-        /// else — invisible in solo, wrong for every networked match. On THIS
-        /// kind the decoder writes `e.EntityId = e.PlayerIndex = p.PlayerIndex`,
-        /// the victim, which is also what `SimulationWorld.DamagePlayer` emits
-        /// locally: one field, one meaning, both backends.
+        /// `ClientEventDecoder`'s `HitPlayer` branch fills `Kind`,
+        /// `SecondaryEntityId`, `Zone` and — since app-88jb Т31 — the blow's
+        /// `HitDir` and its contact `Height` (`NetworkSimBackend` adds the
+        /// shooter in `PlayerIndex` on arrival); the victim is still none of
+        /// them. `EntityId` keeps the zero it was initialized with, and that
+        /// class's own doc spells out the trap: "it is not 'no victim', it is
+        /// 'seat 0', and the victim is simply not on the wire". Addressing
+        /// anything by that field would give every hit in the match to whoever
+        /// sits in slot 0 and nothing at all to everybody else — invisible in
+        /// solo, wrong for every networked match. On THIS kind the decoder
+        /// writes `e.EntityId = e.PlayerIndex = p.PlayerIndex`, the victim,
+        /// which is also what `SimulationWorld.DamagePlayer` emits locally:
+        /// one field, one meaning, both backends.
         ///
         /// WHAT IT COSTS, SAID PLAINLY: a round refused by dash i-frames emits
         /// no `PlayerDamaged` at all, so it draws no flash and no shake. That is
