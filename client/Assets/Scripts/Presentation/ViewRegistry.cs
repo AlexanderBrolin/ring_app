@@ -448,13 +448,19 @@ namespace Ring.Presentation
         /// branch, the emit ahead of the `DamageMob` call in program order),
         /// and `MobDied` is what retires a `MobView` here — so offline this
         /// lookup practically always finds its mob, killing blow included. It
-        /// is there for the OTHER side: on a networked client `EntityId` is
-        /// always the wire's safe zero for this kind (`ClientEventDecoder.cs`'s
-        /// own doc on `HitMob`), so the branch is a no-op on every single
-        /// `ProjectileHit` a networked client ever sees — `_activeMobs` never
-        /// holds key 0 (entity ids start at 1) — which is exactly the Т31
-        /// boundary `MobVisual`'s own class doc already draws for the scalar
-        /// half of this.
+        /// is there for the OTHER side, WHICH SINCE app-88jb Т31 IS NO LONGER
+        /// A NO-OP. This paragraph used to end by saying that on a networked
+        /// client `EntityId` is always the wire's safe zero for this kind, so
+        /// the branch never found anything — `_activeMobs` holds no key 0,
+        /// entity ids start at 1. Т31 widened `ProjectileEnded` to carry the
+        /// VICTIM's id beside the round's, and `ClientEventDecoder` now puts
+        /// it in exactly this field, so the lookup finds its mob over the wire
+        /// too and the axis reaches the visual on both paths. The magnitude
+        /// arrives with it: `NetworkSimBackend` synthesizes `MobState.Tilt`
+        /// into the published pair through `MobTiltIntegrator`, so the
+        /// authoritative-offline / zero-over-the-wire boundary this paragraph
+        /// and `MobVisual`'s class doc used to draw is gone, and nothing in
+        /// this file had to change for it.
         public void HandleEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -472,10 +478,11 @@ namespace Ring.Presentation
                 case SimEventKind.ProjectileHit:
                     // Ruling 48 (app-88jb Т11) — see this method's own doc for
                     // the full reasoning. `TryGetValue` rather than an indexer:
-                    // a miss is the expected, silent shape on a networked
-                    // client (EntityId 0 never matches a real mob) and no
-                    // louder than that offline either — nothing here is worth
-                    // logging over.
+                    // a miss is silent on both paths and worth logging on
+                    // neither. It used to be the RULE over the wire, where the
+                    // event named no victim at all; since Т31 it is the same
+                    // ordinary residue as offline — a mob this client has not
+                    // been told about, or one whose view was already retired.
                     if (_activeMobs.TryGetValue(e.EntityId, out MobView hitMobView))
                         hitMobView.Visual?.SetHitDir(e.HitDir);
                     break;

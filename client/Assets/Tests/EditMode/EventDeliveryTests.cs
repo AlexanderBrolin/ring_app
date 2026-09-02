@@ -1315,6 +1315,150 @@ namespace Ring.Simulation.Tests
                 + "'a reflection does not close the subscription' means where it can be observed");
         }
 
+        // --- Т31: the sim->wire mapping of the three fields a body's ending
+        //     used to throw away ---
+
+        /// app-88jb Т31 (finding A-Т31-9, the class `app-cpdq` keeps open).
+        /// NOTHING IN THE TREE DECODED A `ProjectileEnded` PAYLOAD BUILT FROM A
+        /// `ProjectileHit` UNTIL THIS TEST, and that is the gap it closes: the
+        /// codec round trip and the decoder test are both fed by the WRITER
+        /// directly, so the mutation "the assembler passes 0f / float2.zero / 0
+        /// instead of ev.Height / ev.HitDir / ev.EntityId" survives both of
+        /// them untouched. Only a frame assembled from a world can see it.
+        ///
+        /// THREE DISTINGUISHABLE NUMBERS, and the distinctness is the design:
+        /// the victim's id is past 255 (a writer that stored it in one byte
+        /// keeps a small one exactly), the height is not zero (which is what
+        /// the field holds today) and the direction is +Y rather than +X
+        /// (`Quantize.Dir(float2.zero)` decodes back to (1, 0), so a heading
+        /// along +X agrees with "nothing was passed").
+        ///
+        /// THE EVENT IS STATED THROUGH THE EMIT SEAM rather than produced by
+        /// flying a round into a mob — this section's own convention, for the
+        /// reason `SnapshotAssemblerTests`' class doc gives: driving real
+        /// systems into one specific kind at one specific position couples
+        /// every routing assertion to unrelated balance numbers. The world is
+        /// therefore not required to CONTAIN the mob whose id rides along; the
+        /// seam takes a number, and what is under test is the mapping.
+        [Test]
+        public void ProjectileHit_PutsTheVictimTheDirectionAndTheHeightOnTheWire()
+        {
+            const int victimMobId = 900;      // past 255, and not the round's id
+            const float contactHeight = 1.7f;
+
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+            Assert.AreNotEqual(victimMobId, roundId,
+                "fixture premise: the round's id and the victim's must differ, or one assertion "
+                + "below cannot tell which of the two a field was filled from");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 2);
+            asm.BeginTick(w);
+            var spawn = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            Assert.AreEqual(1, spawn.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: connection 0 must be on the round's trajectory, or there is no "
+                + "subscription for the ending to arrive through");
+
+            // Field conventions are the emit site's own (ProjectileSystem's
+            // HitMob branch): the VICTIM in EntityId, the round in
+            // SecondaryEntityId, the blow's travel direction in HitDir and the
+            // contact height in its own field.
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileHit, new float2(30f, 0f), victimMobId, MobType.Chaser,
+                cfg.Weapon.Damage, zone: HitZone.Head, hitDir: new float2(0f, 1f),
+                playerIndex: 0, secondaryEntityId: roundId, height: contactHeight);
+
+            asm.BeginTick(w);
+            var hit = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, hit.CountOf(SnapshotEventKind.ProjectileEnded),
+                "fixture premise: the hit must have reached the subscriber as an ending at all");
+            Assert.IsTrue(hit.TryFirstOf(SnapshotEventKind.ProjectileEnded, out int r));
+            Assert.AreEqual(ProjectileEndKind.HitMob, hit.Payloads[r].EndKind,
+                "fixture premise: this is the mob ending, not another one");
+            Assert.AreEqual(roundId, hit.Payloads[r].Id,
+                "the payload's own id stays the ROUND's — it is what the tracer is retired by, and "
+                + "the victim gets a field of its own rather than this one");
+
+            Assert.AreEqual(victimMobId, hit.Payloads[r].VictimId,
+                "жертва не доехала: без её id вспышка по мобу ищет вьюху по нулю и не находит ничего");
+            Assert.AreEqual(math.PI / 2f,
+                math.atan2(hit.Payloads[r].Dir.y, hit.Payloads[r].Dir.x), 1e-3f,
+                "направление удара не доехало: ось крена берётся из него");
+            Assert.AreEqual(contactHeight, hit.Payloads[r].Height, cfg.Hero.MaxAimHeight / 255f,
+                "высота контакта не доехала: искра попадания рисуется на полу вместо пояса");
+        }
+
+        /// The same seam for the OTHER body ending (Ruling 243). One call
+        /// serves both, so the height and the direction ride here too — and
+        /// `PersistentPropsDirector.SpawnPlayerHitSpark` is the reader that
+        /// already exists for the first of them.
+        ///
+        /// THE VICTIM IS THE ONE FIELD THAT DOES NOT RIDE, and it is asserted
+        /// as a zero rather than left unsaid: `SimEvent.EntityId` is the
+        /// victim's player SLOT for this kind, and slot 0 is a real seat, so
+        /// there is no value the payload could carry that would mean "nobody".
+        /// An assembler that passed `ev.EntityId` here — the shape the mob
+        /// ending uses one method over — would put a seat number in a field
+        /// the receiver is told to read as a mob id.
+        [Test]
+        public void ProjectileHitPlayer_PutsTheDirectionAndTheHeightOnTheWire_ButNoVictimId()
+        {
+            const float contactHeight = 1.7f;
+            const int victimSlot = 2;
+
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, -60f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(0f, 40f));
+
+            float speed = cfg.Weapon.ProjectileSpeed;
+            var muzzle = new float2(20f, 0f);
+            int roundId = w.SpawnProjectileForTest(ProjectileOwner.Player, muzzle, new float2(speed, 0f),
+                cfg.Hero.MuzzleHeight, 0f, cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius,
+                cfg.Weapon.ProjectileLifetime);
+            Assert.AreNotEqual(victimSlot, roundId,
+                "fixture premise: the round's id and the victim's slot must differ");
+
+            var asm = new SnapshotAssembler(cfg, AsmNet(), connectionCount: 3);
+            asm.BeginTick(w);
+            var spawn = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+            Assert.AreEqual(1, spawn.CountOf(SnapshotEventKind.ProjectileSpawned),
+                "fixture premise: connection 0 must be on the round's trajectory");
+
+            w.ClearEvents();
+            w.Emit(SimEventKind.ProjectileHitPlayer, new float2(30f, 0f), victimSlot, default,
+                cfg.Weapon.Damage, zone: HitZone.Body, hitDir: new float2(0f, 1f),
+                playerIndex: 0, secondaryEntityId: roundId, height: contactHeight);
+
+            asm.BeginTick(w);
+            var hit = AssembledFrame.Decode(asm.BufferFor(0), asm.BuildFor(0, 0, 0, AsmEpoch), cfg);
+
+            Assert.AreEqual(1, hit.CountOf(SnapshotEventKind.ProjectileEnded),
+                "fixture premise: the hit must have reached the subscriber as an ending at all");
+            Assert.IsTrue(hit.TryFirstOf(SnapshotEventKind.ProjectileEnded, out int e));
+            Assert.AreEqual(ProjectileEndKind.HitPlayer, hit.Payloads[e].EndKind,
+                "fixture premise: this is the collector ending, not the mob one");
+            Assert.AreEqual(0, hit.Payloads[e].VictimId,
+                "VictimId обязан остаться нулём: EntityId этого вида — СЛОТ, а слот 0 реален, "
+                + "и сентинеля, означающего «никто», у поля нет");
+
+            Assert.AreEqual(contactHeight, hit.Payloads[e].Height, cfg.Hero.MaxAimHeight / 255f,
+                "высота контакта не доехала: искра по сборщику рисуется у него под ногами");
+            Assert.AreEqual(math.PI / 2f,
+                math.atan2(hit.Payloads[e].Dir.y, hit.Payloads[e].Dir.x), 1e-3f,
+                "направление удара не доехало для попадания в сборщика");
+        }
+
         // --- Stage 2 Task 44a: a round that ended on a PLAYER ---
 
         [Test]

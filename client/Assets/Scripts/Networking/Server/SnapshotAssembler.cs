@@ -641,9 +641,18 @@ namespace Ring.Networking.Server
                         // EntityId is the VICTIM (see SimEvent's own doc). A
                         // round with no id cannot address a subscription, so
                         // there is nothing to send.
+                        //
+                        // app-88jb Т31: BOTH IDS NOW RIDE, in two different
+                        // fields — the round addresses the subscription and
+                        // retires the tracer, the victim is what every
+                        // per-mob effect on the receiving side is looked up
+                        // by. The contact height and the blow's direction
+                        // ride with them, from the two fields the emit site
+                        // already fills.
                         if (ev.SecondaryEntityId != 0)
                             AddProjectileEnded(ref seq, i, in ev, ev.SecondaryEntityId,
-                                ProjectileEndKind.HitMob, ev.Zone, 0f);
+                                ProjectileEndKind.HitMob, ev.Zone, ev.Height, ev.HitDir,
+                                ev.EntityId);
                         break;
 
                     case SimEventKind.ProjectileHitPlayer:
@@ -654,12 +663,26 @@ namespace Ring.Networking.Server
                         // the one thing that differs, and it is the whole point:
                         // reusing HitMob would tell the client a round that
                         // landed on a player ended on a mob.
-                        // No contact height: a body is not a surface, exactly as
-                        // for a mob hit (the Blocked branch below is the only
-                        // one that carries one).
+                        // app-88jb Т31 REVERSED THIS BRANCH'S OTHER HALF. It
+                        // used to send `0f` for the height under the heading
+                        // "a body is not a surface, exactly as for a mob hit"
+                        // — and the height HAS a reader on the far side
+                        // (`PersistentPropsDirector.SpawnPlayerHitSpark`), so
+                        // what the sentence bought was a spark on the ground
+                        // at the collector's feet instead of at the plate the
+                        // round entered. `SimEvent.Height` is the one home of
+                        // that number for both body endings, and this is the
+                        // SAME CALL the mob ending takes one branch up: no
+                        // special case, one difference — the victim id, which
+                        // is 0 here because `ev.EntityId` is a player SLOT for
+                        // this kind and seat 0 is a real seat, so no value
+                        // could stand for "nobody" (coordinator Ruling 243).
+                        // An assembler that passed `ev.EntityId` here would
+                        // put a seat number into a field the receiver reads as
+                        // a mob's id.
                         if (ev.SecondaryEntityId != 0)
                             AddProjectileEnded(ref seq, i, in ev, ev.SecondaryEntityId,
-                                ProjectileEndKind.HitPlayer, ev.Zone, 0f);
+                                ProjectileEndKind.HitPlayer, ev.Zone, ev.Height, ev.HitDir, 0);
                         break;
 
                     case SimEventKind.ProjectileBlocked:
@@ -668,13 +691,28 @@ namespace Ring.Networking.Server
                         // own field since app-88jb Т3, not Amount (which is
                         // 0f here: a blocked round deals no damage, and
                         // Amount means damage everywhere else on the struct).
+                        //
+                        // NO DIRECTION AND NO VICTIM, and neither is an
+                        // oversight (app-88jb Т31). A wall is nobody, so the
+                        // victim id is the safe zero every ending but HitMob
+                        // sends. The direction a surface contact WOULD want is
+                        // the wall's NORMAL, which the simulation does put in
+                        // `ev.HitDir` — and it deliberately does not travel:
+                        // the normal and the floor's exact zero are
+                        // indistinguishable through `Quantize.Dir` (atan2(0,0)
+                        // is 0, an ordinary heading), so sending it would tell
+                        // the receiver a floor hit was a wall hit. That is the
+                        // recorded limit in `ClientEventDecoder`'s own class
+                        // doc, not this task's business.
                         AddProjectileEnded(ref seq, i, in ev, ev.EntityId,
-                            ProjectileEndKind.Blocked, HitZone.None, ev.Height);
+                            ProjectileEndKind.Blocked, HitZone.None, ev.Height, float2.zero, 0);
                         break;
 
                     case SimEventKind.ProjectileExpired:
+                        // A round that simply ran out has no contact at all:
+                        // no height, no direction, no victim.
                         AddProjectileEnded(ref seq, i, in ev, ev.EntityId,
-                            ProjectileEndKind.Expired, HitZone.None, 0f);
+                            ProjectileEndKind.Expired, HitZone.None, 0f, float2.zero, 0);
                         break;
 
                     case SimEventKind.MobSpawned:
@@ -990,12 +1028,26 @@ namespace Ring.Networking.Server
             SnapshotEvents.WriteShotHeard(PayloadSpan(slot), ev.PlayerIndex, in _cfg);
         }
 
+        /// One round's ending, in the shape the catalog writes it.
+        ///
+        /// app-88jb Т31 GAVE IT TWO MORE ARGUMENTS, both passed straight
+        /// through: `hitDir` — the round's travel direction at contact, filled
+        /// from `ev.HitDir` by the two BODY endings and left at the zero
+        /// vector by the two surface ones — and `victimId`, which is the
+        /// struck mob's `MobState.Id` for `HitMob` and 0 everywhere else, the
+        /// player ending included (Ruling 243; see the `HitPlayer` branch for
+        /// why a seat cannot ride here). They are ARGUMENTS rather than reads
+        /// off `ev` inside this method for the same reason `roundId`,
+        /// `endKind`, `zone` and `height` already are: which field of the
+        /// event carries what depends on the ending, and the four call sites
+        /// above are where that is known.
         void AddProjectileEnded(ref int seq, int sourceIndex, in SimEvent ev, int roundId,
-            ProjectileEndKind endKind, HitZone zone, float height)
+            ProjectileEndKind endKind, HitZone zone, float height, float2 hitDir, int victimId)
         {
             int slot = Add(ref seq, sourceIndex, in ev, SnapshotEventKind.ProjectileEnded);
             _wire[slot].RoundId = roundId;
-            SnapshotEvents.WriteProjectileEnded(PayloadSpan(slot), roundId, endKind, zone, height, in _cfg);
+            SnapshotEvents.WriteProjectileEnded(PayloadSpan(slot), roundId, endKind, zone, height,
+                hitDir, victimId, in _cfg);
         }
 
         /// The round that killed the mob `MobDied` at `deathIndex` names, or 0.

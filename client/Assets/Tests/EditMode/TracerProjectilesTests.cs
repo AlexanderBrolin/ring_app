@@ -274,6 +274,101 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, tracers.Count, "and the rounds already tracked are untouched");
         }
 
+        // ---- Т31: the one field the wire drops that this side can answer for ----
+
+        /// app-88jb Т31 (findings A-Т31-6, coordinator Rulings 247/256). THE
+        /// ROUND'S OWNER IS NOT ON THE WIRE FOR AN ENDING, and the client needs
+        /// it: the moment a hit applies is `projectileMass * speed3D / mass`,
+        /// and both of the first two terms fork on WHO fired — a collector's
+        /// weapon against a Gunner archetype's. Decoded as a mob's round, a
+        /// player's own shot rebuilds a blow several times weaker than the one
+        /// the server resolved. The answer this side still has is here, in the
+        /// table the spawn record already filled.
+        ///
+        /// BOTH RAILS AND A MISS, in one fixture: an owner byte that always
+        /// answered "the collector in seat 2" would satisfy the first half
+        /// alone, and one that always answered NoOwner would satisfy the
+        /// second alone. The stranger's half is the one that says a refusal is
+        /// a VALUE — this is asked from inside the snapshot receive path.
+        [Test]
+        public void TryGetOwner_AnswersTheOwnerOfALiveRound_AndNothingForAStranger()
+        {
+            const byte shooterSlot = 2;      // not 0, which every unfilled byte reads as
+            var tracers = new TracerProjectiles(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f,
+                    ProjectileOwner.Player, shooterSlot),
+                "fixture premise: the collector's round is tracked");
+            Assert.IsTrue(tracers.TrySpawn(22, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f,
+                    ProjectileOwner.Mob, ProjectileIds.NoOwner),
+                "fixture premise: the gunner's round is tracked too");
+
+            Assert.IsTrue(tracers.TryGetOwner(11, out ProjectileOwner owner, out byte ownerIndex),
+                "владелец живого раунда не отвечает — восстанавливать стрелка неоткуда");
+            Assert.AreEqual(ProjectileOwner.Player, owner,
+                "a round the collector fired must come back as the collector's");
+            Assert.AreEqual(shooterSlot, ownerIndex,
+                "and it must name the SEAT the spawn record carried, not seat 0");
+
+            Assert.IsTrue(tracers.TryGetOwner(22, out ProjectileOwner mobOwner, out byte mobIndex),
+                "the gunner's round must be answerable too");
+            Assert.AreEqual(ProjectileOwner.Mob, mobOwner,
+                "a mob's round must not come back on the collector's rail — the mass and the speed "
+                + "cap it selects differ by a factor the blow is plainly built out of");
+            Assert.AreEqual(ProjectileIds.NoOwner, mobIndex,
+                "and its seat must stay the no-owner sentinel rather than becoming a real one");
+
+            Assert.IsFalse(tracers.TryGetOwner(33, out _, out byte noneIndex),
+                "a round this client never saw fired is a REFUSAL, not an exception — this is asked "
+                + "inside the snapshot receive path (Р82/195)");
+            // The seat, not the owner enum: `ProjectileOwner`'s zero is
+            // `Player`, a REAL rail rather than an absence, so it can carry no
+            // claim about a miss. `NoOwner` is a genuine sentinel and is the
+            // half worth pinning — a miss leaves it behind exactly as
+            // RestoreMobType leaves a zero type.
+            Assert.AreEqual(ProjectileIds.NoOwner, noneIndex,
+                "and a miss must leave the sentinel behind");
+        }
+
+        /// WHEN the answer stops being available, asserted rather than assumed
+        /// (Ruling 247: the lookup happens BEFORE `Retire` in the decode loop,
+        /// so the ordering has to be a fact about the table and not a hope
+        /// about the caller). Measured off `Prune`'s own body: an ended round
+        /// leaves the table on the first prune whose tick has REACHED its
+        /// `EndTick`, and not before — the same `renderTick >= EndTick` test
+        /// `WriteInto` uses to stop drawing it.
+        [Test]
+        public void TryGetOwner_StillAnswersAfterRetire_UntilPruned()
+        {
+            const byte shooterSlot = 2;
+            var tracers = new TracerProjectiles(4);
+            Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, new float2(1f, 0f),
+                    10f, 0f, 0.1f, 2f, ProjectileOwner.Player, shooterSlot),
+                "fixture premise: the round is tracked");
+
+            Assert.IsTrue(tracers.TryGetOwner(11, out _, out byte before),
+                "владелец живого раунда не отвечает");
+            Assert.AreEqual(shooterSlot, before, "witness: the seat is the one the spawn carried");
+
+            Assert.IsTrue(tracers.Retire(11, SpawnTick + 5), "the server ended it five ticks later");
+            Assert.IsTrue(tracers.TryGetOwner(11, out _, out byte afterRetire),
+                "an ended round must still name its owner: the decode loop asks this BEFORE it "
+                + "routes the ending to Retire, and a record that vanished on the ending would "
+                + "leave every hit rebuilt on the wrong shooter");
+            Assert.AreEqual(shooterSlot, afterRetire, "and it is still the same seat");
+
+            tracers.Prune(SpawnTick + 4);
+            Assert.IsTrue(tracers.TryGetOwner(11, out _, out _),
+                "a prune BEFORE the ending tick drops nothing — the round is still in the air");
+
+            tracers.Prune(SpawnTick + 5);
+            Assert.IsFalse(tracers.TryGetOwner(11, out _, out byte afterPrune),
+                "and once the clock reaches the ending the record is gone: the table drops it "
+                + "rather than keeping a corpse, and this accessor must not resurrect one");
+            Assert.AreEqual(ProjectileIds.NoOwner, afterPrune,
+                "leaving the sentinel behind, as every other miss does");
+        }
+
         [Test]
         public void WriteIntoNeverOverrunsTheDestination()
         {

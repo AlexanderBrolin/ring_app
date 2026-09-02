@@ -2283,6 +2283,13 @@ namespace Ring.Simulation.Tests
         static readonly float2 EvtDirA = new float2(-0.28f, 0.96f);   // -> 204
         static readonly float2 EvtDirB = new float2(0.96f, 0.28f);    // -> 140
 
+        /// app-88jb Т31: EXACTLY +Y, and the exactness is the point rather than
+        /// a convenience. `Quantize.Dir(float2.zero)` is code 128, which decodes
+        /// to (1, 0) -- so a fixture aimed along +X agrees with the mutation
+        /// "the direction was never passed at all" and proves nothing. +Y lands
+        /// on code 192 and comes back as pi/2, which no unwritten byte produces.
+        static readonly float2 EvtDirUp = new float2(0f, 1f);         // -> 192
+
         // Half a quantization step, derived from the wire widths HERE, never
         // from Quantize (same rule as the Task 27 region): `Unit` spans
         // [0, max] over 256 codes, `Pos` spans [-r, +r] over 65536.
@@ -2481,7 +2488,13 @@ namespace Ring.Simulation.Tests
         public void EventPayloadSizes_ArePinned_AndNoneExceedsMaxPayloadBytes()
         {
             Assert.AreEqual(8, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned));
-            Assert.AreEqual(5, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileEnded));
+            // app-88jb Т31: five became eight, and the pin is the only NAMED
+            // witness to it. `MaxPayloadBytes` is also 8, so this kind now
+            // TIES `ProjectileSpawned` at the ceiling — which means the
+            // enumeration sweep at the bottom of this test cannot stand in
+            // for the line (it only asks `8 <= 8`), and neither can the
+            // round-trip, which is blind to a width both sides agree on.
+            Assert.AreEqual(8, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileEnded));
             Assert.AreEqual(1, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ShotHeard));
             Assert.AreEqual(3, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobSpawned));
             Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.MobDied));
@@ -2592,31 +2605,67 @@ namespace Ring.Simulation.Tests
 
             byte[] blocked = WritePayload(kind, b => SnapshotEvents.WriteProjectileEnded(
                 new System.Span<byte>(b), EvtRoundId, ProjectileEndKind.Blocked, HitZone.None,
-                EvtHeightLow, EvtCfg));
+                EvtHeightLow, float2.zero, 0, EvtCfg));
             Assert.AreEqual((byte)0x37, blocked[0], "byte 0: id low");
             Assert.AreEqual((byte)0x13, blocked[1], "byte 1: id high");
             Assert.AreEqual((byte)1, blocked[2], "byte 2: endKind Blocked");
             Assert.AreEqual((byte)0, blocked[3], "byte 3: zone None — a wall has no hit zone");
             Assert.AreEqual((byte)49, blocked[4], "byte 4: contact height 1.25/6.5 -> code 49");
+            // app-88jb Т31. THE THREE NEW BYTES ARE PINNED BY NAME, and this
+            // file's own rule is why: a round trip is blind to any mutation
+            // applied symmetrically to writer and reader, so byte order and
+            // the scale each byte rides are pinned here or nowhere.
+            //
+            // 128 IS NOT "NOTHING WRITTEN", AND THAT IS THE WHOLE POINT OF
+            // ASSERTING IT. A blocked round names no direction, so the caller
+            // hands in the zero vector -- and `Quantize.Dir` takes an ANGLE
+            // through atan2, where atan2(0, 0) is 0 by contract, i.e. the
+            // middle code of the byte. A writer that never touched byte 5
+            // would leave 0 here (or the pool's previous tenant), which is a
+            // DIFFERENT heading, so the two cases are distinguishable rather
+            // than agreed with.
+            Assert.AreEqual((byte)128, blocked[5],
+                "byte 5: Quantize.Dir of the zero vector -> code 128, the heading a contact with "
+                + "no direction encodes to");
+            Assert.AreEqual((byte)0, blocked[6], "byte 6: victimId low — a wall is nobody");
+            Assert.AreEqual((byte)0, blocked[7], "byte 7: victimId high");
 
             byte[] onMob = WritePayload(kind, b => SnapshotEvents.WriteProjectileEnded(
-                new System.Span<byte>(b), EvtMobId, ProjectileEndKind.HitMob, HitZone.Head, 0f, EvtCfg));
+                new System.Span<byte>(b), EvtMobId, ProjectileEndKind.HitMob, HitZone.Head,
+                EvtHeightHigh, EvtDirUp, EvtMobId, EvtCfg));
             Assert.AreEqual((byte)0x39, onMob[0]);
             Assert.AreEqual((byte)0xC7, onMob[1]);
             Assert.AreEqual((byte)3, onMob[2], "byte 2: endKind HitMob");
             Assert.AreEqual((byte)HitZone.Head, onMob[3], "byte 3: the zone the shooter's hitmarker needs");
-            Assert.AreEqual((byte)0, onMob[4], "byte 4: height is 0 for every ending but Blocked");
+            // app-88jb Т31 REWROTE THIS LINE'S CLAIM, not merely its number.
+            // It used to read "height is 0 for every ending but Blocked", which
+            // was true only while the sending side threw the contact height of
+            // a body away: the spark then drew on the floor under the mob
+            // instead of at the belt the round entered. A body is now a place
+            // like any other, and the height rides the same 0..MaxAimHeight
+            // scale it rides for a wall.
+            Assert.AreEqual((byte)108, onMob[4], "byte 4: contact height 2.75/6.5 -> code 108");
+            Assert.AreEqual((byte)192, onMob[5], "byte 5: hitDir (0, 1) -> code 192");
+            Assert.AreEqual((byte)0x39, onMob[6], "byte 6: victimId low (51001 = 0xC739)");
+            Assert.AreEqual((byte)0xC7, onMob[7], "byte 7: victimId high");
 
             SnapshotEventPayload db = Decoded(blocked, kind);
             Assert.AreEqual(EvtRoundId, db.Id);
             Assert.AreEqual(ProjectileEndKind.Blocked, db.EndKind);
             Assert.AreEqual(HitZone.None, db.Zone);
             Assert.That(db.Height, Is.EqualTo(EvtHeightLow).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
+            Assert.AreEqual(0, db.VictimId, "стена не жертва — VictimId обязан остаться нулём");
 
             SnapshotEventPayload dh = Decoded(onMob, kind);
             Assert.AreEqual(EvtMobId, dh.Id);
             Assert.AreEqual(ProjectileEndKind.HitMob, dh.EndKind);
             Assert.AreEqual(HitZone.Head, dh.Zone);
+            // The decoded half, asserted separately from the bytes (lesson 108).
+            Assert.AreEqual(EvtMobId, dh.VictimId,
+                "жертва не доехала через декодер");
+            Assert.AreEqual(math.PI / 2f, math.atan2(dh.Dir.y, dh.Dir.x), 1e-3f,
+                "направление удара не доехало через декодер");
+            Assert.That(dh.Height, Is.EqualTo(EvtHeightHigh).Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
         }
 
         [Test]
@@ -2951,6 +3000,49 @@ namespace Ring.Simulation.Tests
             Assert.DoesNotThrow(() => EventRelevance.ChannelFor(SimEventKind.ProjectileRicocheted));
         }
 
+        // ---- Т31. The ending that finally names its victim ----
+
+        /// app-88jb Т31: the three fields a body's ending had to throw away
+        /// until now — the contact HEIGHT, the blow's DIRECTION and the id of
+        /// WHOM it landed on — through the catalog's own codec.
+        ///
+        /// THREE DELIBERATE DEVIATIONS FROM THE PLAN'S OWN FIXTURE, all three
+        /// about what a mutation could survive rather than about taste:
+        ///   * the round's id is EvtRoundId (4919) rather than the plan's 77.
+        ///     A writer that stored the id in ONE byte instead of a u16 loses
+        ///     the high half of any number past 255 and keeps a small one
+        ///     exactly, so a two-digit id agrees with that mutation.
+        ///   * the heading is +Y, not +X. Quantize.Dir takes an angle through
+        ///     atan2, and atan2(0, 0) is 0 by contract, so the ZERO vector
+        ///     encodes to code 128 and decodes back to (1, 0) — an assertion
+        ///     that the decoded direction points along +X is satisfied by an
+        ///     assembler that passed nothing at all.
+        ///   * and the direction is therefore asserted as an ANGLE rather than
+        ///     as a component, which is the shape the Т30 tests in this file
+        ///     and its decoder sibling already use.
+        [Test]
+        public void ProjectileEnded_CarriesVictimAndHitDirection()
+        {
+            SimConfig cfg = TestConfigs.Default();
+            System.Span<byte> buf = stackalloc byte[SnapshotEvents.MaxPayloadBytes];
+            const int victimId = 900;
+            const float height = 2.4f;
+            int n = SnapshotEvents.WriteProjectileEnded(buf, EvtRoundId, ProjectileEndKind.HitMob,
+                HitZone.Head, height, new float2(0f, 1f), victimId, in cfg);
+
+            Assert.AreEqual(8, n);
+            Assert.AreEqual(SnapshotEvents.MaxPayloadBytes, n,
+                "ширина разошлась с MaxPayloadBytes — страйд буферов поедет");
+
+            Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded,
+                buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
+            Assert.AreEqual(victimId, v.VictimId, "жертва не доехала");
+            Assert.AreEqual(math.PI / 2f, math.atan2(v.Dir.y, v.Dir.x), 1e-3f,
+                "направление удара не доехало");
+            Assert.AreEqual(height, v.Height, cfg.Hero.MaxAimHeight / 255f,
+                "высота ВЫБРОШЕНА декодером — крен восстанавливать не из чего");
+        }
+
         // ---- T28.8-11. Hostile payloads: refused, never thrown ----
 
         [Test]
@@ -3073,7 +3165,19 @@ namespace Ring.Simulation.Tests
             // Shape-legal, content-illegal: the one hostile class a length
             // check can never catch, and the one that reaches furthest
             // downstream (Р82 is "refuse bad input", not merely "never throw").
-            var ended = new byte[] { 0x37, 0x13, (byte)ProjectileEndKind.Blocked, (byte)HitZone.Body, 0 };
+            // app-88jb Т31 WIDENED THE FIXTURE, NOT THE CLAIM. This array is a
+            // shape, not an assertion: the kind's payload is eight bytes since
+            // Т31, and a five-byte one would be refused as MalformedLength
+            // before a single content check ran -- taking the witness on the
+            // next line ("the same shape with legal values is accepted") down
+            // with it and leaving the four content refusals below proving
+            // nothing. The three added bytes are the new hitDir/victimId
+            // trailer, zero here because this test is about the ENUMERATORS.
+            var ended = new byte[]
+            {
+                0x37, 0x13, (byte)ProjectileEndKind.Blocked, (byte)HitZone.Body, 0,
+                0, 0, 0,
+            };
             Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileEnded, ended, EvtCfg,
                 out _, out SnapshotBlockError ok), "witness: the same shape with legal values is accepted");
             Assert.AreEqual(SnapshotBlockError.None, ok);
@@ -3165,7 +3269,8 @@ namespace Ring.Simulation.Tests
                 new System.Span<byte>(buffer), EvtSlot, (HitZone)(SnapshotEvents.MaxHitZoneValue + 1), EvtCfg),
                 "a zone outside the enum");
             Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteProjectileEnded(
-                new System.Span<byte>(buffer), EvtRoundId, ProjectileEndKind.None, HitZone.None, 0f, EvtCfg),
+                new System.Span<byte>(buffer), EvtRoundId, ProjectileEndKind.None, HitZone.None, 0f,
+                float2.zero, 0, EvtCfg),
                 "the never-written end kind");
             Assert.Throws<System.ArgumentException>(() => SnapshotEvents.WriteMobSpawned(
                 new System.Span<byte>(buffer), EvtMobId, (MobType)(SnapshotBlocks.MaxMobTypeValue + 1)),

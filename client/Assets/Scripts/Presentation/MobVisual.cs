@@ -22,12 +22,20 @@ namespace Ring.Presentation
     /// exactly four entries, the three proxies plus this stripped `_visual`)
     /// and Р375 requires them to stay upright regardless of what the model
     /// does (Ruling 46, witness `TiltedMob_KeepsItsUprightParts`, Т14).
-    /// `m.Tilt` is the AUTHORITATIVE signed magnitude in radians
-    /// (`MobState.Tilt`'s own doc, Core/SimStates.cs) — real offline, where
-    /// `RenderSnapshot.Mobs` copies `MobState` whole; always zero over the
-    /// wire until Т31 gives the network path its own integrator
-    /// (`NetworkSimBackend.cs:2176-2183` sends `Id/Type/Ai/Pos/Hp` only, no
-    /// `Tilt`, Р383's 9-byte `MobRecord`). The AXIS the scalar has no room
+    /// `m.Tilt` is the signed magnitude in radians (`MobState.Tilt`'s own
+    /// doc, Core/SimStates.cs) and this component reads ONE field on both
+    /// paths, which is the whole shape of app-88jb Т31. Offline the number is
+    /// AUTHORITATIVE: `RenderSnapshot.Mobs` copies `MobState` whole. Over the
+    /// wire it used to be always zero — `MobRecord` is nine bytes and carries
+    /// `Id/Type/Ai/Pos/Hp` only (Р383) — and Т31 did not put it on the wire
+    /// either: `NetworkSimBackend` REBUILDS it into the published pair
+    /// through `Ring.Networking.Client.MobTiltIntegrator`, which walks the
+    /// same `Impact.SpringStep` at the same `SimulationWorld.TickDt` the
+    /// server walks, from the hit event the wire does carry. So this class
+    /// was left untouched by that task on purpose (owner decision 4а, narrowed
+    /// to docs): an integrator HERE, fed by an event that reaches this layer
+    /// on both paths, would have DOUBLED the offline tilt — the authoritative
+    /// scalar plus a reconstructed one. The AXIS the scalar has no room
     /// for arrives separately, from the hit event:
     /// `ViewRegistry.HandleEvent`'s `ProjectileHit` branch calls `SetHitDir`
     /// with `SimEvent.HitDir` the instant a blow lands (Ruling 48), and this
@@ -51,12 +59,18 @@ namespace Ring.Presentation
     /// over, so a downed mob does not keep swinging lying down (`Sync`'s
     /// one-shot block, the added `|| m.Ai == MobAiState.Downed`).
     ///
-    /// ⚠ NAMED HONESTLY: a networked client sees `Ai == Downed` (Т6 rides
-    /// the wire) but never a nonzero `Tilt`, so until Т31 it shows a
-    /// downed mob only through the swing-cancel above and the stopped
-    /// locomotion Downed already implies — no visible lean. Offline shows
-    /// the whole thing. Same boundary the class doc's own paragraph above
-    /// already draws for the scalar.
+    /// ⚠ NAMED HONESTLY, AND THE NAME CHANGED WITH app-88jb Т31. A networked
+    /// client used to see `Ai == Downed` (Т6 rides the wire) but never a
+    /// nonzero `Tilt`, so a body went over showing only the swing-cancel
+    /// above and the stopped locomotion Downed already implies — no visible
+    /// lean, where offline showed the whole fall. The lean arrives with Т31,
+    /// synthesized into the pair by the backend rather than by anything here
+    /// (see the class doc's own paragraph on the scalar), so the two paths
+    /// now differ in HOW the number was obtained and not in whether there is
+    /// one. What is still not identical is exactness: the rebuilt curve is
+    /// driven by an event, so a blow whose victim this client could not
+    /// identify — or a round that had ricocheted on its way in — is missing
+    /// or overstated (the integrator's own doc prices both).
     public sealed class MobVisual : MonoBehaviour
     {
         [SerializeField] Animator _animator;
@@ -277,8 +291,13 @@ namespace Ring.Presentation
         /// event's own `HitDir` the instant a blow lands, because
         /// `MobState.Tilt` is a signed SCALAR with no direction of its own
         /// (its own doc, Core/SimStates.cs) and this is the only source of
-        /// one on this side of the wire (offline only until Т31 — see the
-        /// class doc's own network-boundary paragraph).
+        /// one on this side of the wire — ON BOTH PATHS since app-88jb Т31,
+        /// where this line used to read "offline only". The ending now
+        /// carries the victim's id, so `ViewRegistry.HandleEvent`'s lookup
+        /// finds its mob over the wire too and this call happens there as
+        /// well; the magnitude the axis is spent on arrives the other way,
+        /// rebuilt into the pair by the network backend (see the class doc's
+        /// own network paragraph).
         ///
         /// THE AXIS, NOT THE DIRECTION ITSELF: `hitDir` is the shot's unit
         /// direction of travel in the sim plane (`SimEvent.HitDir`'s own

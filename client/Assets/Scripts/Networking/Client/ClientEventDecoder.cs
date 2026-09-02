@@ -39,30 +39,42 @@ namespace Ring.Networking.Client
     /// there. Four fields with three live consumers in `Presentation` had been
     /// missing from it. A field a consumer reads as a fact and this side fills
     /// with a zero belongs here whether or not anything can be done about it.
-    ///   * a `HitMob` ending carries the ROUND's id and not the victim's, so
-    ///     `EntityId` — the mob's id for `SimEventKind.ProjectileHit` — stays
-    ///     0. 0 IS SAFE THERE and only there: entity ids are minted from a
-    ///     counter that starts at 1, so no mob can ever be 0. The round's id
-    ///     goes to `SecondaryEntityId`, which is the convention the simulation
-    ///     itself uses for this kind. The cost is that a per-mob hit flash has
-    ///     no view to look up on a networked client; the round's own end still
-    ///     retires its tracer. THE VICTIM'S ARCHETYPE GOES WITH ITS IDENTITY:
-    ///     the simulation puts `mob.Type` in this event too, so `MobType`
-    ///     reads the enum's zero — which is `Chaser`, a real archetype — and
-    ///     the hit spark's height is picked from it against belts that differ
-    ///     by a factor of two between the two archetypes. It cannot be
-    ///     restored the way `MobDied`'s is below: what is missing here is not
-    ///     the type but the identity, and no table can be asked about a mob
-    ///     nobody named.
-    ///   * a `HitPlayer` ending is the SAME shortfall with a WORSE zero.
-    ///     `SimEventKind.ProjectileHitPlayer`'s `EntityId` is the victim's
-    ///     PLAYER SLOT, and slot 0 is a real seat. So `EntityId` on this kind
-    ///     MUST NOT BE READ on a networked client: it is not "no victim", it
-    ///     is "seat 0", and the victim is simply not on the wire. `Amount`
-    ///     (the damage), `HitDir` (the round's travel direction) and
-    ///     `PlayerIndex` (the shooter) are missing for the same reason — the
-    ///     whole payload of a projectile ending is the round's id, the ending
-    ///     kind, the zone and the contact height.
+    ///   * a `HitMob` ending CARRIES ITS VICTIM SINCE app-88jb Т31, and this
+    ///     entry used to say the opposite. The payload's own `Id` is still the
+    ///     ROUND's — it addresses the subscription and retires the tracer, and
+    ///     it goes to `SecondaryEntityId`, the convention the simulation
+    ///     itself uses for this kind — while the victim rides its own
+    ///     `VictimId` field and lands in `EntityId`. So the per-mob hit flash
+    ///     and the tilt axis DO find a view on a networked client now, which
+    ///     is what the widening was for. What is still missing is the
+    ///     VICTIM'S ARCHETYPE: the simulation puts `mob.Type` in this event
+    ///     too, the wire has no room for it, and `MobType` therefore leaves
+    ///     this class at the enum's zero — which is `Chaser`, a real
+    ///     archetype rather than an absence. Nothing in `Presentation` reads
+    ///     that field on this kind (all five readers take it on `MobDied`),
+    ///     and the one consumer that needs the archetype —
+    ///     `NetworkSimBackend`'s tilt integrator — asks `MobTypeMemory`
+    ///     itself, in the moment the event comes due, precisely so that a
+    ///     miss stays distinguishable from a chaser (Ruling 257). An earlier
+    ///     wording of this entry also said the hit spark's height is "picked
+    ///     from `MobType` against belts": that stopped being true at Т3, when
+    ///     the zone-height table went (B2-I10) — the spark reads `e.Height`,
+    ///     which Т31 put on the wire for this ending.
+    ///   * a `HitPlayer` ending keeps the WORSE ZERO, and the trap is
+    ///     unchanged: `SimEventKind.ProjectileHitPlayer`'s `EntityId` is the
+    ///     victim's PLAYER SLOT, and slot 0 is a real seat. So `EntityId` on
+    ///     this kind MUST NOT BE FILLED from the payload's `VictimId`: there
+    ///     is no value a seat could ride under that would mean "nobody", so
+    ///     the victim is simply not on the wire and this side leaves the
+    ///     field unclaimed. `HitDir` and the contact height DO arrive since
+    ///     Т31 — one call on the sending side serves both bodies — so what is
+    ///     left missing here is `Amount` (the damage) and the victim itself.
+    ///     `PlayerIndex` (the shooter) is not on the wire either, and it is
+    ///     the one of them the receiver can still answer for: this class
+    ///     leaves it at `ProjectileIds.NoOwner` and
+    ///     `NetworkSimBackend.RestoreShooter` puts the round's owner back
+    ///     from the tracer table, for this kind and for `HitMob` alike
+    ///     (Ruling 256) — the same shape `RestoreMobType` has for `MobDied`.
     ///   * a `Blocked` ending carries no SURFACE NORMAL, and the zero it
     ///     leaves behind is read as a fact today. The simulation puts the
     ///     arena's normal in `HitDir` for a wall or an obstacle and exactly
@@ -301,11 +313,44 @@ namespace Ring.Networking.Client
                             e.Kind = SimEventKind.ProjectileHit;
                             e.SecondaryEntityId = p.Id;
                             e.Zone = p.Zone;
+                            // app-88jb Т31. The VICTIM, in the field this sim
+                            // kind puts it in — `SimEventKind.ProjectileHit`'s
+                            // own convention, the same one the simulation
+                            // fills offline. `ViewRegistry.HandleEvent` finds
+                            // the struck mob's view by it (and hands the
+                            // visual its tilt axis), `GameFeelDirector` finds
+                            // the same view for the hit flash, and
+                            // `NetworkSimBackend`'s tilt integrator asks the
+                            // archetype memory about it.
+                            e.EntityId = p.VictimId;
+                            // The axis half of that tilt: a signed scalar has
+                            // no direction of its own (`MobState.Tilt`).
+                            e.HitDir = p.Dir;
+                            // And where the round entered the body —
+                            // `PersistentPropsDirector.SpawnHitSpark` places
+                            // the spark at exactly this height.
+                            e.Height = p.Height;
                             break;
                         case ProjectileEndKind.HitPlayer:
                             e.Kind = SimEventKind.ProjectileHitPlayer;
                             e.SecondaryEntityId = p.Id;
                             e.Zone = p.Zone;
+                            // app-88jb Т31: the same two facts as the mob
+                            // ending above, from the same one call on the
+                            // sending side — the blow's direction and the
+                            // height it landed at, which
+                            // `PersistentPropsDirector.SpawnPlayerHitSpark`
+                            // reads.
+                            e.HitDir = p.Dir;
+                            e.Height = p.Height;
+                            // ⚠ AND `EntityId` IS DELIBERATELY NOT TOUCHED,
+                            // unlike one case up. It is the victim's player
+                            // SLOT for this kind, seat 0 is a real seat, and
+                            // the payload therefore carries no victim at all
+                            // (Ruling 243) — `p.VictimId` is a mob's id or a
+                            // zero meaning "no mob", and assigning it here
+                            // would name seat 0 as the victim of every hit on
+                            // a collector.
                             break;
                         default:
                             // Unreachable through `TryReadPayload`, which

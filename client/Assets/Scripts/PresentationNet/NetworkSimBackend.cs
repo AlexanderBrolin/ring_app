@@ -253,6 +253,16 @@ namespace Ring.Presentation.Net
         /// things that have to go with a match.
         MobTypeMemory _mobTypes;
 
+        /// The tilt a struck mob shows on a networked client, rebuilt here
+        /// because it never rides the wire (app-88jb Т31, owner decision
+        /// variant "б"). Beside `_mobTypes` for more than tidiness: it is the
+        /// same kind of thing — this class's own memory of a fact the frames
+        /// it decodes cannot carry — it is keyed by the same entity ids, and
+        /// it is cleared by the same epoch change, in the same place. Its own
+        /// class doc argues why the reconstruction lives in the backend and
+        /// not in `MobVisual`.
+        MobTiltIntegrator _mobTilt;
+
         NetTimings _timings;
         SimConfig _cfg;
         bool _hasConfig;
@@ -1362,6 +1372,38 @@ namespace Ring.Presentation.Net
 
             int ticks = math.max(0, renderTick - _lastRenderTick);
             _lastRenderTick = renderTick;
+
+            // app-88jb Т31: the tilt of every body still rocking, stepped by
+            // the ticks the render clock just covered and pasted into the
+            // published pair.
+            //
+            // EVERY FRAME, AND AFTER THE RESOLVE — `ResolveRenderPair`'s
+            // `CopyFrom` overwrites every mob slot wholesale (from a frame
+            // whose `MobRecord` carries no tilt at all), so a patch written
+            // ahead of it would be erased the same frame. Same ordering rule
+            // `BlendOwnPlayer` above follows for the local seat, and for the
+            // same reason — and, like that call, it runs whether or not the
+            // pair actually moved: on a starved frame the pair holds last
+            // frame's picture and this rewrites the same numbers into it. The
+            // one residue that leaves is a body whose slot was freed on the
+            // settle snap: its last written pair stays in `_curr` until the
+            // next resolved pair zeroes the array, and by definition that
+            // pair is under `Impact.RestEpsilon` — a ten-thousandth of a
+            // radian, which is the tolerance the snap itself is drawn at.
+            //
+            // BY TICKS, NOT BY FRAME TIME (Ruling 251): the spring's discrete
+            // damping is part of its answer, so the client steps the same
+            // `SimulationWorld.TickDt` the server does, however many frames it
+            // draws between two ticks. `ticks` is zero on a frame inside one
+            // tick and the integrator does nothing then, which is the
+            // ordinary case rather than a special one.
+            //
+            // `_curr` ONLY. `MobVisual.Sync` reads `curr.Mobs[i]`, and nothing
+            // reads `prev.Tilt` — the pair's older half is used for positions
+            // (`FindMobPrevPos` takes `Pos`), so a second patch there would be
+            // work no consumer could see.
+            _mobTilt.StepTicks(ticks, in _cfg);
+            _mobTilt.WriteInto(_curr.Mobs, _curr.MobCount);
             return ticks;
         }
 
@@ -1607,6 +1649,10 @@ namespace Ring.Presentation.Net
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
             _mobTypes = new MobTypeMemory(cfg.Arena.MaxMobs);
+            // app-88jb Т31: sized by the same cap, for the same reason — a
+            // frame can name no more bodies than one generation holds, so no
+            // reachable traffic can fill this table past its refusal.
+            _mobTilt = new MobTiltIntegrator(in cfg);
 
             _prev = new RenderSnapshot(in cfg);
             _curr = new RenderSnapshot(in cfg);
@@ -2441,6 +2487,10 @@ namespace Ring.Presentation.Net
                 // Filled here rather than by the decoder, and before anything
                 // reads the event — see `RestoreMobType`.
                 RestoreMobType(ref decoded);
+                // app-88jb Т31, and the ORDER is load-bearing: this reads the
+                // tracer table, and `RouteToTracers` below retires the very
+                // round it asks about (see `RestoreShooter`).
+                RestoreShooter(ref decoded);
 
                 // THE ROUTING IS THE CALLER'S, NOT THE DECODER'S, and the split
                 // is the point of moving the mapping out (Task 44d): turning
@@ -2478,12 +2528,20 @@ namespace Ring.Presentation.Net
         /// this class owns. Moving the lookup there would mean handing a pure
         /// function a table it would then have to be kept in step with.
         ///
-        /// `MobDied` AND NOT `ProjectileHit`, and the difference is not a
-        /// choice. The wire's projectile-ending payload names the ROUND and
-        /// never its victim, so a hit on a mob arrives with no mob in it at
-        /// all — what is missing there is the identity, and no table can be
-        /// asked about a mob nobody named. `MobDied` carries the id, so the
-        /// type is a lookup away.
+        /// `MobDied` AND NOT `ProjectileHit`, and app-88jb Т31 rewrote the
+        /// REASON without changing the branch. This paragraph used to say a
+        /// hit on a mob "arrives with no mob in it at all" — since Т31 it
+        /// arrives with the victim's id in `EntityId`, so the type IS a lookup
+        /// away for that kind too. It is still not looked up, on two grounds
+        /// (coordinator Rulings 248/257): nothing in `Presentation` reads
+        /// `e.MobType` on `ProjectileHit` — all five readers take it on
+        /// `MobDied` — and the one consumer that does need the archetype, the
+        /// tilt integrator, must be able to tell a MISS from an answer. This
+        /// method cannot give it that: `MobType`'s zero is `Chaser`, a real
+        /// archetype, so a restored-or-not field says nothing about which. So
+        /// the integrator asks `MobTypeMemory` itself, at the moment the event
+        /// comes due, and skips the blow when the memory says no (see
+        /// `ApplyMobHit`).
         ///
         /// A MISS LEAVES THE EVENT EXACTLY AS DECODED, zero included. The
         /// memory holds the last two frames' rosters (`MobTypeMemory`), and a
@@ -2494,6 +2552,44 @@ namespace Ring.Presentation.Net
         {
             if (e.Kind != SimEventKind.MobDied) return;
             if (_mobTypes.TryGetType(e.EntityId, out MobType type)) e.MobType = type;
+        }
+
+        /// The SHOOTER behind a projectile ending, put back from the tracer
+        /// table (app-88jb Т31, coordinator Rulings 247/256) — the second
+        /// field the wire drops that this side can still answer for, and the
+        /// same shape as `RestoreMobType` above.
+        ///
+        /// INTO `PlayerIndex`, WHICH IS THIS KIND'S OWN CONVENTION rather
+        /// than a spare field: `SimEvent.PlayerIndex`'s master list puts
+        /// `ProjectileHit` and `ProjectileHitPlayer` under the ATTACKER
+        /// convention ("the SHOOTER behind the blow, i.e. the projectile's
+        /// OwnerIndex, `ProjectileIds.NoOwner` for a mob's round"), and the
+        /// simulation fills exactly that field offline. One field, one
+        /// meaning, both backends — so the tilt integrator reads the shooter
+        /// where the offline path already writes it, and Presentation gets an
+        /// honest attacker for free.
+        ///
+        /// ON ARRIVAL, NOT ON DELIVERY, AND THAT IS FORCED. `RouteToTracers`
+        /// retires the round on this very record, in the same loop iteration
+        /// a few lines below; the table then holds the answer only until the
+        /// render clock prunes past the ending's tick, which is well before
+        /// the event comes due. Asking later would be asking a table that has
+        /// already forgotten.
+        ///
+        /// A MISS LEAVES `NoOwner` BEHIND, exactly as a miss above leaves a
+        /// zero archetype: the reachable sources are this client's own tracer
+        /// refusals (a full table, a truncated id already in use) and a
+        /// reorder that landed the ending before the spawn. The blow is then
+        /// rebuilt on the Gunner rail — which is the honest answer to "the
+        /// round was never announced to me", not a guess.
+        void RestoreShooter(ref SimEvent e)
+        {
+            if (e.Kind != SimEventKind.ProjectileHit && e.Kind != SimEventKind.ProjectileHitPlayer)
+                return;
+            // The ROUND's id, which is where both these kinds keep it
+            // (`SecondaryEntityId`; `EntityId` is the victim).
+            if (_tracers.TryGetOwner(e.SecondaryEntityId, out _, out byte ownerIndex))
+                e.PlayerIndex = ownerIndex;
         }
 
         /// Stops this client predicting its own corpse (Р41/Р59, Stage 2 Task
@@ -2664,7 +2760,40 @@ namespace Ring.Presentation.Net
                    && _events.TryDequeue(renderTick, out SimEvent due))
             {
                 _frameEvents[_frameEventCount++] = due;
+                // app-88jb Т31: the blow's MOMENT, taken in the same frame the
+                // spark and the hit flash are shown rather than when the
+                // record arrived. The three are one impact seen three ways,
+                // and an impulse applied `InterpBufferTicks` early would tip
+                // the body before the round reached it on screen.
+                if (due.Kind == SimEventKind.ProjectileHit) ApplyMobHit(in due);
             }
+        }
+
+        /// Turns one delivered `ProjectileHit` into an angular impulse on the
+        /// body it names (app-88jb Т31, Rulings 255/257).
+        ///
+        /// THE ARCHETYPE IS ASKED FOR HERE, NOT CARRIED IN THE EVENT, and that
+        /// is the whole reason `RestoreMobType` was not widened to this kind:
+        /// `SimEvent.MobType`'s zero is `Chaser`, a REAL archetype, so a field
+        /// filled from a lookup that failed is indistinguishable from a field
+        /// filled from one that succeeded. Asked directly, the memory answers
+        /// `false` and this method applies nothing — a body it cannot identify
+        /// stays upright, which is the same contract
+        /// `SimulationWorld.DamageMob` states for a mob that dies on the blow
+        /// ("shows its tilt to nobody"). The integrator's own class doc names
+        /// the two ways that miss happens; neither is a defect to be found
+        /// later.
+        ///
+        /// `e.PlayerIndex` IS THE SHOOTER by this kind's own convention, put
+        /// back from the tracer table on arrival (`RestoreShooter`) because
+        /// the mass and the speed the moment is built from both fork on it.
+        void ApplyMobHit(in SimEvent e)
+        {
+            if (!_mobTypes.TryGetType(e.EntityId, out MobType type)) return;
+
+            ref readonly MobSimConfig target = ref SimConfig.MobConfigFor(in _cfg, type);
+            _mobTilt.Apply(e.EntityId, type,
+                MobTiltIntegrator.AngularImpulseFor(e.PlayerIndex, in target, e.Height, in _cfg));
         }
 
         /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the
@@ -2741,6 +2870,11 @@ namespace Ring.Presentation.Net
             // entity ids from 1 again, so a remembered id would answer with
             // the archetype of a mob from the match before (fix-round 1, G-2).
             _mobTypes.Reset();
+            // And the fourth, keyed the same way and cleared for the same
+            // reason (app-88jb Т31): a slot that outlived the match would tilt
+            // whatever body the new one happens to mint that id for — a wrong
+            // answer rather than a missing one.
+            _mobTilt.Reset();
             if (restarted) _matchRestartedPending = true;
         }
 

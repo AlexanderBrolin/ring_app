@@ -28,10 +28,15 @@ namespace Ring.Simulation.Combat
     /// Impact.SpringStep (Т1), which owns the spring, the integration and the
     /// rest snap as one thing. THREE callers need exactly that step and one of
     /// them is outside this assembly: the mob pass below, the collector pass
-    /// Т7 adds beside it, and Presentation's MobVisual (Т31), which rebuilds a
-    /// mob's tilt from the hit event because tilt never rides the wire (Р383)
-    /// -- and MobVisual cannot see an `internal`. One line per body here, not
-    /// a re-typed formula.
+    /// Т7 adds beside it, and Ring.Networking.Client.MobTiltIntegrator (Т31),
+    /// which rebuilds a struck mob's tilt on a networked client because tilt
+    /// never rides the wire (Р383). This sentence named Presentation's
+    /// MobVisual and gave "MobVisual cannot see an `internal`" as the reason
+    /// the step is public; the owner's decision of 2026-09-02 moved that
+    /// reconstruction into the network backend, so the caller's name changed
+    /// and the reason did not -- Ring.Networking is outside
+    /// Simulation/AssemblyInfo.cs's single InternalsVisibleTo just as
+    /// Ring.Presentation is. One line per body here, not a re-typed formula.
     ///
     /// PLACEMENT IN TickAll: immediately after ProjectileSystem.Update and
     /// before WaveSystem.Update. By that point this tick's hits are resolved,

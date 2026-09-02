@@ -939,5 +939,47 @@ namespace Ring.Simulation.Core
         /// in this file); a hand-built test fixture may still leave it
         /// null, same as ArenaSimConfig's arrays.
         public ItemDef[] Items;
+
+        /// ONE HOME FOR THE SWITCH over `MobType` (app-88jb Т31, coordinator
+        /// Ruling 259). The four archetypes are four separate FIELDS of this
+        /// struct rather than an array, so picking one is a branch — and that
+        /// branch is written HERE, on the type that owns the fields, because
+        /// it now has two callers on opposite sides of the assembly line:
+        /// `SimulationWorld.MobConfigRefFor` delegates to it (and the
+        /// world's own value overload delegates to that), and the client's
+        /// `Ring.Networking.Client.MobTiltIntegrator` reads the archetype's
+        /// spring and impact numbers out of a config it holds by value. A
+        /// third hand-written copy of the same four-way choice is exactly what
+        /// rule 2 forbids — and the fork is not hypothetical: `MobDied`'s HP
+        /// scale and the props director already carry narrower copies of it.
+        ///
+        /// `ref readonly`, SO NOTHING IS COPIED. `MobSimConfig` is a
+        /// fifteen-field struct and this is asked from inside per-mob and
+        /// per-pair loops (finding Н-43, Т22: the copies alone tripled a full
+        /// test run once). Returning a reference out of an `in` parameter is
+        /// what makes that possible at all — the reference points into the
+        /// caller's own storage, so it is exactly as long-lived as the config
+        /// the caller passed, and a caller that wants to KEEP the answer past
+        /// a hot-tweak migration takes the copy deliberately (the world's own
+        /// value overload).
+        ///
+        /// AN UNKNOWN ARCHETYPE THROWS rather than falling back to one of the
+        /// four: `MobState.Type` can only ever hold a value `SpawnMob`
+        /// constructed, so an unmatched one means something upstream is
+        /// already broken — the same "refuse loudly" contract the world's
+        /// overload carried before it delegated here.
+        public static ref readonly MobSimConfig MobConfigFor(in SimConfig cfg, MobType type)
+        {
+            switch (type)
+            {
+                case MobType.Chaser: return ref cfg.Chaser;
+                case MobType.Gunner: return ref cfg.Gunner;
+                case MobType.Elite: return ref cfg.Elite;
+                case MobType.Director: return ref cfg.Director;
+                default:
+                    throw new System.ArgumentOutOfRangeException(nameof(type), type,
+                        "unknown archetype");
+            }
+        }
     }
 }

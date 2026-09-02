@@ -193,7 +193,18 @@ namespace Ring.Networking.Protocol
 
         /// Decoded unit heading: the round's horizontal direction for
         /// `ProjectileSpawned`, the blow's impact direction for
-        /// `PlayerDamaged`, the wall normal for `DashRicocheted`.
+        /// `PlayerDamaged`, the wall normal for `DashRicocheted` and — since
+        /// app-88jb Т31 — the round's travel direction at contact for a
+        /// `ProjectileEnded` that ended on a BODY (`HitMob`/`HitPlayer`).
+        ///
+        /// ⚠ THE TWO SURFACE ENDINGS CARRY NO HEADING, and the byte they
+        /// still spend on one decodes to `(1, 0)` rather than to nothing:
+        /// `Blocked` and `Expired` are written with the zero vector, which
+        /// `Quantize.Dir` takes through `atan2(0, 0)` = 0, i.e. the middle
+        /// code. A reader must therefore take the ENDING KIND first and read
+        /// this field only for the two body endings — the same "take the
+        /// discriminator first" rule `ownerIndex` already imposes on the two
+        /// speed fields above.
         public float2 Dir;
 
         /// Contact point of a `ProjectileRicocheted` (app-88jb Т30), in world
@@ -226,6 +237,15 @@ namespace Ring.Networking.Protocol
         /// Meters above ground: the muzzle height for `ProjectileSpawned`, the
         /// contact height for a `Blocked` `ProjectileEnded` and, since app-88jb
         /// Т8, the contact height of the blow for `PlayerDamaged` (0 otherwise).
+        ///
+        /// app-88jb Т31 ADDED THE TWO BODY ENDINGS to that list: a `HitMob`
+        /// and a `HitPlayer` `ProjectileEnded` now carry the height the round
+        /// entered the body at, on the same `cfg.Hero.MaxAimHeight` scale the
+        /// wall contact rides. Until then the assembler wrote a zero for both
+        /// — "a body is not a surface" — and every impact spark on a networked
+        /// client drew on the FLOOR under the target instead of at the belt
+        /// that was hit (`PersistentPropsDirector.SpawnHitSpark` and
+        /// `SpawnPlayerHitSpark` both read this field).
         public float Height;
 
         /// Speed of the round that landed, in m/s (app-88jb Т8). Quantized against
@@ -257,6 +277,29 @@ namespace Ring.Networking.Protocol
 
         /// `ProjectileEnded` only.
         public ProjectileEndKind EndKind;
+
+        /// The entity the round ended ON (app-88jb Т31): a MobState.Id for
+        /// HitMob, 0 for every other ending. Without it a networked client
+        /// knows WHAT was hit but not WHOM to tilt (finding D2-C2). NOT `Id`
+        /// above — that field is the ROUND's own id, which the tracer and the
+        /// ghost are retired by, and it stays so.
+        ///
+        /// THREE READERS ON THE CLIENT, AND `MobVisual` IS NONE OF THEM. An
+        /// earlier wording of this doc named it, from the red phase, while the
+        /// plan still rebuilt the tilt inside the view; the owner put that
+        /// reconstruction in the network backend instead (Ruling 255), and
+        /// this is the measured list. `ClientEventDecoder` lifts the field
+        /// into `SimEvent.EntityId` on the HitMob ending — and only there —
+        /// after which three consumers address a body by it:
+        /// `GameFeelDirector.HandleProjectileHit` flashes the view it finds by
+        /// that id, `ViewRegistry.HandleEvent` gives the struck body its tilt
+        /// AXIS through `SetHitDir` on the view it finds by that id, and
+        /// `NetworkSimBackend.ApplyMobHit` asks `MobTypeMemory` for the
+        /// victim's archetype by it and keys `MobTiltIntegrator`'s slot on it.
+        /// `MobVisual` never sees an id at all: the backend patches the
+        /// finished `Tilt` into the published pair, and the component draws
+        /// the same field it always drew.
+        public int VictimId;
 
         /// `MobSpawned` only.
         public MobType MobType;
@@ -295,7 +338,8 @@ namespace Ring.Networking.Protocol
     ///
     ///   ProjectileSpawned  8 B  id u16 | ownerIndex u8 | dir u8 | horizSpeed u8
     ///                           | velZ u16 | height u8
-    ///   ProjectileEnded    5 B  id u16 | endKind u8 | zone u8 | height u8
+    ///   ProjectileEnded    8 B  id u16 | endKind u8 | zone u8 | height u8
+    ///                           | hitDir u8 | victimId u16
     ///   ShotHeard          1 B  ownerIndex u8
     ///   MobSpawned         3 B  id u16 | mobType u8
     ///   MobDied            4 B  id u16 | attackerIndex u8 | zone u8
@@ -370,9 +414,20 @@ namespace Ring.Networking.Protocol
     /// may edit Tasks 26/27's files.
     public static class SnapshotEvents
     {
-        /// The largest payload any kind produces — `ProjectileSpawned`'s 8
-        /// bytes. The assembler sizes its per-record payload slots by this, so
-        /// a carried-over event never needs a variable-length pool.
+        /// The largest payload any kind produces. TWO KINDS TIE AT IT since
+        /// app-88jb Т31 — `ProjectileSpawned` and `ProjectileEnded` — where
+        /// this note used to name a sole widest kind. The assembler sizes its
+        /// per-record payload slots by this, so a carried-over event never
+        /// needs a variable-length pool.
+        ///
+        /// ⛔ AND THE CATALOG HAS NOWHERE LEFT TO GROW WITHOUT MOVING IT.
+        /// Eight bytes is exactly this constant, so the next field added to
+        /// EITHER of the two tying kinds lifts the ceiling — and the ceiling
+        /// is what a dozen stride expressions in `SnapshotAssembler` compute
+        /// their per-record slots from, plus every `stackalloc` and pooled
+        /// buffer sized by it. Т31 fit inside the existing ceiling and moved
+        /// no stride; the kind after it will not be so cheap, and that is a
+        /// fact to be budgeted rather than discovered.
         public const int MaxPayloadBytes = 8;
 
         /// Highest legal wire value of `HitZone` / `ProjectileEndKind`. Same
@@ -474,7 +529,14 @@ namespace Ring.Networking.Protocol
             switch (kind)
             {
                 case SnapshotEventKind.ProjectileSpawned: return 8;
-                case SnapshotEventKind.ProjectileEnded: return 5;
+
+                // app-88jb Т31: three bytes wider than it was — `hitDir u8 |
+                // victimId u16` ride along now, so a networked client can put
+                // the spark at the contact, flash the body that was hit and
+                // give it an axis to tilt about. Which makes it the SECOND
+                // kind at `MaxPayloadBytes` (see that constant's own note);
+                // the doc table above was rewritten with it.
+                case SnapshotEventKind.ProjectileEnded: return 8;
                 case SnapshotEventKind.MobDied: return 4;
 
                 // app-88jb Т8: three bytes wider than the case it used to
@@ -552,8 +614,43 @@ namespace Ring.Networking.Protocol
             return SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileSpawned);
         }
 
+        /// A round's ending: `id u16 | endKind u8 | zone u8 | height u8 |
+        /// hitDir u8 | victimId u16` (app-88jb Т31 added the last three).
+        ///
+        /// `hitDir` IS THE ROUND'S TRAVEL DIRECTION AT CONTACT, and it is
+        /// written for BOTH BODY ENDINGS through one call rather than a
+        /// special case per kind: `SimEvent.HitDir` is filled by the emit
+        /// sites of `ProjectileHit` and `ProjectileHitPlayer` alike, and the
+        /// receiving side needs it for both — it is the axis a struck mob
+        /// tips about, and the same fact about a hit on a collector.
+        /// `Blocked` and `Expired` are handed the ZERO VECTOR instead, which
+        /// encodes as code 128 by `Quantize.Dir`'s `atan2(0, 0)` contract; the
+        /// reader is told not to read the field for those two (see
+        /// `SnapshotEventPayload.Dir`), so what the byte holds for them is a
+        /// consequence of writing every byte rather than a claim about a
+        /// direction. The wall NORMAL is a different quantity, is not on the
+        /// wire at all, and stays the recorded limit `ClientEventDecoder`'s
+        /// own class doc names — not this task's business.
+        ///
+        /// `victimId` IS THE `MobState.Id` OF A `HitMob` AND ZERO EVERYWHERE
+        /// ELSE, `HitPlayer` INCLUDED — the asymmetry is the decision
+        /// (coordinator Ruling 243). Entity ids are minted from a counter that
+        /// starts at 1, so 0 is a safe "no mob" for the three other endings;
+        /// a hit on a PLAYER has no such spare value, because the victim there
+        /// is a SEAT and seat 0 is a real one. There is no sentinel a player
+        /// slot could ride under, so the victim of a `HitPlayer` is simply not
+        /// on the wire, and the field stays 0 rather than carrying a number
+        /// the receiver would read as a mob's identity.
+        ///
+        /// ⛔ EIGHT BYTES IS EXACTLY `MaxPayloadBytes`, AND THERE IS NOWHERE
+        /// LEFT TO GROW. This kind now TIES `ProjectileSpawned` at the
+        /// ceiling, so one more field on either of them lifts the ceiling
+        /// itself — and the ceiling is the stride a dozen expressions in
+        /// `SnapshotAssembler` size their per-record payload slots by. Т31
+        /// moved none of them because it fit; the next widening will move all
+        /// of them.
         public static int WriteProjectileEnded(System.Span<byte> dst, int id, ProjectileEndKind endKind,
-            HitZone zone, float height, in SimConfig cfg)
+            HitZone zone, float height, float2 hitDir, int victimId, in SimConfig cfg)
         {
             Reserve(dst, SnapshotEventKind.ProjectileEnded);
             if ((byte)endKind == (byte)ProjectileEndKind.None || (byte)endKind > MaxProjectileEndKindValue)
@@ -566,6 +663,18 @@ namespace Ring.Networking.Protocol
             dst[2] = (byte)endKind;
             dst[3] = (byte)zone;
             dst[4] = Quantize.Unit(height, cfg.Hero.MaxAimHeight);
+            // EVERY BYTE IS WRITTEN, the two surface endings' neutral pair
+            // included: `Reserve` only checks the destination's LENGTH and
+            // never clears it, and the caller's pool is reused across records
+            // (the assembler's per-slot span) or sentinel-filled (the codec
+            // tests' own buffer). A byte left unwritten would decode as
+            // whatever the previous record put there.
+            dst[5] = Quantize.Dir(hitDir);
+            // The same `& 0xFFFF` truncation `id` above takes, and the same
+            // lossy contract with it (`SnapshotEventPayload.Id`): two ids
+            // exactly 65536 apart share one code, and mapping a code back to
+            // a live mob is the receiver's job.
+            WriteU16(dst, 6, (ushort)(victimId & 0xFFFF));
             return PayloadBytesFor(SnapshotEventKind.ProjectileEnded);
         }
 
@@ -827,6 +936,16 @@ namespace Ring.Networking.Protocol
                 }
                 case SnapshotEventKind.ProjectileEnded:
                 {
+                    // app-88jb Т31: BYTES 5-7 ARE UNCONSTRAINED, stated here
+                    // rather than left to be inferred from their absence
+                    // (the shape Т30 used for the reflection one case down).
+                    // Every one of the 256 direction codes decodes to a
+                    // heading by `Quantize.DirBack`, and every u16 is a legal
+                    // entity code — pairing one with a live mob of THIS frame
+                    // is the receiver's job (Р278), and finding no mob is an
+                    // ordinary outcome rather than malformed content. Only
+                    // the two enumerators below have a domain to be outside
+                    // of.
                     if (payload[2] == (byte)ProjectileEndKind.None || payload[2] > MaxProjectileEndKindValue
                         || payload[3] > MaxHitZoneValue)
                     { error = SnapshotBlockError.MalformedContent; return false; }
@@ -922,6 +1041,15 @@ namespace Ring.Networking.Protocol
                     value.EndKind = (ProjectileEndKind)payload[2];
                     value.Zone = (HitZone)payload[3];
                     value.Height = Quantize.UnitBack(payload[4], cfg.Hero.MaxAimHeight);
+                    // app-88jb Т31. Both are decoded for EVERY ending rather
+                    // than under a branch on `EndKind`: the codec's job is to
+                    // hand back what the bytes say, and which fields MEAN
+                    // something for which ending is the per-kind contract the
+                    // two fields' own docs carry (`Dir`, `VictimId`). A branch
+                    // here would be that contract written a second time, in
+                    // the one place that cannot see who is asking.
+                    value.Dir = Quantize.DirBack(payload[5]);
+                    value.VictimId = ReadU16(payload, 6);
                     break;
 
                 case SnapshotEventKind.ShotHeard:

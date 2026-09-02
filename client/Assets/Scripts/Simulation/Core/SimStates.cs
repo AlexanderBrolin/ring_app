@@ -310,15 +310,21 @@ namespace Ring.Simulation.Core
         /// no branch. The return is a spring parameterized through zeta and the
         /// settle time (Impact.SpringFromSettle), UNDERDAMPED on purpose: the body
         /// rocks and comes back, and that rock is what reads as a blow.
-        /// NOT ON THE WIRE (Р383): MobRecord is exactly 9 bytes and has no room.
-        /// A NETWORKED CLIENT THEREFORE SHOWS NO MOB TILT AT ALL TODAY, and saying
-        /// so in the present tense is the point: the client-side integrator that
-        /// rebuilds it from the hit event arrives with Т31 (Ф3), which widens
-        /// ProjectileEnded to carry hitDir and the victim. Until then this field
-        /// is authoritative-only and OFFLINE-only, and the В1 playtest was run
-        /// solo offline for exactly that reason. Rebuilding it there is legal
-        /// because tilt decides no game outcome -- the hit parts do not rotate
-        /// with it (Р375).
+        /// STILL NOT ON THE WIRE (Р383): MobRecord is exactly 9 bytes and has no
+        /// room. What CHANGED with app-88jb Т31 is that a networked client no
+        /// longer shows a rigid body because of it: Т31 widened ProjectileEnded
+        /// to carry the victim's id, the contact height and the blow's
+        /// direction, and Ring.Networking.Client.MobTiltIntegrator rebuilds this
+        /// pair on the client from that event -- the same Impact.SpringStep at
+        /// the same SimulationWorld.TickDt -- and Ring.Presentation.Net.
+        /// NetworkSimBackend writes it into the published render pair, so
+        /// Presentation reads one field on both paths. This paragraph used to
+        /// say "no mob tilt at all today" and "authoritative-only, OFFLINE-only"
+        /// in the present tense; both are past tense now, and the В1 playtest
+        /// was run solo offline for exactly that reason. Rebuilding it on the
+        /// client is legal because tilt decides no game outcome -- the hit parts
+        /// do not rotate with it (Р375) -- and the rebuild writes into a render
+        /// snapshot, never into a world.
         public float Tilt, TiltVel;
     }
 

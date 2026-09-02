@@ -260,7 +260,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.Blocked,
-                HitZone.None, height: 1.5f, in cfg);
+                HitZone.None, height: 1.5f, hitDir: float2.zero, victimId: 0, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileEnded, bytes, in cfg);
 
@@ -281,7 +281,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.Expired,
-                HitZone.None, height: 0f, in cfg);
+                HitZone.None, height: 0f, hitDir: float2.zero, victimId: 0, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileEnded, bytes, in cfg);
 
@@ -292,19 +292,28 @@ namespace Ring.Simulation.Tests
                 "SimEvent.EntityId must be the ROUND for this ending too");
         }
 
+        /// app-88jb Т31 RENAMED AND REWROTE THIS TEST RATHER THAN ADDING ONE
+        /// BESIDE IT (coordinator Ruling 244). It used to assert the opposite
+        /// of what it asserts now — that `EntityId` stays 0 because "the victim
+        /// mob is not on the wire" — and that was a true statement about the
+        /// five-byte payload, not a rule. Two tests claiming opposite things
+        /// about one byte are two homes of one rule, so the old one is gone
+        /// rather than deprecated; and the NAME went with the claim, on the
+        /// precedent of `ProtocolVersion_Current_IsPinnedToFour` (a name whose
+        /// meaning has worn off is worse than no name at all).
         [Test]
-        public void ProjectileEnded_HitMob_PutsTheRoundInTheSecondaryFieldAndLeavesTheVictimUnclaimed()
+        public void ProjectileEnded_HitMob_NamesTheVictimInEntityId_AndKeepsTheRoundInTheSecondaryField()
         {
             // Sender: ProjectileHit -> AddProjectileEnded(ev.SecondaryEntityId,
-            // HitMob, ev.Zone, 0). The wire carries the ROUND, never the mob:
-            // `SimEvent.EntityId` is the victim's id for this sim kind and the
-            // victim is simply not on the wire, so 0 has to stay 0 — safe here
-            // and only here, because entity ids are minted from a counter that
-            // starts at 1.
+            // HitMob, ev.Zone, ev.Height, ev.HitDir, ev.EntityId). Both ids are
+            // on the wire now and they go to DIFFERENT fields: the round to
+            // `SecondaryEntityId`, which is this sim kind's own convention and
+            // what the tracer is retired by, and the victim to `EntityId`,
+            // which is what every per-mob effect is looked up by.
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.HitMob,
-                HitZone.Head, height: 0f, in cfg);
+                HitZone.Head, height: 1.5f, hitDir: new float2(0f, 1f), victimId: MobId, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileEnded, bytes, in cfg);
 
@@ -314,11 +323,21 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(RoundId, e.SecondaryEntityId,
                 "SimEvent.SecondaryEntityId must be the ROUND's id: that is the convention this "
                 + "sim kind uses, and it is the id the tracer is retired by");
-            Assert.AreEqual(0, e.EntityId,
-                "SimEvent.EntityId must stay 0 — the victim mob is not on the wire, and putting "
-                + "the round here instead would make a hitflash look the mob up by a round's id");
+            Assert.AreEqual(MobId, e.EntityId,
+                "SimEvent.EntityId must be the VICTIM's id — the hit flash and the tilt axis are "
+                + "both looked up by it, and a zero there finds no view on a networked client");
             Assert.AreEqual(HitZone.Head, e.Zone,
                 "SimEvent.Zone must be the zone the wire carried — it picks the feedback");
+            // The heading is asserted as an ANGLE and the fixture points along
+            // +Y, because Quantize.Dir(float2.zero) is code 128, which decodes
+            // to (1, 0): a fixture aimed along +X would agree with a decoder
+            // that never read the byte.
+            Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
+                "SimEvent.HitDir must be the blow's direction — it is the axis the struck body "
+                + "tilts about, and a zero vector gives it no axis at all");
+            Assert.AreEqual(1.5f, e.Height, UnitTolerance(cfg.Hero.MaxAimHeight),
+                "SimEvent.Height must be the CONTACT height — the hit spark is placed at it, and "
+                + "a zero puts every impact on the floor under the body");
         }
 
         [Test]
@@ -331,7 +350,7 @@ namespace Ring.Simulation.Tests
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.HitPlayer,
-                HitZone.Body, height: 0f, in cfg);
+                HitZone.Body, height: 0f, hitDir: float2.zero, victimId: 0, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileEnded, bytes, in cfg);
 
@@ -343,6 +362,70 @@ namespace Ring.Simulation.Tests
                 "SimEvent.EntityId must stay 0 and MUST NOT BE READ on this kind: it means the "
                 + "victim's player SLOT, and slot 0 is a real seat rather than 'nobody'");
             Assert.AreEqual(HitZone.Body, e.Zone, "SimEvent.Zone must survive the mapping");
+        }
+
+        /// app-88jb Т31, and the half the plan is silent about (finding
+        /// A-Т31-5, coordinator Ruling 243). The two body endings ride ONE
+        /// call, so `HitPlayer` gets the contact height and the blow's
+        /// direction for free — and it has a reader for both:
+        /// `PersistentPropsDirector.SpawnPlayerHitSpark` places its spark at
+        /// `e.Height`, which is a zero on a networked client today, i.e. a
+        /// spark on the floor at the collector's feet. Withholding them would
+        /// have cost a special case in the assembler to LOSE a value somebody
+        /// reads.
+        ///
+        /// AND THE VICTIM STAYS UNNAMED, WHICH IS NOT THE SAME OMISSION. For
+        /// this ending `SimEvent.EntityId` means the victim's player SLOT, and
+        /// slot 0 is a real seat — so there is no sentinel a payload could
+        /// carry for "nobody", and the field must be left exactly where the
+        /// decoder's pre-fill put it rather than restored from `VictimId`.
+        ///
+        /// THE FIXTURE CARRIES A VICTIM THE WIRE NEVER CARRIES, AND THAT IS
+        /// EXACTLY WHY IT IS HERE (Ruling 264, closing what the Т31 mutation
+        /// cycle measured). The assembler writes a ZERO into `victimId` for
+        /// this ending and nothing else — Ruling 243 — and that zero is pinned
+        /// where it is produced, in
+        /// `EventDeliveryTests.ProjectileHitPlayer_PutsTheDirectionAndTheHeightOnTheWire_ButNoVictimId`
+        /// (Ruling 262). But the CODEC's domain is wider than the assembler's
+        /// output: `WriteProjectileEnded` constrains only the two enumerators
+        /// and `TryReadPayload` says so in as many words ("bytes 5-7 are
+        /// unconstrained"), so a mob id in these two bytes is a well-formed
+        /// frame that this decoder must be right about anyway. Until it stood
+        /// here the assertion below was held up by a COINCIDENCE rather than
+        /// by the decoder: both `HitPlayer` fixtures wrote `victimId: 0`,
+        /// `TryDecode` pre-fills `e = default`, and a branch that DID restore
+        /// the field would have written a zero over a zero. The cycle ran
+        /// precisely that branch (M164) against this file and all 32 cases
+        /// stayed green. With a victim on the wire the same assertion
+        /// separates the two, and it is the ARM that is measured rather than
+        /// the fixture.
+        [Test]
+        public void ProjectileEnded_HitPlayer_CarriesHeightAndDirection_ButNamesNoVictim()
+        {
+            // Sender: ProjectileHitPlayer -> AddProjectileEnded(..., HitPlayer,
+            // ev.Zone, ev.Height, ev.HitDir, 0) — the same call the mob ending
+            // takes, with a zero where the victim id would go. THIS FIXTURE
+            // PUTS A MOB ID THERE ANYWAY, which no assembler ever will: see
+            // the doc above for why a frame the wire cannot produce is the
+            // only one that measures this arm.
+            var cfg = TestConfigs.Open();
+            byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
+            SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.HitPlayer,
+                HitZone.Body, height: 1.5f, hitDir: new float2(0f, 1f), victimId: MobId, in cfg);
+
+            SimEvent e = Decode(SnapshotEventKind.ProjectileEnded, bytes, in cfg);
+
+            Assert.AreEqual(1.5f, e.Height, UnitTolerance(cfg.Hero.MaxAimHeight),
+                "SimEvent.Height must be the contact height for a hit on a COLLECTOR too — the "
+                + "spark is placed at it, and a zero draws it on the ground at his feet");
+            Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
+                "SimEvent.HitDir must be the blow's direction for this ending as well — one call "
+                + "serves both bodies, so a branch that filled only the mob's would be a special "
+                + "case written to LOSE a value that has a reader");
+            Assert.AreEqual(0, e.EntityId,
+                "SimEvent.EntityId MUST NOT be restored from VictimId on this kind: it means the "
+                + "victim's player SLOT here, and seat 0 is a real seat — so the payload carries "
+                + "no sentinel that could stand for 'nobody' and the field stays unclaimed");
         }
 
         // ------------------------------------------------------------------
@@ -838,14 +921,18 @@ namespace Ring.Simulation.Tests
         {
             // The same output, for the ending — and here it is the only place
             // the round survives in a shape the caller can use without knowing
-            // which ending arrived: `SimEvent.EntityId` is 0 for a HitMob
-            // ending (the victim is not on the wire) and the round has moved
-            // to `SecondaryEntityId`. `RouteToGhosts` retires the tracer by
-            // `payload.Id` for all four endings alike.
+            // which ending arrived. That is still exactly true after app-88jb
+            // Т31, and only the REASON changed: `SimEvent.EntityId` is not
+            // empty for a HitMob ending any more, it is the VICTIM's id, while
+            // the round has moved to `SecondaryEntityId`. A caller that read
+            // `EntityId` looking for the round would now get a mob rather than
+            // a zero — a wrong answer instead of a missing one, which is worse.
+            // `RouteToGhosts` retires the tracer by `payload.Id` for all four
+            // endings alike, and that is what this test is about.
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileEnded);
             SnapshotEvents.WriteProjectileEnded(bytes, RoundId, ProjectileEndKind.HitMob,
-                HitZone.Head, height: 0f, in cfg);
+                HitZone.Head, height: 0f, hitDir: float2.zero, victimId: MobId, in cfg);
 
             SimEvent e = DecodeWithPayload(SnapshotEventKind.ProjectileEnded, bytes, in cfg,
                 out SnapshotEventPayload payload);
@@ -856,9 +943,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(ProjectileEndKind.HitMob, payload.EndKind,
                 "SnapshotEventPayload.EndKind must survive into the payload: it is the "
                 + "discriminator four sim kinds arrive under");
-            Assert.AreEqual(0, e.EntityId,
-                "witness: the SimEvent's own primary field IS 0 for this ending, which is exactly "
-                + "why the caller reads the payload instead of the event");
+            Assert.AreEqual(MobId, e.EntityId,
+                "witness: the SimEvent's own primary field is the VICTIM for this ending, not the "
+                + "round — which is exactly why the caller reads the payload instead of the event");
         }
 
         // ------------------------------------------------------------------

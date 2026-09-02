@@ -39,7 +39,11 @@ namespace Ring.Simulation.Combat
         /// One explicit-integrator step of the tilt spring, snap included (Т5).
         /// PUBLIC and pure, because THREE callers need exactly this arithmetic and
         /// one of them lives outside the simulation assembly: TiltSystem's mob pass,
-        /// TiltSystem's collector pass, and Presentation's MobVisual. Written once
+        /// TiltSystem's collector pass, and -- since app-88jb Т31 --
+        /// Ring.Networking.Client.MobTiltIntegrator, which rebuilds a struck mob's
+        /// tilt on a networked client (this line named Presentation's MobVisual
+        /// until the owner put that reconstruction in the network backend instead;
+        /// the count and the reason are unchanged, the caller is not). Written once
         /// here rather than three times there.
         ///
         /// THE SNAP IS PART OF THE STEP, not a caller's afterthought: an exponential
@@ -190,9 +194,13 @@ namespace Ring.Simulation.Combat
         /// PUBLIC and written once, because FOUR places need exactly this arithmetic
         /// and two of them live outside Ring.Simulation: DamageMob (T5), DamagePlayer
         /// (T7), the client's ClientEventDecoder building an ImpactPulse (T9) and
-        /// Presentation's MobVisual rebuilding a mob's tilt (T31). Four hand-written
-        /// copies of one signed subtraction is exactly the shape round 2 removed for
-        /// the spring step, and the sign of the arm is the half that silently flips.
+        /// Ring.Networking.Client.MobTiltIntegrator rebuilding a struck mob's tilt
+        /// on a networked client (Т31 -- this line named Presentation's MobVisual
+        /// while the plan still put the integrator there; the owner moved it to the
+        /// network backend, where the speed scale the moment is sized by is
+        /// reachable at all). Four hand-written copies of one signed subtraction is
+        /// exactly the shape round 2 removed for the spring step, and the sign of
+        /// the arm is the half that silently flips.
         public static float AngularImpulse(float hitHeight, float centerOfMassHeight,
             float dv, float gain)
             => (hitHeight - centerOfMassHeight) * dv * gain;

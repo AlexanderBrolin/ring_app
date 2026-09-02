@@ -1255,19 +1255,18 @@ namespace Ring.Simulation.Core
         /// Callers that keep the answer around still take the copy (a `ref
         /// readonly` into _config would go stale across a hot-tweak migration);
         /// callers inside a loop take the reference.
+        ///
+        /// AND SINCE app-88jb Т31 THIS METHOD DELEGATES IN TURN, to
+        /// SimConfig.MobConfigFor (coordinator Ruling 259) — the branch moved
+        /// onto the type that owns the four fields the moment a second reader
+        /// appeared outside this assembly (the client's MobTiltIntegrator,
+        /// which rebuilds a struck mob's tilt from the same archetype
+        /// numbers). Nothing about the answer changed: the same four cases,
+        /// the same throw on a fifth, and the same reference into _config
+        /// rather than a copy of it, because an `in` parameter is a readonly
+        /// REFERENCE to this very field.
         internal ref readonly MobSimConfig MobConfigRefFor(MobType type)
-        {
-            switch (type)
-            {
-                case MobType.Chaser: return ref _config.Chaser;
-                case MobType.Gunner: return ref _config.Gunner;
-                case MobType.Elite: return ref _config.Elite;
-                case MobType.Director: return ref _config.Director;
-                default:
-                    throw new System.ArgumentOutOfRangeException(nameof(type), type,
-                        "unknown archetype");
-            }
-        }
+            => ref SimConfig.MobConfigFor(in _config, type);
 
         /// SeparationSystem's seam into its preallocated per-tick force buffer
         /// (Task 20) — sized to Arena.MaxMobs + Arena.MaxPlayers since app-88jb

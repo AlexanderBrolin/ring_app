@@ -182,6 +182,55 @@ namespace Ring.Networking.Client
             return true;
         }
 
+        /// WHO FIRED THE ROUND `serverId`, out of the table the spawn record
+        /// already filled (app-88jb Т31, coordinator Rulings 247/256).
+        ///
+        /// WHY THE QUESTION IS ASKED HERE AT ALL. A `ProjectileEnded` payload
+        /// does not carry the shooter — eight bytes is the catalog's ceiling
+        /// and there is no room — so `ClientEventDecoder` leaves
+        /// `SimEvent.PlayerIndex` at `ProjectileIds.NoOwner` for both body
+        /// endings. And the blow a networked client rebuilds from that event
+        /// is built out of exactly that byte twice over:
+        /// `Impact.ProjectileMassFor` and `SnapshotEvents.SpeedCapFor` both
+        /// fork on it, so a collector's own shot decoded as a mob's produces a
+        /// moment several times weaker than the one the server resolved. This
+        /// side still knows the answer — it was told when the round SPAWNED —
+        /// which is the same shape `NetworkSimBackend.RestoreMobType` has for
+        /// a `MobDied`: put back the one field the wire drops that this side
+        /// can still answer for.
+        ///
+        /// WHEN IT STILL ANSWERS. Until `Prune` carries the render clock past
+        /// the round's `EndTick` — so an ending's own arrival, which only
+        /// records that tick, does not close the window: the restore therefore
+        /// runs in the decode loop BEFORE `RouteToTracers` retires anything,
+        /// and `TracerProjectilesTests` pins both halves of that ordering
+        /// rather than leaving it a hope about the caller.
+        ///
+        /// A MISS IS A VALUE, NOT AN EXCEPTION (Р82/195). This is asked from
+        /// inside FishNet's batched parsing loop, where a throw abandons every
+        /// message behind it in the same datagram; a round this client never
+        /// saw fired — the table was full, the truncated id was already in
+        /// use, or a reorder landed the end first — leaves `NoOwner` behind,
+        /// exactly as `RestoreMobType` leaves a zero archetype. The seat is
+        /// the honest half of that answer: `ProjectileOwner`'s own zero is
+        /// `Player`, a real rail rather than an absence.
+        public bool TryGetOwner(int serverId, out ProjectileOwner owner, out byte ownerIndex)
+        {
+            // Through the same linear `IndexOf` `Retire` uses, for its reason
+            // (see the class doc's note on the table's size).
+            int index = IndexOf(serverId);
+            if (index < 0)
+            {
+                owner = default;
+                ownerIndex = ProjectileIds.NoOwner;
+                return false;
+            }
+
+            owner = _live[index].Owner;
+            ownerIndex = _live[index].OwnerIndex;
+            return true;
+        }
+
         /// Fills `destination` with every round visible at `renderTick` and
         /// answers how many were written; rounds whose end the clock has passed
         /// are dropped from the table on the way through, which is the only
