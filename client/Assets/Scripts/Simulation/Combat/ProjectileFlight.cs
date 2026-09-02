@@ -24,7 +24,21 @@ namespace Ring.Simulation.Combat
     /// breach of Ruling 91 but its consequence -- the ruling put the ricochet
     /// beside `Step` precisely so `Step` would not have to grow any of those
     /// three behaviors, and the class is the shared home the client's tracer
-    /// cranks, not a promise about every member in it.
+    /// cranks, not a promise about every member in it. `BarrierStops` (Т32) is
+    /// the FOURTH member and reads the same way: it REFUSES -- that is its
+    /// entire job -- and it may, for the same reason the ricochet may mutate.
+    ///
+    /// WHAT THE TRACER CRANKS, NAMED RATHER THAN LEFT TO BE INFERRED (app-88jb
+    /// Т32, coordinator Rulings 289/290). Of the four members here the client's
+    /// tracer calls THREE -- `Step` every tick it advances a round,
+    /// `BarrierStops` on the barrier candidate that step reports, and
+    /// `TryRicochet` when a `ProjectileRicocheted` event arrives -- and
+    /// deliberately never calls `TryPierce`. The pierce needs the target's mass
+    /// and hp, which a client does not have and must not have (CRITICAL RULE
+    /// 3); what a tracer does about a pierce is nothing at all, and that is
+    /// already the right answer, spelled out at the bottom of `TryPierce`'s own
+    /// doc: "the round's own continuation is what the client's tracer keeps
+    /// extrapolating, precisely because nothing told it to stop".
     ///
     ///  - `Step` PICKS NO WINNER. The three static candidates travel back side by
     ///    side, each behind its own flag, and the single canonical min-scan
@@ -34,10 +48,13 @@ namespace Ring.Simulation.Combat
     ///    barrier/mob/player tie at the same t outranks it, while the interior
     ///    barrier and the ring boundary are packed BEFORE them.
     ///
-    ///  - `Step` REFUSES NOTHING. The interior barrier's height gate lives in
-    ///    ProjectileSystem.AcceptCandidate, because a refusal sends the scan
-    ///    back over the candidates that are LEFT -- a decision only the owner
-    ///    of the scratch array can make. Handing back one candidate that stood
+    ///  - `Step` REFUSES NOTHING. The interior barrier's height gate is asked
+    ///    by ProjectileSystem.AcceptCandidate -- since Т32 the arithmetic
+    ///    itself is `BarrierStops` at the bottom of this file, but the REFUSAL
+    ///    is still that method's, and that is the half this bullet is about:
+    ///    a refusal sends the scan back over the candidates that are LEFT --
+    ///    a decision only the owner of the scratch array can make. Handing back
+    ///    one candidate that stood
     ///    for a barrier and the ring boundary together would throw the
     ///    boundary away along with the obstacle a high round legitimately
     ///    cleared, and BarrierHeightTests.RejectedInteriorBarrier_LeavesThe
@@ -375,6 +392,88 @@ namespace Ring.Simulation.Combat
             p.PrevHeight = p.Height;
             p.Height = contactHeight;
             return true;
+        }
+
+        /// WHETHER THE INTERIOR BARRIER `Step` JUST REPORTED ACTUALLY STOPS
+        /// THIS ROUND, or whether the round clears its modelled crown (app-88jb
+        /// Т32, coordinator Ruling 289). THE FOURTH PUBLIC MEMBER OF THIS
+        /// CLASS, and it stands last for the reason the third stands third:
+        /// this file's members are in the order they were added, and each one's
+        /// doc names its own place in that order.
+        ///
+        /// IT IS A MOVE, NOT A NEW RULE. Every line of arithmetic below stood
+        /// inside ProjectileSystem.AcceptCandidate's `HitBarrier` arm until
+        /// this task, and that arm now asks this instead of asking itself --
+        /// one home, two callers, exactly the shape Ruling 92 already gave the
+        /// ricochet. What forced the move is the tracer: the gate it needs is
+        /// the same gate, and AcceptCandidate is private and takes a
+        /// SimulationWorld, so a client that could not reach it would either
+        /// have no gate at all -- and then a high round would be stopped
+        /// forever by a low wall it legitimately flew over, with no server
+        /// event ever coming to release it -- or a second copy of this
+        /// arithmetic in the presentation layer, which is the thing this whole
+        /// class exists to prevent.
+        ///
+        /// `true` MEANS THE BARRIER HOLDS. A non-positive `Arena.BarrierTop`
+        /// means there is no modelled top at all, which is what every barrier
+        /// did before Stage 2 Task 46 and what every hand-built fixture still
+        /// gets by default -- so it answers `true` for every round, before the
+        /// pair of heights is even looked at.
+        ///
+        /// THE WHOLE REMAINING STEP, NOT THE CONTACT POINT. A round descends
+        /// inside a tick, so judging the contact alone would hand back a shot
+        /// that is above the crown where it MEETS the barrier and inside its
+        /// body a fraction of a tick later -- and the next tick would start
+        /// behind the barrier, through solid geometry. The pair (height at the
+        /// contact, height at the end of the step) covers everything that is
+        /// left of the step, so a rejection means "clear of the crown for the
+        /// whole rest of the step", never "clear just at the moment of
+        /// contact".
+        ///
+        /// That same span is what lets the gather phase keep ONE slot for the
+        /// nearest interior barrier, and HitZones.Overlaps refuses in BOTH
+        /// directions, so both have to be monotone in `t` for that to hold
+        /// (Т18 fix-round 1, Ф-5: this passage used to argue only the first).
+        /// Over the crown: the LOWER end of this pair never decreases with `t`
+        /// -- it is the step's end height for a descending round and the
+        /// contact height itself for a climbing one -- so a barrier further
+        /// along the same step is cleared whenever the nearest one is. Under
+        /// the floor line: the UPPER end never increases with `t`, by the
+        /// mirror of the same case split, so a round already below −radius at
+        /// the nearest barrier is still below it at every later one.
+        /// Practically the second branch is dead today (WeaponSystem launches
+        /// from a muzzle at or above 0.45 m and a round that sinks that far is
+        /// taken by the floor candidate first), which is why it is worth
+        /// writing down rather than leaving to be re-derived.
+        ///
+        /// The bias is deliberately toward "the barrier stopped it":
+        /// HitZones.Overlaps grows the column by the round's own radius at both
+        /// ends, so the shot that pays for this is one that visually grazed the
+        /// crown and is stopped anyway -- never one that passes through a wall.
+        ///
+        /// `dt` IS THE SAME NUMBER THE CALLER HANDED `Step`, and it is a
+        /// parameter for that reason rather than for generality: the pair of
+        /// heights has to span exactly the step the sweep swept. Reading
+        /// SimulationWorld.TickDt here instead -- which is literally what
+        /// AcceptCandidate did while the code lived there, because it had no
+        /// `dt` in scope -- would let the two disagree the day anything steps
+        /// by anything else. Every caller passes TickDt today, so the extracted
+        /// arithmetic is bit-for-bit the arithmetic that was there.
+        ///
+        /// ⚠ THE RING BOUNDARY IS NOT ASKED THIS, and that is not an omission:
+        /// it is the one barrier with no modelled top, because a round flying
+        /// over it would leave the arena for good (owner decision 2026-08-11,
+        /// bd app-r8x). `StepResult` reports it in its own pair of fields for
+        /// exactly that reason, and a caller that routed it through here would
+        /// be inventing a crown the world does not have.
+        public static bool BarrierStops(in ProjectileState p, in SimConfig cfg,
+            float contactHeight, float dt)
+        {
+            float barrierTop = cfg.Arena.BarrierTop;
+            if (barrierTop <= 0f) return true;
+
+            float hStepEnd = p.Height + p.VelZ * dt;
+            return HitZones.Overlaps(contactHeight, hStepEnd, p.Radius, barrierTop);
         }
     }
 }

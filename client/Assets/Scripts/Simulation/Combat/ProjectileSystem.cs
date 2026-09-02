@@ -1324,54 +1324,26 @@ namespace Ring.Simulation.Combat
                 // Arena.BarrierTop; a non-positive value means there is none,
                 // which is what every barrier did before this task and what
                 // every hand-built fixture still gets by default.
-                float barrierTop = config.Arena.BarrierTop;
-                if (barrierTop <= 0f)
-                {
-                    // Height (app-88jb Т3): no gate ran on this path, so
-                    // nothing below computed a contact height yet — same
-                    // formula the gated path just past this `if` uses.
-                    hitHeight = contactHeight;
-                    return true;
-                }
-
-                // THE WHOLE REMAINING STEP, NOT THE CONTACT POINT. A round
-                // descends inside a tick, so judging the contact alone would
-                // hand back a shot that is above the crown where it MEETS the
-                // barrier and inside its body a fraction of a tick later — and
-                // the next tick would start behind the barrier, through solid
-                // geometry. The pair (height at the contact, height at the end
-                // of the step) covers everything that is left of the step, so a
-                // rejection means "clear of the crown for the whole rest of the
-                // step", never "clear just at the moment of contact".
                 //
-                // That same span is what lets the gather phase keep ONE slot
-                // for the nearest interior barrier, and Overlaps refuses in
-                // BOTH directions, so both have to be monotone in `t` for that
-                // to hold (fix-round 1, Ф-5: this passage used to argue only
-                // the first). Over the crown: the LOWER end of this pair never
-                // decreases with `t` — it is the step's end height for a
-                // descending round and the contact height itself for a climbing
-                // one — so a barrier further along the same step is cleared
-                // whenever the nearest one is. Under the floor line: the UPPER
-                // end never increases with `t`, by the mirror of the same case
-                // split, so a round already below −radius at the nearest
-                // barrier is still below it at every later one. Practically the
-                // second branch is dead today (WeaponSystem launches from a
-                // muzzle at or above 0.45 m and a round that sinks that far is
-                // taken by the floor candidate first), which is why it is worth
-                // writing down rather than leaving to be re-derived.
+                // THE HEIGHT GATE ITSELF MOVED OUT IN app-88jb Т32 (coordinator
+                // Ruling 289), and only the ASKING is left here. Both branches
+                // this arm used to carry — "no modelled top, so the barrier
+                // holds everything" and the pair-of-heights test — are now the
+                // one expression `ProjectileFlight.BarrierStops`, together with
+                // the two paragraphs that argue it: they explain the FORMULA,
+                // not the place it is called from, so they travelled with the
+                // code. Read them there. What forced the move is the client's
+                // tracer, which needs the same gate and can reach neither this
+                // method (private) nor the world it takes.
                 //
-                // The bias is deliberately toward "the barrier stopped it":
-                // Overlaps grows the column by the round's own radius at both
-                // ends, so the shot that pays for this is one that visually
-                // grazed the crown and is stopped anyway — never one that
-                // passes through a wall.
-                float hStepEnd = proj.Height + proj.VelZ * SimulationWorld.TickDt;
-                // Height (app-88jb Т3): the contact height, regardless of
-                // which way Overlaps below resolves — a rejected candidate's
-                // height is never read by the caller, only the false verdict.
+                // Height (app-88jb Т3): the contact height, regardless of which
+                // way the gate resolves — a rejected candidate's height is
+                // never read by the caller, only the false verdict — and it is
+                // also the gate's own first input, which is why one expression
+                // serves both.
                 hitHeight = contactHeight;
-                return HitZones.Overlaps(contactHeight, hStepEnd, proj.Radius, barrierTop);
+                return ProjectileFlight.BarrierStops(in proj, in config, contactHeight,
+                    SimulationWorld.TickDt);
             }
             else // HitFloor
             {

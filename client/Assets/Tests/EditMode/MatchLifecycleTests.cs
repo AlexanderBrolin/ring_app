@@ -115,6 +115,17 @@ namespace Ring.Simulation.Tests
             return new ClientEventQueue(in timings, snapshotEventBudget: 1);
         }
 
+        /// app-88jb Т32: the tracer takes the world's numbers (it cranks
+        /// `ProjectileFlight` now) and this client's catch-up budget. Neither
+        /// is this file's subject — nothing here calls `StepTo`, and the seams
+        /// below only ask whether `ResetForEpoch` cleared the table — so one
+        /// config and the shipped budget serve all three call sites, the same
+        /// way `NewEventQueue` above serves the queue's.
+        static readonly SimConfig TracerCfg = TestConfigs.Open();
+
+        static TracerProjectiles NewTracers(int capacity)
+            => new TracerProjectiles(capacity, in TracerCfg, catchUpBudget: 8);
+
         /// One accepted, already-decoded event on `tick`, identified by its
         /// `EntityId`. The queue holds finished `SimEvent`s as of Task 44d —
         /// the wire record it used to hold pointed into a receive buffer that
@@ -508,7 +519,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ResetForEpoch_ClearsTracers()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTracers(4);
             tracers.TrySpawn(1, 0, float2.zero, 1f, new float2(1f, 0f), 10f, 0f, 0.1f, 2f);
             var scratch = new ProjectileState[4];
             Assert.AreEqual(1, tracers.WriteInto(scratch, 0), "witness: a round is being drawn");
@@ -678,7 +689,7 @@ namespace Ring.Simulation.Tests
             // PARAMETER NAME: "something threw" would pass even if one seam's
             // guard covered another's argument, which is precisely the mistake
             // an eight-argument constructor invites.
-            var tracers = new TracerProjectiles(8);
+            var tracers = NewTracers(8);
             SimConfig staleCfg = TestConfigs.Default();
             var entityStale = new EntityStaleTrackers(in staleCfg.Arena, 4, 4);
             Assert.AreEqual("dedup",
@@ -947,7 +958,7 @@ namespace Ring.Simulation.Tests
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null,
             TracerProjectiles tracers = null, EntityStaleTrackers entityStale = null)
             => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
-                eventQueue ?? NewEventQueue(), tracers ?? new TracerProjectiles(8),
+                eventQueue ?? NewEventQueue(), tracers ?? NewTracers(8),
                 entityStale ?? DefaultEntityStale());
 
         static EntityStaleTrackers DefaultEntityStale()

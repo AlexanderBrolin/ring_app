@@ -47,7 +47,20 @@ namespace Ring.Networking.Client
     /// registry off this id (Ф9, out of scope here) never sees a `Confirm`
     /// as a retire+rent, which is exactly the artifact Р67 exists to avoid
     /// (a confirmed remap would teleport the client's own tracer back
-    /// `(RTT/2 + buffer) × ProjectileSpeed ≈ 5-7 m` and cut its trail). The
+    /// `(RTT/2 + buffer) × ProjectileSpeed ≈ 5-7 m` and cut its trail).
+    /// ⚠ THAT DISTANCE IS THE JUMP THAT DOES NOT HAPPEN, NOT A GAP THAT DOES,
+    /// and app-88jb Т32 says so out loud because its own plan asked for the
+    /// opposite wording ("the 5-7 m gap has closed", coordinator Ruling 293).
+    /// There is no gap to close: the sentence above is in the subjunctive
+    /// precisely because Р67 forbids the remap, and this class hands out no
+    /// position at all — its five public members carry no geometry, and the
+    /// render pair's rounds come from `TracerProjectiles`, never from here.
+    /// WHAT IS TRUE, and what the task actually bought, is that since Т27 (the
+    /// round is cranked forward by the shooter's own input lag at birth) and
+    /// Т32 (the tracer is drawn on the PREDICTED tick) the server's round and
+    /// this client's predicted ghost live on the SAME CLOCK. So on the day Ф9
+    /// gives a ghost a view keyed to its id, `Confirm` will have nothing to
+    /// move: the two were already in the same place. The
     /// counter that MINTS these ids starts at -1 and counts DOWN — server ids
     /// arrive as `u16` (0..65535) over the wire, so the two spaces can never
     /// collide by construction, with no runtime check needed to keep them

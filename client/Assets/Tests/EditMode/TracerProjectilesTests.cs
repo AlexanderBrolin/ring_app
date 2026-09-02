@@ -50,9 +50,27 @@ namespace Ring.Simulation.Tests
             return w;
         }
 
+        /// app-88jb Т32: the tracer's constructor grew the world's own numbers
+        /// (it cranks `ProjectileFlight` now) and this client's catch-up budget
+        /// (`NetConfig.TracerCatchUpBudget`). NEITHER MATTERS TO ANY FIXTURE IN
+        /// THIS FILE, and that is the point rather than a convenience: not one
+        /// of the fourteen calls `StepTo`, so not one of them moves the cache,
+        /// so every answer below is the closed form measured from a cache still
+        /// standing on the spawn tick — bit for bit what this class answered
+        /// before the task (coordinator Ruling 287). The fixtures that ARE
+        /// about the stepped flight live in `TracerFlightTests`, and the budget
+        /// they state is their own. One shared config and the shipped budget,
+        /// through one helper, so a future constructor change lands in one line
+        /// here instead of fourteen.
+        static readonly SimConfig TableCfg = TestConfigs.Open();
+        const int ShippedCatchUpBudget = 8;   // NetConfig.TracerCatchUpBudget's C# default
+
+        static TracerProjectiles NewTable(int capacity)
+            => new TracerProjectiles(capacity, in TableCfg, ShippedCatchUpBudget);
+
         static TracerProjectiles TrackerFor(in ProjectileState s, int capacity = 8)
         {
-            var tracers = new TracerProjectiles(capacity);
+            var tracers = NewTable(capacity);
             Assert.IsTrue(tracers.TrySpawn(s.Id, SpawnTick, s.Pos, s.Height,
                     math.normalizesafe(s.Vel), math.length(s.Vel), s.VelZ, s.Radius, s.Ttl),
                 "a round the client can see must be accepted");
@@ -182,7 +200,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ARetiredRoundFliesUntilTheClockReachesItsEnd()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
             Assert.IsTrue(tracers.Retire(11, SpawnTick + 5), "the server ended it five ticks later");
@@ -203,7 +221,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void RetireNamesOneRound_AndAnUnknownIdIsARefusal()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
             tracers.TrySpawn(22, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
@@ -219,7 +237,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ARoundNeverEndsItselfWhileTheServerHasNotSaidSo()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             // A Ttl far shorter than the run below: the round would have expired
             // several times over in the simulation, and here it must not — every
             // ending is the server's to declare (CR 3).
@@ -235,7 +253,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ResetDropsEverything_SoAMatchRestartStartsEmpty()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             tracers.TrySpawn(1, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
             tracers.TrySpawn(2, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);
@@ -252,7 +270,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ADuplicateIdIsRefused_NotTrackedTwice()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             Assert.IsTrue(tracers.TrySpawn(5, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
             Assert.IsFalse(tracers.TrySpawn(5, SpawnTick + 2, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f),
@@ -263,7 +281,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void AFullTableRefusesRatherThanOverwriting()
         {
-            var tracers = new TracerProjectiles(2);
+            var tracers = NewTable(2);
             var dir = new float2(1f, 0f);
             Assert.IsTrue(tracers.TrySpawn(1, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
             Assert.IsTrue(tracers.TrySpawn(2, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f));
@@ -294,7 +312,7 @@ namespace Ring.Simulation.Tests
         public void TryGetOwner_AnswersTheOwnerOfALiveRound_AndNothingForAStranger()
         {
             const byte shooterSlot = 2;      // not 0, which every unfilled byte reads as
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f,
                     ProjectileOwner.Player, shooterSlot),
@@ -341,7 +359,7 @@ namespace Ring.Simulation.Tests
         public void TryGetOwner_StillAnswersAfterRetire_UntilPruned()
         {
             const byte shooterSlot = 2;
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             Assert.IsTrue(tracers.TrySpawn(11, SpawnTick, float2.zero, 1f, new float2(1f, 0f),
                     10f, 0f, 0.1f, 2f, ProjectileOwner.Player, shooterSlot),
                 "fixture premise: the round is tracked");
@@ -372,7 +390,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WriteIntoNeverOverrunsTheDestination()
         {
-            var tracers = new TracerProjectiles(4);
+            var tracers = NewTable(4);
             var dir = new float2(1f, 0f);
             for (int i = 1; i <= 4; i++)
                 tracers.TrySpawn(i, SpawnTick, float2.zero, 1f, dir, 10f, 0f, 0.1f, 2f);

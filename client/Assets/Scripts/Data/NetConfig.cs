@@ -298,6 +298,65 @@ namespace Ring.Data
         // want of a plan). ABOVE the band there is still no guard, and
         // deliberately: a tolerance past the cap only switches the check off,
         // which is the mode the paragraph two up already states.
+        [Range(0, 6)] public int RewindSanityTicks = 2;
+
+        // app-88jb Т32 (spec §3.8, coordinator Rulings 295/305): how many
+        // flight steps ONE frame may spend catching ONE tracer up to the tick
+        // it is asked about (TracerProjectiles.StepTo). Since Т32 the client's
+        // tracer is a stepped integrator against the arena's real geometry
+        // rather than a straight line, so a round the client has only just been
+        // told about — a mob's shot fired 90 ticks before it came into sight —
+        // would otherwise be walked its whole life in a single frame, and a
+        // client that suddenly sees a hundred such rounds would pay ~450 000
+        // geometry probes on one frame (plan finding D-Q7). This is what bounds
+        // that spike.
+        //
+        // PER ROUND AND PER CALL, WHICH IS THE READING THAT MAKES IT A
+        // SMOOTHING RATHER THAN A SWITCH (Ruling 305). Per FRAME it would mean
+        // that of a hundred cold rounds one is drawn and ninety-nine never are;
+        // per round it means each of them closes the gap by `this - 1` ticks
+        // every frame and is on the clock in about half a second, while the
+        // worst frame costs `rounds × this` steps instead of `rounds × 90`.
+        // A round that has not caught up yet is not drawn AT ALL — never at its
+        // birth position, which for a 90-tick-old round is 42 m behind the
+        // truth (plan finding C2-M2).
+        //
+        // IT LIVES HERE AND NOT IN SimConfig, and that is the whole reason this
+        // field exists in this file rather than beside the arena's own numbers:
+        // it decides nothing about the WORLD and everything about how much work
+        // one client's PICTURE may cost on one frame. `SimConfig` is the shared
+        // rulebook both sides of the wire evolve by (CRITICAL RULE 2), and a
+        // client-side drawing budget in it would be a knob the server carries
+        // and never reads. The precedent is one line long and stands beside the
+        // tracer's own constructor in NetworkSimBackend:
+        // `new ClientEventQueue(in _timings, _net.SnapshotEventBudget)`.
+        // NOT IN NetTimings EITHER, for the reason that struct's own doc gives
+        // about itself: those four numbers are one clock's — buffer, staleness,
+        // snap and slew — and a catch-up budget is not about the clock at all.
+        //
+        // BOTH ENDS OF THE [Range] ARE MODES, NOT MISTAKES, the same way
+        // RewindSanityTicks' own doc argues about its own band. 1 is the
+        // slowest honest setting — one step per frame, so a round behind the
+        // clock never catches up while the clock keeps moving, and only a
+        // stopped round does; there is no 0, because 0 means nothing is ever
+        // drawn again and that is not a mode but a broken picture (the
+        // constructor floors it for exactly that reason: a [Range] is an
+        // Inspector hint and refuses nothing a hand-edited YAML assigns, as
+        // this class's type doc says of every [Range] here). The ceiling is 90,
+        // and it is a measured number rather than a round one: it is the
+        // longest life any round in this game has — Gunner.ProjectileLifetime
+        // is 3 s and a tick is 1/30 s — so at 90 no round can ever be behind by
+        // more steps than the budget allows, i.e. the budget stops binding
+        // anything at all. That is the "no smoothing" mode stated as a number
+        // instead of as an absence.
+        //
+        // 8 AND NOT MORE, on the arithmetic of the spike it exists to bound:
+        // a hundred cold rounds cost 100 × 8 × ~50 arena primitives ≈ 40 000
+        // probes on the worst frame, against the 450 000 the unbounded form
+        // would pay, while the round itself is back on the clock within about
+        // fifteen frames. The owner tunes it by feel from there (a bullet that
+        // "swims in" from behind is what too small looks like; a frame hitch
+        // when a firefight comes into sight is what too large looks like).
         //
         // MARKER FIELD. The backfill mechanism is
         // EditorBootstrapUtils.EnsureAssetHasKey(so, path, markerField),
@@ -305,14 +364,15 @@ namespace Ring.Data
         // if the marker names a field the .asset already carries, the search
         // succeeds, nothing is dirtied, and NO new key is ever written. So the
         // marker has to be the LAST field added, and the call site has to name
-        // THIS field — app-88jb Т29 moved it here, in the same commit that
+        // THIS field — app-88jb Т32 moved it here, in the same commit that
         // added this field. The chain so far: MatchMaxDurationSeconds (Task 23,
         // the first join) -> MatchAbandonGraceSeconds (Task 41b) ->
         // SpectatorSwitchCooldownSeconds (Task 42a) -> EntityFadeTicks
-        // (Task 47c) -> here. Each predecessor's own field comment stops
-        // mentioning the mechanism once the marker leaves it, so exactly one
-        // field in this class ever claims to be it.
-        [Range(0, 6)] public int RewindSanityTicks = 2; // sync-marker key — keep LAST
+        // (Task 47c) -> RewindSanityTicks (app-88jb Т29) -> here. Each
+        // predecessor's own field comment stops mentioning the mechanism once
+        // the marker leaves it, so exactly one field in this class ever claims
+        // to be it.
+        [Range(1, 90)] public int TracerCatchUpBudget = 8; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR
         void OnValidate() => RingDataChanged.Raise();

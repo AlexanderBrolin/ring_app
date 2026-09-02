@@ -281,6 +281,29 @@ namespace Ring.Presentation.Net
         /// projectile block, so without this the render pair's `Projectiles`
         /// stays at `BeginSlot`'s zeros and no bullet is ever drawn.
         TracerProjectiles _tracers;
+
+        /// app-88jb Т32 (spec §3.8, coordinator Ruling 286): the rewind depth
+        /// LATCHED on the prediction tick that measured it, so a render frame
+        /// can name the PREDICTED tick — `renderTick + this` — without asking
+        /// the question a second time.
+        ///
+        /// LATCHED, NOT RE-MEASURED ON THE FRAME, for three reasons and none
+        /// of them is cost. (1) `MeasureRewindTicks` is the one home of "which
+        /// six numbers feed this formula", and it is precisely the code that
+        /// has no EditMode witness and cannot have one (its own doc); a second
+        /// call site would be a second place that decision lives. (2) The depth
+        /// is a property of the PREDICTION tick, not of a frame — inside one
+        /// tick it cannot change, by construction. (3) The wire's own ceiling
+        /// (`InputCodec.MaxRewindTicksOnWire`) is inherited deliberately: a
+        /// claim deeper than seven never leaves this client, so drawing deeper
+        /// than seven would be drawing a compensation the server was never
+        /// asked for.
+        /// ⚠ ZERO UNTIL THE FIRST RECONCILE AND UNTIL THE RENDER CLOCK IS
+        /// PLACED, and that is the right answer rather than a gap: the
+        /// predicted tick then degenerates into the render tick, i.e. into
+        /// exactly the picture this class drew before Т32.
+        byte _rewindDepth;
+
         float _alpha;
         bool _ready;
         int _lastRenderTick;
@@ -482,22 +505,32 @@ namespace Ring.Presentation.Net
 
         /// The newer half of the render pair.
         ///
-        /// `Projectiles` IS EMPTY, AND THAT IS THIS TASK'S OWN FINDING RATHER
-        /// THAN A SHORTCUT. Spec §3.12 says the networked snapshot takes its
-        /// rounds from the local ghosts, and the ghosts are here — but
-        /// `GhostProjectiles` stores no geometry at all (its own class doc:
-        /// "NO FLIGHT MATH LIVES HERE, ON PURPOSE ... geometry ... is Ф9's
-        /// job"), the wire frame carries no projectile block (the five kinds
-        /// are Players, Liveness, Mobs, Wave, Events), and `WeaponSystem`
-        /// exposes no public seam that reproduces a predicted round's launch
-        /// vector — `CanFire` and `WouldFireThisTick` are the whole of its
-        /// public surface, and the spawn itself is `internal` and takes a
-        /// `SimulationWorld`. So a tracer's position cannot be computed in
-        /// this assembly today, from either end. Writing an integrator here
-        /// off the `ProjectileSpawned` event's dir/speed/height would be a
+        /// `Projectiles` IS FILLED, AND THE HISTORY OF HOW IS WORTH KEEPING
+        /// because the objection it answers is the right objection. Stage 2
+        /// Task 43 left this array EMPTY and said so here: spec §3.12 wanted
+        /// the networked snapshot to take its rounds from the local ghosts, and
+        /// the ghosts are here — but `GhostProjectiles` stores no geometry at
+        /// all (its own class doc: "NO FLIGHT MATH LIVES HERE, ON PURPOSE ...
+        /// geometry ... is Ф9's job"), the wire frame carries no projectile
+        /// block (the five kinds are Players, Liveness, Mobs, Wave, Events),
+        /// and `WeaponSystem` exposes no public seam that reproduces a
+        /// predicted round's launch vector. Writing an integrator HERE off the
+        /// `ProjectileSpawned` event's dir/speed/height would have been a
         /// second flight model beside `ProjectileSystem`'s, in the layer least
-        /// able to keep it honest. The picture this costs — own and remote
-        /// tracers — is named in the task report as the decision it is.
+        /// able to keep it honest.
+        ///
+        /// WHAT CHANGED IS NOT THE OBJECTION BUT THE ANSWER TO IT. bd `app-s0u`
+        /// put the rounds back on screen through `TracerProjectiles`, which
+        /// `Advance` writes into both halves of this pair every frame; and
+        /// app-88jb Т18/Т32 removed the "second model" half of the cost by
+        /// making the flight arithmetic PUBLIC and SHARED —
+        /// `ProjectileFlight.Step`/`BarrierStops`/`TryRicochet` are the very
+        /// members `ProjectileSystem` itself calls, so the tracer cranks the
+        /// authority's own function rather than a copy of it. The layer least
+        /// able to check itself now has nothing of its own to check.
+        /// Since Т32 these rounds are also written on the PREDICTED tick rather
+        /// than the render tick (`Advance`, Ruling 285), which is why they can
+        /// legitimately run ahead of every other body in the same snapshot.
         public RenderSnapshot Curr => _curr;
 
         /// `RenderClock.Phase`: the blend between the render pair's two halves
@@ -1132,7 +1165,13 @@ namespace Ring.Presentation.Net
             if (_controller == null) return;
             if (!_requestFrameInput(out SimInput frame)) return;
 
-            frame.RewindTicks = MeasureRewindTicks();
+            // Measured ONCE, spent twice: it rides out in the input record the
+            // server compensates by, and it is latched for the render frame,
+            // which needs the same number to name the PREDICTED tick the
+            // tracers are drawn on (app-88jb Т32, Ruling 286 — see
+            // `_rewindDepth` for why the frame does not ask again).
+            _rewindDepth = MeasureRewindTicks();
+            frame.RewindTicks = _rewindDepth;
             _controller.SetPendingInput(in frame);
         }
 
@@ -1332,18 +1371,50 @@ namespace Ring.Presentation.Net
                 _alpha = _clock.Phase;
                 _ready = true;
 
+                // THE TRACERS RUN ON THE PREDICTED TICK, NOT ON THE RENDER TICK
+                // (app-88jb Т32, spec §3.8, Р408, coordinator Ruling 285). The
+                // predicted tick is the clock this client's OWN BODY lives on,
+                // so the bullet is drawn where the round really is rather than
+                // where it was `renderTick` ticks ago — which is the entire
+                // visible half of Т32: leave these three arguments at
+                // `renderTick` and the drawn position stays a function of the
+                // render clock, i.e. nothing on screen changes at all.
+                //
+                // ⚠ AND THE PRICE IS PAID HERE, SO IT IS WRITTEN HERE. Every
+                // OTHER body in the picture — mobs, other collectors — is
+                // interpolated on the render clock, so from this line on the
+                // bullet flies AHEAD of them: the spark of a hit on a mob lags
+                // the bullet's passage by the depth, about five ticks (~170 ms)
+                // at 80 ms RTT. That is the mirror image of the already
+                // accepted "the bullet is ahead of the barrel" edge, it was
+                // taken with the price named, and it belongs to the В3
+                // expectations rather than to a future bug list. The one thing
+                // it is NOT is an argument for putting the tracers back on the
+                // render clock: there they lag their own shooter instead, which
+                // is the artifact that has a body's own hand on it.
+                int predictedTick = renderTick + _rewindDepth;
+
+                // ONCE PER FRAME AND BEFORE BOTH WRITES, which is the cache's
+                // own rule (`TracerProjectiles.StepTo`): `WriteInto` mutates
+                // nothing and is called twice, so the integrator has to have
+                // been walked before either call — and exactly once, or the
+                // budget would be spent twice on one frame.
+                _tracers.StepTo(predictedTick);
+
                 // bd `app-s0u`. BOTH halves, and each with its OWN tick: the
-                // pair is `renderTick` and `renderTick + 1`, and the renderer
-                // blends them by `_alpha`, so writing one state into both would
-                // freeze every tracer between ticks while the rest of the world
-                // slid. `ResolveRenderPair` has just overwritten these arrays
-                // wholesale (`CopyFrom`), which is why this runs after it and
-                // not before.
-                _prev.ProjectileCount = _tracers.WriteInto(_prev.Projectiles, renderTick);
-                _curr.ProjectileCount = _tracers.WriteInto(_curr.Projectiles, renderTick + 1);
+                // pair is `predictedTick` and `predictedTick + 1`, and the
+                // renderer blends them by `_alpha`, so writing one state into
+                // both would freeze every tracer between ticks while the rest
+                // of the world slid. `ResolveRenderPair` has just overwritten
+                // these arrays wholesale (`CopyFrom`), which is why this runs
+                // after it and not before.
+                _prev.ProjectileCount = _tracers.WriteInto(_prev.Projectiles, predictedTick);
+                _curr.ProjectileCount = _tracers.WriteInto(_curr.Projectiles, predictedTick + 1);
                 // Pruned by the OLDER tick, so a round ending on the newer half
-                // is still drawn on the older one (see `Prune`'s own doc).
-                _tracers.Prune(renderTick);
+                // is still drawn on the older one (see `Prune`'s own doc). The
+                // older half is the predicted tick now; the argument of that
+                // doc does not change, only whose clock the pair is on.
+                _tracers.Prune(predictedTick);
             }
 
             // AND THE LOCAL SEAT IS FILLED AFTER IT, EVERY FRAME, WHETHER OR
@@ -1650,7 +1721,15 @@ namespace Ring.Presentation.Net
             // wire, so the table is sized by the same cap the arena mints ids
             // from — `MaxProjectiles` bounds what can be in flight at once,
             // and a client sees a subset of it (`SightRadius`, Р32).
-            _tracers = new TracerProjectiles(cfg.Arena.MaxProjectiles);
+            // app-88jb Т32: the world's own numbers come next, because since
+            // this task the tracer cranks `ProjectileFlight` against the real
+            // arena instead of drawing a straight line; the catch-up budget
+            // comes last and off `NetConfig`, because it is a policy of THIS
+            // CLIENT'S PICTURE rather than a rule of the world — the same split
+            // and the same shape as `new ClientEventQueue(in _timings,
+            // _net.SnapshotEventBudget)` a few lines above.
+            _tracers = new TracerProjectiles(cfg.Arena.MaxProjectiles, in cfg,
+                _net.TracerCatchUpBudget);
             // Sized by the same cap and fed the same two numbers as the player
             // policy above: what counts as stale and how long a fade lasts are
             // properties of the CONNECTION, not of what is fading.
@@ -2699,12 +2778,26 @@ namespace Ring.Presentation.Net
             }
         }
 
-        /// bd `app-s0u` — the tracer half of the same two records, kept in its
-        /// own method because it needs two things `RouteToGhosts` does not: the
-        /// event's TICK (the tracer lives in render time, see
+        /// bd `app-s0u` — the tracer half of the SAME records, kept in its own
+        /// method because it needs two things `RouteToGhosts` does not: the
+        /// event's TICK (the tracer's whole life is measured in ticks, see
         /// `TracerProjectiles`) and the decoded envelope's position, which is
-        /// where the round was born and is not part of the payload's own eight
-        /// bytes.
+        /// where the round was born and which no payload in the catalog
+        /// carries — the envelope's `Pos` is a header field, not payload bytes.
+        /// ⚠ AN EARLIER WORDING SAID "the payload's own EIGHT bytes", and that
+        /// stopped being true in app-88jb Т32-А: `SnapshotEvents.
+        /// MaxPayloadBytes` is nine since the birth-step byte was added
+        /// (Ruling 292). The number was never the reason anyway — the reason is
+        /// that the position is in the header — so the count is gone rather
+        /// than corrected.
+        ///
+        /// THREE KINDS SINCE Т32, not two. `ProjectileRicocheted` (Т30, four
+        /// bytes since `app-5o2q`) is the mid-life record: it is the only word
+        /// the server says about a round between its birth and its end, and it
+        /// is what releases a tracer that has stopped against geometry it saw
+        /// before the news arrived (`TracerProjectiles.OnRicochet`, Ruling
+        /// 290). It is routed here rather than anywhere else because it is
+        /// about a ROUND, and the rounds live here.
         ///
         /// EVERY ROUND, NOT JUST THIS CLIENT'S. `ProjectileSpawned` is sent for
         /// every round the client can see (Р32 — relevance is judged on the
@@ -2743,14 +2836,38 @@ namespace Ring.Presentation.Net
                     // included -- would sit in the render snapshot signed as a
                     // player's, and the first reader of that field would be
                     // wrong through no fault of its own.
+                    // `BirthSteps` is HANDED OVER AND NOT COMPUTED (app-88jb
+                    // Т32, coordinator Ruling 306). The seed point moves inside
+                    // `TrySpawn`, which already owns the `dir * horizSpeed` the
+                    // shift is measured in — one home for the product, and, far
+                    // more importantly, a home an EditMode test can reach: this
+                    // method is private on a class whose constructor takes a
+                    // `NetworkManager`, so an expression written HERE would be
+                    // the second seam in this task with no witness at all,
+                    // which is precisely the hole Т32-А existed to close.
                     _tracers.TrySpawn(p.Id, (int)eventTick, decoded.Pos, p.Height, p.Dir,
                         p.HorizSpeed, p.VelZ, radius, ttl,
                         byPlayer ? ProjectileOwner.Player : ProjectileOwner.Mob,
-                        p.PlayerIndex);
+                        p.PlayerIndex, p.BirthSteps);
                     break;
                 }
                 case SnapshotEventKind.ProjectileEnded:
                     _tracers.Retire(p.Id, (int)eventTick);
+                    break;
+                case SnapshotEventKind.ProjectileRicocheted:
+                    // The three numbers `ProjectileFlight.TryRicochet` asks for
+                    // are exactly the three this record carries, which is why
+                    // no arithmetic happens on this line: the surface normal
+                    // (`p.Dir`, the payload's one packed direction), the
+                    // contact point (`decoded.Pos`, the record's header — the
+                    // same field the spark and the sound are placed at) and the
+                    // contact HEIGHT (`p.Height`, the byte `app-5o2q` kept
+                    // precisely so a mirrored round's spark does not draw on
+                    // the floor). Handing the tracer's own pre-step height
+                    // instead would stall the round vertically by one tick per
+                    // bounce (that method's own doc), which is why the height
+                    // travels with the event rather than being recovered here.
+                    _tracers.OnRicochet(p.Id, (int)eventTick, decoded.Pos, p.Dir, p.Height);
                     break;
             }
         }

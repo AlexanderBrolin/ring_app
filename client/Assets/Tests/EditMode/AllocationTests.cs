@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Networking.Client;
 using Ring.Simulation.Core;
 using Ring.Simulation.Visibility;
 using Unity.Mathematics;
@@ -429,6 +430,87 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(setB.Contains(visibleMobId),
                 "fixture premise: the visibility set must still hold its subject at the end of the "
                 + "measured window too");
+        }
+
+        /// THE CLIENT'S TRACER, MEASURED AT LAST (app-88jb Т32, coordinator
+        /// Ruling 294, spec §4.3). Spec §4.3 has asked for "the tracer's run
+        /// does not allocate" since the phase began, and until this task the
+        /// plan discharged that debt by running THIS FILE — which carried four
+        /// tests and not one mention of the tracer, i.e. proved the empty set.
+        /// Т32 is the task that creates the possibility in the first place: it
+        /// turns a closed form into a stepped integrator that consults the
+        /// arena's geometry every tick, on the render frame, so the witness is
+        /// its own.
+        ///
+        /// ⚠ HALF OF THE SAME DEBT IS NOT THIS TASK'S. Spec §4.3 names the
+        /// position HISTORY and the `Id -> slot` table in the same breath;
+        /// those are Т24/Т25's and are left alone rather than swept in here.
+        ///
+        /// ⚠ WHAT IT ACTUALLY WATCHES, since "does not allocate" is only worth
+        /// as much as the work inside the window: `ProjectileFlight.Step`,
+        /// which sweeps this arena's 20 obstacles, 14 walls and 2 zone arcs
+        /// once per round per tick, `ProjectileFlight.BarrierStops` behind it,
+        /// and this class's own cache bookkeeping. All of them answer in
+        /// structs; the arrays they read belong to the config. A green run of
+        /// THIS file before `StepTo` had a body proved nothing at all, and was
+        /// declared a guard rather than a witness while that was so.
+        [Test]
+        public void TracerStepAndWrite_DoNotAllocateGC()
+        {
+            // Default(), not Open(): the subject is a run against REAL geometry
+            // (20 obstacles, 14 walls, 2 zone arcs). An empty disc would measure
+            // the cheap half of ProjectileFlight.Step and prove little.
+            SimConfig config = TestConfigs.Default();
+            Assert.Greater(config.Arena.ObstacleCount + config.Arena.WallCount, 0,
+                "fixture premise: with no geometry the step makes no probe at all and there "
+                + "is nothing to measure");
+
+            const int rounds = 32;
+            const int spawnTick = 100;
+            var tracers = new TracerProjectiles(capacity: 64, in config, catchUpBudget: 8);
+            var buf = new ProjectileState[64];
+            for (int i = 0; i < rounds; i++)
+            {
+                // ttl 100 s rather than the weapon's own: `Prune` inside the
+                // measured loop must not empty the table halfway through and
+                // leave it measuring an idle class. Lifetime is the caller's
+                // parameter here, not a config mirror, so stating it is honest.
+                Assert.IsTrue(tracers.TrySpawn(i + 1, spawnTick, new float2(0f, i * 2f), 1f,
+                        math.normalize(new float2(1f, 0.05f * i)), config.Weapon.ProjectileSpeed,
+                        0f, config.Weapon.ProjectileRadius, ttl: 100f),
+                    $"fixture premise: round {i} was refused — the table never filled");
+            }
+
+            // Warm-up OUTSIDE the measured window: the first call to each
+            // member carries JIT and other one-off work that is not this
+            // class's allocation. Same discipline as the fixture-liveness
+            // asserts the three tests above take before their own loops.
+            tracers.StepTo(spawnTick + 1);
+            Assert.Greater(tracers.WriteInto(buf, spawnTick + 1), 0,
+                "fixture premise: the rounds must actually be drawn, or the loop below "
+                + "measures an empty scan");
+
+            int tick = spawnTick + 1;
+            Assert.That(() =>
+            {
+                // Fifty frames, not a thousand: an allocation on this path shows
+                // on the very first iteration, while a long run would walk every
+                // round past the zone arc and end up measuring stopped tracks
+                // instead of flying ones.
+                for (int frame = 0; frame < 50; frame++)
+                {
+                    tick++;
+                    tracers.StepTo(tick);
+                    tracers.WriteInto(buf, tick);
+                    tracers.WriteInto(buf, tick + 1);
+                    tracers.Prune(tick);
+                }
+            }, Is.Not.AllocatingGCMemory());
+
+            // Fixture-liveness check AFTER the measured window (Урок 87), the
+            // same discipline the neighbors above keep.
+            Assert.Greater(tracers.Count, 0,
+                "fixture premise: the table must not have emptied during the measured window");
         }
     }
 }

@@ -1229,8 +1229,17 @@ namespace Ring.Editor
             // rewind depth against the C# initializer instead of the owner's
             // tuned number, and EditMode would stay green throughout (the tests
             // read C# defaults, not the asset).
+            // app-88jb Т32 moves it once more, to TracerCatchUpBudget — how
+            // many flight steps one frame may spend catching one tracer up to
+            // the tick it is drawn at, appended as the class's new last field
+            // in the same commit as this move. Same drill and the same
+            // consequence if it were skipped: with RewindSanityTicks still
+            // named here the new key would never reach NetConfig.asset, every
+            // client would smooth its tracer spike by the C# initializer rather
+            // than by the owner's tuned number, and EditMode would stay green
+            // throughout (the tests read C# defaults, not the asset).
             EditorBootstrapUtils.EnsureAssetHasKey(net, $"{DataDir}/NetConfig.asset",
-                "RewindSanityTicks"); // app-88jb Т29 (was EntityFadeTicks, Stage 2 Task 47c; SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
+                "TracerCatchUpBudget"); // app-88jb Т32 (was RewindSanityTicks, app-88jb Т29; EntityFadeTicks, Stage 2 Task 47c; SpectatorSwitchCooldownSeconds, Task 42a; MatchAbandonGraceSeconds, Task 41b; MatchMaxDurationSeconds, Task 23)
 
             AssetDatabase.SaveAssets();
 

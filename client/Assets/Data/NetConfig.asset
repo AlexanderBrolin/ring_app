@@ -32,3 +32,4 @@ MonoBehaviour:
   SpectatorSwitchCooldownSeconds: 0.35
   EntityFadeTicks: 15
   RewindSanityTicks: 2
+  TracerCatchUpBudget: 8
