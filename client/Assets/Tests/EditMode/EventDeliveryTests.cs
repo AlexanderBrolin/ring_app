@@ -1171,23 +1171,27 @@ namespace Ring.Simulation.Tests
         ///     OUTSIDE the enumeration, so it stays green while a real member
         ///     goes unmapped. Its input is a whole `SimEvent` inside the tick,
         ///     so the only way to ask it is through a world.
-        ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT
-        ///     POINT — asserted TWICE, on the payload's copy and on the record
-        ///     HEADER's, which is NOT one assertion written down twice. The
-        ///     two copies answer two different questions, and either can be
-        ///     right while the other is wrong:
-        ///       • the PAYLOAD's point proves the CODEC — that
-        ///         `SnapshotEvents.WriteProjectileRicocheted` put four bytes on
-        ///         the wire and `TryReadPayload` got the same point back;
+        ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT —
+        ///     its POINT off the record header, and its NORMAL and HEIGHT out
+        ///     of the payload. Three assertions, two different questions:
         ///       • the HEADER's point proves the ASSEMBLER's sim-to-wire
         ///         MAPPING — the single `Enqueue(c, i, we.Source.Pos)` in the
         ///         shared arm of `RouteEvents`, which is what fills
-        ///         `EventRecord.Pos`.
-        ///     And the header's is the copy that DRAWS THE SPARK:
-        ///     `ClientEventDecoder` fills `SimEvent.Pos` from `record.Pos` and
-        ///     deliberately NOT from the payload (its own Т30 branch says so
-        ///     and why), so a payload that round-trips perfectly still leaves
-        ///     the spark at the world origin if the header point is wrong.
+        ///         `EventRecord.Pos`. It is also the copy that DRAWS THE
+        ///         SPARK: `ClientEventDecoder` fills `SimEvent.Pos` from
+        ///         `record.Pos`, so a wrong header point leaves the spark at
+        ///         the world origin however well the payload travels;
+        ///       • the payload's normal and height prove that the assembler
+        ///         PASSED `ev.HitDir` and `ev.Height` rather than a zero and a
+        ///         `float2.zero`. Neither the codec round trip nor the decoder
+        ///         test can see that mutation: both are fed by the writer
+        ///         directly, so only a frame assembled from a world catches an
+        ///         argument the assembler never handed over — the class
+        ///         `app-cpdq` keeps open, closed for this kind here.
+        ///     ⚠ THE PAYLOAD ONCE CARRIED A SECOND COPY OF THE POINT and this
+        ///     test asserted it; app-5o2q took those four bytes off the wire
+        ///     (spec §6k), so the point is asserted once, where it lives. The
+        ///     height is what arrived in their place.
         ///     Before this pair, NO test in the tree asserted the header
         ///     point of any `Projectile*` record: grepping every line of
         ///     `Tests/EditMode/*.cs` that names `ProjectileEnded` or
@@ -1266,8 +1270,11 @@ namespace Ring.Simulation.Tests
             // Field conventions are the emit site's own (coordinator Ruling 234):
             // the ROUND's id in EntityId, the contact in Pos, the surface normal
             // in HitDir, no damage, and the contact height in its own field.
+            // The height is NOT zero, which is what the field holds when the
+            // assembler never passes it on.
+            const float contactHeight = 1.1f;
             w.Emit(SimEventKind.ProjectileRicocheted, contact, roundId, default, 0f,
-                hitDir: normal, height: 1.1f);
+                hitDir: normal, height: contactHeight);
 
             Assert.DoesNotThrow(() => asm.BeginTick(w),
                 "a reflection must not cost the tick its frames: the assembler's expanding switch "
@@ -1287,25 +1294,38 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(roundId, mid.Payloads[r].Id,
                 "and the payload names the round it happened to");
             float tol = 2f * cfg.Arena.Radius / 65535f;
-            Assert.AreEqual(contact.x, mid.Payloads[r].Pos.x, tol,
-                "the contact point must ride the payload — it is the point of the whole record");
-            Assert.AreEqual(contact.y, mid.Payloads[r].Pos.y, tol);
+            // THE TWO FIELDS THE PAYLOAD DOES CARRY (app-5o2q). They are the
+            // only witness that the assembler handed the writer `ev.HitDir`
+            // and `ev.Height` instead of a `float2.zero` and a 0: the codec
+            // round trip and the decoder test are both fed by the writer
+            // directly, so that mutation survives them untouched. The height's
+            // tolerance is one whole code of its own scale
+            // (`MaxAimHeight / 255`), the form the neighboring
+            // `ProjectileHit_PutsTheVictimTheDirectionAndTheHeightOnTheWire`
+            // already uses. The normal is -Y and asserted as an ANGLE:
+            // `Quantize.Dir(float2.zero)` decodes back to (1, 0), so a heading
+            // along +X would agree with "nothing was passed" — this one cannot.
+            Assert.AreEqual(contactHeight, mid.Payloads[r].Height, cfg.Hero.MaxAimHeight / 255f,
+                "высота контакта не доехала: искра рикошета встанет на пол, а соседняя искра "
+                + "поглощённой пули — на высоте попадания, у той же стены");
+            Assert.AreEqual(-math.PI / 2f,
+                math.atan2(mid.Payloads[r].Dir.y, mid.Payloads[r].Dir.x), 1e-3f,
+                "нормаль не доехала: ею развёрнута искра, и на нулевой обработчик выходит досрочно");
 
-            // THE SAME POINT AGAIN, OFF THE RECORD HEADER, and the class doc's
-            // claim 2 says at length why this is a second question rather than
-            // the same assertion twice: the payload's copy proves the CODEC,
-            // this one proves the ASSEMBLER's sim-to-wire mapping — the single
-            // `Enqueue(c, i, we.Source.Pos)` in the shared arm — and this is
-            // the copy `ClientEventDecoder` actually reads into `SimEvent.Pos`,
-            // i.e. the one that decides where the spark is drawn. Same
-            // tolerance, because the header rides the SAME quantizer at the
-            // SAME scale (`Quantize.Pos(…, cfg.Arena.Radius)`, one code = one
-            // step of `2 * Radius / 65535`).
-            // ⚠ The x half of this pair, and of the payload pair above, is
-            // one-sided by the fixture's own geometry: `contact.x` is 0, which
-            // is also what an unfilled field holds. Recorded as a finding
-            // rather than fixed here — closing it means moving the contact off
-            // the y axis, i.e. changing the fixture, not adding an assertion.
+            // THE CONTACT POINT, OFF THE RECORD HEADER — the one home it has
+            // since the narrowing, and the class doc's claim 2 says why this
+            // is the assembler's sim-to-wire mapping being asked: the single
+            // `Enqueue(c, i, we.Source.Pos)` in the shared arm is what fills
+            // it, and it is the copy `ClientEventDecoder` reads into
+            // `SimEvent.Pos`, i.e. the one that decides where the spark is
+            // drawn. The tolerance is the header's own quantizer at its own
+            // scale (`Quantize.Pos(…, cfg.Arena.Radius)`, one code = one step
+            // of `2 * Radius / 65535`).
+            // ⚠ The x half of this pair is one-sided by the fixture's own
+            // geometry: `contact.x` is 0, which is also what an unfilled field
+            // holds. Recorded as a finding rather than fixed here — closing it
+            // means moving the contact off the y axis, i.e. changing the
+            // fixture, not adding an assertion.
             Assert.AreEqual(contact.x, mid.Events[r].Pos.x, tol,
                 "the contact point must ride the record HEADER too — that is the copy the client "
                 + "decodes into SimEvent.Pos and the one the spark is drawn at");

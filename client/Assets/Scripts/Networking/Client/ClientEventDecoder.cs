@@ -497,15 +497,21 @@ namespace Ring.Networking.Client
                     // `PersistentPropsDirector.HandleRicocheted` reads to aim
                     // the spark.
                     e.HitDir = p.Dir;
-                    // ⚠ `Pos` IS DELIBERATELY NOT TAKEN FROM THE PAYLOAD, even
-                    // though this is the one kind whose payload carries a point
-                    // (`SnapshotEventPayload.Pos`). `e.Pos = record.Pos` above
-                    // has already filled it from the record HEADER, which is
-                    // where every other kind's position comes from and which
-                    // the assembler filled with this very contact. Reading the
-                    // payload's copy here would give one number two sources on
-                    // this side of the wire, and the day they disagree there
-                    // would be no rule saying which is right.
+                    // The CONTACT HEIGHT (app-5o2q), which
+                    // `PersistentPropsDirector.HandleRicocheted` lifts the
+                    // spark by — left unassigned it is zero, and a mirrored
+                    // round then sparks on the floor while an absorbed one
+                    // sparks at the hit, on the same wall.
+                    e.Height = p.Height;
+                    // `Pos` COMES FROM THE RECORD HEADER, which is now the
+                    // only place it exists: `e.Pos = record.Pos` above has
+                    // already filled it for every kind, and the assembler put
+                    // this very contact there. The payload used to carry a
+                    // second copy this branch deliberately did not read — the
+                    // owner's answer to that redundancy was to take the four
+                    // bytes off the wire (spec §6k), so the argument about one
+                    // number having two sources is now history rather than a
+                    // live rule, and the header is the single home.
                     break;
 
                 default:

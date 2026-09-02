@@ -73,14 +73,6 @@ namespace Ring.Simulation.Tests
         /// header and never the payload.
         static float2 EventPos => new float2(3.5f, -7.25f);
 
-        /// Stage 3 Т30: the SECOND copy of a contact point, the one that rides
-        /// `ProjectileRicocheted`'s payload (the only payload in the catalog
-        /// carrying a point of its own). It differs from `EventPos` above in
-        /// BOTH axes and in BOTH signs on purpose — the decoder must fill
-        /// `SimEvent.Pos` from the record header, and two points that agreed
-        /// could not say which of them it read.
-        static float2 PayloadContact => new float2(-11.75f, 4.5f);
-
         static SnapshotBlocks.EventRecord Record(SnapshotEventKind kind)
             => new SnapshotBlocks.EventRecord
             {
@@ -461,32 +453,35 @@ namespace Ring.Simulation.Tests
         /// normal along +X would agree with the mutation it exists to catch.
         /// `DashRicocheted` above states its normal the same way.
         ///
-        /// `Pos` IS ASSERTED AGAINST THE RECORD HEADER WHILE THE PAYLOAD
-        /// CARRIES A DIFFERENT POINT ON PURPOSE. This is the one kind in the
-        /// catalog whose payload has a contact point of its own
-        /// (`SnapshotEventPayload.Pos`), and the decoder deliberately does not
-        /// read it: `e.Pos = record.Pos` is filled for EVERY kind before the
-        /// per-kind switch, that header is where the assembler put this very
-        /// contact, and it is the copy the whole Presentation fan-out — the
-        /// spark included — already reads. Which of the two copies travels in
-        /// the `SimEvent` is therefore asserted here, and two points that
-        /// agreed could not tell them apart. Whether the second copy should
-        /// exist at all is NOT decided here: it is an open question for the
-        /// owner (spec §6j, coordinator Ruling 238), and the payload copy keeps
-        /// its own witness where it belongs, in
-        /// `SnapshotCodecTests.ProjectileRicocheted_RoundTripsPointAndNormal`.
+        /// `Pos` IS ASSERTED AGAINST THE RECORD HEADER, WHICH IS NOW THE ONLY
+        /// COPY THERE IS (app-5o2q, spec §6k). The payload used to carry a
+        /// contact point of its own and the decoder deliberately did not read
+        /// it; the owner's answer to that redundancy was to take the four
+        /// bytes off the wire, so the header is the single home of this
+        /// position exactly as it is for every other kind. `e.Pos =
+        /// record.Pos` is filled before the per-kind switch, that header is
+        /// where the assembler put this very contact, and it is the copy the
+        /// whole Presentation fan-out — the spark included — reads. The
+        /// assertion stays because the arm below could still overwrite it.
+        ///
+        /// THE HEIGHT IS THE BYTE THAT ARRIVED IN THEIR PLACE, and it is
+        /// asserted for the same reason the normal is: unfilled it is zero,
+        /// and a zero here draws the spark of a mirrored round on the FLOOR
+        /// while the neighboring `ProjectileEnded` draws an absorbed one at
+        /// the contact — the same wall, two heights apart.
         [Test]
-        public void ProjectileRicocheted_CarriesTheRoundInEntityIdAndTheSurfaceNormalInHitDir()
+        public void ProjectileRicocheted_CarriesTheRoundTheSurfaceNormalAndTheContactHeight()
         {
-            // Sender: `SnapshotAssembler.BeginTick` writes the ROUND's own id
-            // and the surface normal for this kind (Ruling 234's field table —
-            // the neighboring ProjectileBlocked emit's conventions, not a fresh
-            // choice), and the point rides the record HEADER the assembler
-            // fills per connection.
+            // Sender: `SnapshotAssembler.BeginTick` writes the ROUND's own id,
+            // the surface normal and the contact height for this kind (Ruling
+            // 234's field table — the neighboring ProjectileBlocked emit's
+            // conventions, not a fresh choice), and the point rides the record
+            // HEADER the assembler fills per connection.
+            const float contactHeight = 1.5f;
             var cfg = TestConfigs.Open();
             byte[] bytes = Buffer(SnapshotEventKind.ProjectileRicocheted);
-            SnapshotEvents.WriteProjectileRicocheted(bytes, RoundId, PayloadContact,
-                new float2(0f, 1f), in cfg);
+            SnapshotEvents.WriteProjectileRicocheted(bytes, RoundId,
+                new float2(0f, 1f), contactHeight, in cfg);
 
             SimEvent e = Decode(SnapshotEventKind.ProjectileRicocheted, bytes, in cfg);
 
@@ -499,9 +494,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(math.PI / 2f, math.atan2(e.HitDir.y, e.HitDir.x), 1e-3f,
                 "SimEvent.HitDir must be the surface NORMAL the wire carried — HandleRicocheted "
                 + "aims the spark with it and returns early when it is zero");
+            Assert.AreEqual(contactHeight, e.Height, UnitTolerance(cfg.Hero.MaxAimHeight),
+                "SimEvent.Height must be the CONTACT height the wire carried — HandleRicocheted "
+                + "lifts the spark by it, and a zero puts the spark of a mirrored round on the "
+                + "floor while an absorbed one sparks at the hit");
             Assert.AreEqual(EventPos.x, e.Pos.x, 0f,
-                "SimEvent.Pos must be the RECORD HEADER's point and not the payload's second copy: "
-                + "the header is per-connection and is where every other kind's position comes from");
+                "SimEvent.Pos must be the RECORD HEADER's point: the header is per-connection and "
+                + "is where every other kind's position comes from");
             Assert.AreEqual(EventPos.y, e.Pos.y, 0f);
         }
 

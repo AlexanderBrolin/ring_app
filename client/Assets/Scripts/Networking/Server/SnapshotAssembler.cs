@@ -851,8 +851,13 @@ namespace Ring.Networking.Server
                     case SimEventKind.ProjectileRicocheted:
                     {
                         int slot = Add(ref seq, i, in ev, SnapshotEventKind.ProjectileRicocheted);
+                        // app-5o2q: the contact POINT is no longer an argument
+                        // — it rides the record header this method fills per
+                        // connection, like every other kind's position — and
+                        // the contact HEIGHT takes its place, which is what
+                        // puts the spark at the hit instead of on the floor.
                         SnapshotEvents.WriteProjectileRicocheted(PayloadSpan(slot), ev.EntityId,
-                            ev.Pos, ev.HitDir, in _cfg);
+                            ev.HitDir, ev.Height, in _cfg);
                         // ⚠ WITHOUT THIS LINE THE RECORD REACHES NOBODY, and
                         // it fails SILENTLY rather than loudly: `RouteEvents`
                         // addresses this kind by the per-connection spawn

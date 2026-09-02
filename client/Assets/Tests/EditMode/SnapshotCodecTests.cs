@@ -2515,15 +2515,17 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ContainerEmptied));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveStarted));
             Assert.AreEqual(2, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.WaveCleared));
-            // Stage 3 Т30: the reflection — id 2 + point 4 + normal 1. Pinned
-            // BY NAME like every kind above it, and the enumeration sweep below
-            // cannot stand in for this line: it only asks that a payload FITS
-            // `MaxPayloadBytes`, and any width up to 8 fits. Without this line
-            // a widening of this kind alone was caught by exactly one test in
-            // the tree (`ProjectileRicocheted_RoundTripsPointAndNormal`), and
-            // the next kind appended by this one's example would be pinned by
-            // none at all.
-            Assert.AreEqual(7, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted));
+            // Stage 3 Т30, NARROWED BY app-5o2q: the reflection — id 2 +
+            // normal 1 + height 1. Seven became four, and the four bytes that
+            // left were the contact POINT: it rides the record header like
+            // every other kind's position, so the payload's own copy had no
+            // combat reader on either side of the wire. The byte that arrived
+            // in their place is the contact HEIGHT, which is what lifts the
+            // spark off the floor.
+            // Pinned BY NAME like every kind above it, and the enumeration
+            // sweep below cannot stand in for this line: it only asks that a
+            // payload FITS `MaxPayloadBytes`, and any width up to 8 fits.
+            Assert.AreEqual(4, SnapshotEvents.PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted));
 
             Assert.AreEqual(8, SnapshotEvents.MaxPayloadBytes,
                 "MaxPayloadBytes sizes the assembler's carry-queue slots — it must be the real maximum, "
@@ -2931,28 +2933,87 @@ namespace Ring.Simulation.Tests
 
         // ---- Т30. The one Projectile* kind that is NOT an ending ----
 
-        /// app-88jb Т30: the contact point and the surface normal, through the
-        /// catalog's own codec. The id is deliberately ABOVE 255 (a writer that
-        /// stored one byte instead of a u16 loses the high half), and the two
-        /// axes of the point differ in magnitude AND in sign, so a writer that
-        /// swapped x for y is caught rather than agreed with.
+        /// app-88jb Т30, narrowed by app-5o2q: the surface normal and the
+        /// contact HEIGHT, through the catalog's own codec. The id is
+        /// deliberately ABOVE 255 (a writer that stored one byte instead of a
+        /// u16 loses the high half and the round trip says so).
+        ///
+        /// THE NAME MOVED WITH THE SUBJECT (coordinator Ruling 273). This test
+        /// used to be `…_RoundTripsPointAndNormal` and used to assert a contact
+        /// point out of the payload; the point no longer travels there — it
+        /// rides the record header, where every other kind's position rides —
+        /// and a name outliving its subject is worse than no name at all.
+        /// The header's copy keeps its own witness, in
+        /// `EventDeliveryTests.ProjectileRicocheted_ReachesTheSubscriber_AndTheEndingStillFollows`,
+        /// which is where a sim-to-wire mapping can be asked at all.
+        ///
+        /// THE NORMAL IS +Y AND NOT +X, and the choice is load-bearing:
+        /// `Quantize.Dir(float2.zero)` decodes back to (1, 0), so a fixture
+        /// aimed along +X agrees with the mutation "the normal was never
+        /// written". The height is not zero for the same reason — zero is
+        /// exactly what an unwritten byte decodes to on this scale.
         [Test]
-        public void ProjectileRicocheted_RoundTripsPointAndNormal()
+        public void ProjectileRicocheted_RoundTripsTheNormalAndTheContactHeight()
         {
             SimConfig cfg = TestConfigs.Default();
             System.Span<byte> buf = stackalloc byte[SnapshotEvents.MaxPayloadBytes];
-            var point = new float2(12.5f, -7.25f);
-            int n = SnapshotEvents.WriteProjectileRicocheted(buf, id: 4242, pos: point,
-                normal: new float2(0f, 1f), in cfg);
-            Assert.AreEqual(7, n);
+            const float height = 1.75f;
+            int n = SnapshotEvents.WriteProjectileRicocheted(buf, id: 4242,
+                normal: new float2(0f, 1f), height: height, in cfg);
+            Assert.AreEqual(4, n, "рикошет обязан весить четыре байта: id, нормаль, высота");
 
             Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileRicocheted,
                 buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
             Assert.AreEqual(4242, v.Id);
-            float tol = 2f * cfg.Arena.Radius / 65535f;
-            Assert.AreEqual(point.x, v.Pos.x, tol, "точка контакта не доехала");
-            Assert.AreEqual(point.y, v.Pos.y, tol);
-            Assert.Greater(v.Dir.y, 0.9f, "нормаль не доехала");
+            Assert.AreEqual(math.PI / 2f, math.atan2(v.Dir.y, v.Dir.x), 1e-3f,
+                "нормаль не доехала");
+            Assert.AreEqual(height, v.Height, HalfStepUnit(cfg.Hero.MaxAimHeight) + 1e-3f,
+                "высота контакта не доехала: искра рикошета встанет на пол");
+        }
+
+        /// app-5o2q: THE BYTES THEMSELVES, by the form of every other kind in
+        /// this file's layout region (`EventPayload_ProjectileEnded_ByteLayout_
+        /// AndDecodedValues` is the nearest neighbor, down to the pair of
+        /// height and direction bytes). It lives here beside the round trip
+        /// rather than in that region because the two are one kind's codec
+        /// witnesses and a reader looking for either wants both.
+        ///
+        /// THE ROUND TRIP ABOVE CANNOT STAND IN FOR IT, which is this file's
+        /// own standing rule rather than a fresh argument: a round trip is
+        /// blind to any mutation applied symmetrically to writer and reader, so
+        /// byte order and the scale each byte rides are pinned here or nowhere.
+        /// After the narrowing there is nothing else left to catch a swap of
+        /// the normal and the height, or a height quantized against some other
+        /// scale — the payload no longer carries a second copy of anything.
+        ///
+        /// THE TWO CODES ARE DIFFERENT NUMBERS AND NEITHER IS THE SENTINEL:
+        /// 192 for the normal, 108 for the height, against a buffer filled with
+        /// 0xCC. A swap of the two bytes fails both assertions, and a byte
+        /// never written fails whichever one it belongs to.
+        [Test]
+        public void EventPayload_ProjectileRicocheted_ByteLayout_AndDecodedValues()
+        {
+            const SnapshotEventKind kind = SnapshotEventKind.ProjectileRicocheted;
+
+            byte[] bytes = WritePayload(kind, b => SnapshotEvents.WriteProjectileRicocheted(
+                new System.Span<byte>(b), EvtRoundId, EvtDirUp, EvtHeightHigh, EvtCfg));
+            Assert.AreEqual((byte)0x37, bytes[0], "byte 0: id low");
+            Assert.AreEqual((byte)0x13, bytes[1], "byte 1: id high");
+            // 128 WOULD BE THE ZERO VECTOR AND 204 THE UNTOUCHED BUFFER, so
+            // +Y's own 192 is the one code that means "the normal was passed
+            // and it was this one".
+            Assert.AreEqual((byte)192, bytes[2],
+                "byte 2: Quantize.Dir of (0, 1) -> code 192, the surface normal the spark is aimed with");
+            Assert.AreEqual((byte)108, bytes[3],
+                "byte 3: contact height 2.75/6.5 -> code 108 on the same MaxAimHeight scale every "
+                + "other height byte in this catalog rides");
+
+            // Decoded values, asserted separately from the bytes (lesson 108).
+            SnapshotEventPayload d = Decoded(bytes, kind);
+            Assert.AreEqual(EvtRoundId, d.Id);
+            AssertDecodedHeading(d.Dir, EvtDirUp, "ricochet normal");
+            Assert.That(d.Height, Is.EqualTo(EvtHeightHigh)
+                .Within(HalfStepUnit(EvtMaxAimHeight) + 1e-3f));
         }
 
         /// The rule that separates this kind from every other `Projectile*` one

@@ -207,23 +207,6 @@ namespace Ring.Networking.Protocol
         /// speed fields above.
         public float2 Dir;
 
-        /// Contact point of a `ProjectileRicocheted` (app-88jb Т30), in world
-        /// meters. Zero for every other kind. The one payload in this catalog
-        /// that carries a point of its own (plan deviation 3) — every other
-        /// kind's position rides the RECORD HEADER instead
-        /// (`SnapshotBlocks.EventRecord.Pos`, filled per connection by the
-        /// assembler), which is where `DashRicocheted`'s own wall contact
-        /// travels today.
-        /// ⚠ THE PLAN'S OWN WORDING FOR THIS FIELD SAID SOMETHING ELSE —
-        /// that `DashRicocheted` "restores its position from the actor's
-        /// body" — and the code says otherwise: `ClientEventDecoder` assigns
-        /// `e.Pos = record.Pos` for EVERY kind before its per-kind switch, and
-        /// `PersistentPropsDirector.HandleRicocheted` plays its spark at that
-        /// same `e.Pos`, never at the actor. The redundancy this leaves
-        /// between the header's point and this one is recorded for the review
-        /// round rather than decided here.
-        public float2 Pos;
-
         /// `ProjectileSpawned` only: the round's HORIZONTAL speed. It is not
         /// the config's `ProjectileSpeed` for an aimed player shot —
         /// WeaponSystem normalizes a full 3D vector to `ProjectileSpeed`, so
@@ -573,18 +556,16 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.DirectorActivated:
                 case SnapshotEventKind.DirectorDied: return 0;
 
-                // Stage 3 Т30: `id u16 | pos.x u16 | pos.y u16 | normal u8`.
-                // AS WIDE AS `PlayerDamaged`, the widest non-spawn payload
-                // today: the two TIE at seven bytes (an earlier wording here
-                // claimed a sole maximum, which the `PlayerDamaged` case above
-                // falsifies), and only `ProjectileSpawned`'s eight is wider in
-                // the whole catalog. Four of the seven are the contact point —
-                // the only payload here that carries a position of its own
-                // (plan deviation 3; see `SnapshotEventPayload.Pos` for the
-                // measured relationship with the record header's own point,
-                // recorded for the owner by coordinator Ruling 238 rather than
-                // acted on here).
-                case SnapshotEventKind.ProjectileRicocheted: return 7;
+                // Stage 3 Т30, narrowed by app-5o2q: `id u16 | normal u8 |
+                // height u8`. SEVEN BYTES BECAME FOUR when the contact point
+                // stopped riding here: a position belongs to the RECORD
+                // HEADER, which is where every other kind's travels and where
+                // this one's had a second, unread copy. The byte that arrived
+                // in their place is the contact HEIGHT, on the same
+                // `Hero.MaxAimHeight` scale `ProjectileEnded`, `PlayerDamaged`
+                // and `ProjectileSpawned` already spend a height byte on —
+                // without it the spark of a mirrored round draws on the floor.
+                case SnapshotEventKind.ProjectileRicocheted: return 4;
 
                 default:
                     throw new System.ArgumentException(
@@ -852,18 +833,33 @@ namespace Ring.Networking.Protocol
             return PayloadBytesFor(SnapshotEventKind.ContainerEmptied);
         }
 
-        /// Stage 3 Т30: the contact point and the surface normal of a round
-        /// that mirrored off static geometry and FLEW ON — the catalog's only
-        /// mid-flight record. Layout: `id u16 | pos.x u16 | pos.y u16 |
-        /// normal u8`.
+        /// Stage 3 Т30, narrowed by app-5o2q: the surface normal and the
+        /// CONTACT HEIGHT of a round that mirrored off static geometry and
+        /// FLEW ON — the catalog's only mid-flight record. Layout:
+        /// `id u16 | normal u8 | height u8`.
         ///
-        /// THE POINT RIDES `Quantize.Pos` AGAINST `Arena.Radius`, which is the
-        /// scale every position on the wire already uses (`SnapshotWriter`'s
-        /// player, mob and pickup positions, and the Events-block record
-        /// header itself). No new codec and no new constant: a contact point
-        /// is a point in the arena, so it lives in `Pos`'s own symmetric
-        /// domain by construction. The step is `2 * Radius / 65535`, which is
-        /// the tolerance the round-trip test states rather than invents.
+        /// THE CONTACT POINT IS NOT IN THIS PAYLOAD, and its absence is the
+        /// owner's decision (spec §6k) rather than an omission: the point
+        /// rides the RECORD HEADER (`SnapshotBlocks.EventRecord.Pos`, filled
+        /// per connection by the assembler), which is where every other kind's
+        /// position travels and where `DashRicocheted`'s own wall contact has
+        /// always traveled. One number, one home — a second copy on the wire
+        /// had no combat reader and no rule saying which copy wins the day the
+        /// two disagree.
+        ///
+        /// THE HEIGHT RIDES `Quantize.Unit` AGAINST `Hero.MaxAimHeight`, the
+        /// scale `ProjectileEnded`, `PlayerDamaged` and `ProjectileSpawned`
+        /// already spend a height byte on. No new codec and no new constant
+        /// (rule 2); the step is `MaxAimHeight / 255`, which is the tolerance
+        /// the tests state rather than invent. Without it the spark of a
+        /// mirrored round draws on the floor while the spark of an absorbed
+        /// one draws at the contact — the same wall, two different places.
+        ///
+        /// EVERY BYTE IS WRITTEN, none left to whatever the buffer held:
+        /// `Reserve` only checks the destination's LENGTH, and the caller's
+        /// pool is reused across ticks, so a byte this method skipped would
+        /// carry the previous tenant's value onto the wire. The same reasoning
+        /// `WriteProjectileEnded` states for its own zero-valued fields.
         ///
         /// NO SLOT GUARD, AND ITS ABSENCE IS THE STATEMENT: this payload
         /// carries no player index at all — a reflection names a ROUND, not a
@@ -882,14 +878,13 @@ namespace Ring.Networking.Protocol
         /// what keeps a degenerate contact from writing a Unity error into
         /// the log. The emit site never produces one: a ricochet requires
         /// `dot(vel, normal) < 0`, which a zero vector cannot satisfy.
-        public static int WriteProjectileRicocheted(System.Span<byte> dst, int id, float2 pos,
-            float2 normal, in SimConfig cfg)
+        public static int WriteProjectileRicocheted(System.Span<byte> dst, int id, float2 normal,
+            float height, in SimConfig cfg)
         {
             Reserve(dst, SnapshotEventKind.ProjectileRicocheted);
             WriteU16(dst, 0, (ushort)(id & 0xFFFF));
-            WriteU16(dst, 2, Quantize.Pos(pos.x, cfg.Arena.Radius));
-            WriteU16(dst, 4, Quantize.Pos(pos.y, cfg.Arena.Radius));
-            dst[6] = Quantize.Dir(normal);
+            dst[2] = Quantize.Dir(normal);
+            dst[3] = Quantize.Unit(height, cfg.Hero.MaxAimHeight);
             return PayloadBytesFor(SnapshotEventKind.ProjectileRicocheted);
         }
 
@@ -1006,15 +1001,15 @@ namespace Ring.Networking.Protocol
                 case SnapshotEventKind.ContainerEmptied:
                 case SnapshotEventKind.DirectorActivated:
                 case SnapshotEventKind.DirectorDied:
-                // Stage 3 Т30: no constraint either, and for the same reason
-                // spelled out rather than left to inference. Its three fields
-                // are a u16 id (every code is legal, mapping it to a live
-                // round is the receiver's job) and two quantized coordinates
-                // plus an angle, and `Quantize`'s decoders are CLAMPING
-                // rather than validating — every one of the 65536 codes
-                // decodes to a point inside the arena by construction, so
-                // there is no byte here a hostile sender could put out of
-                // domain.
+                // Stage 3 Т30, narrowed by app-5o2q: no constraint either,
+                // and for the same reason spelled out rather than left to
+                // inference. Its three fields are a u16 id (every code is
+                // legal, mapping it to a live round is the receiver's job), an
+                // angle and a height, and `Quantize`'s decoders are CLAMPING
+                // rather than validating — every one of the 256 codes decodes
+                // to a heading, and every one to a height inside
+                // `[0, MaxAimHeight]`, by construction. There is no byte here
+                // a hostile sender could put out of domain.
                 case SnapshotEventKind.ProjectileRicocheted:
                     break;
             }
@@ -1119,17 +1114,20 @@ namespace Ring.Networking.Protocol
                     break;
 
                 case SnapshotEventKind.ProjectileRicocheted:
-                    // Against the SAME `Arena.Radius` the writer used, and the
-                    // normal back through `DirBack` — the pair `Quantize`
-                    // guarantees idempotent (Р34). `Dir` carries the surface
-                    // normal here, exactly as it does for `DashRicocheted`
-                    // in the same switch; the two are the same fact about a
-                    // contact, seen from the round's side and the actor's.
+                    // Both scales are the SAME ONES the writer used — the
+                    // normal back through `DirBack`, the height back through
+                    // `UnitBack` against `Hero.MaxAimHeight` — the pairs
+                    // `Quantize` guarantees idempotent (Р34). `Dir` carries
+                    // the surface normal here, exactly as it does for
+                    // `DashRicocheted` in the same switch; the two are the
+                    // same fact about a contact, seen from the round's side
+                    // and the actor's. NO POSITION IS ASSIGNED, and its
+                    // absence is the decision (app-5o2q, spec §6k): the
+                    // contact point rides the record header, so the payload
+                    // has no point to decode.
                     value.Id = ReadU16(payload, 0);
-                    value.Pos = new float2(
-                        Quantize.PosBack(ReadU16(payload, 2), cfg.Arena.Radius),
-                        Quantize.PosBack(ReadU16(payload, 4), cfg.Arena.Radius));
-                    value.Dir = Quantize.DirBack(payload[6]);
+                    value.Dir = Quantize.DirBack(payload[2]);
+                    value.Height = Quantize.UnitBack(payload[3], cfg.Hero.MaxAimHeight);
                     break;
 
                 // DirectorActivated / DirectorDied assign nothing: their
@@ -1160,7 +1158,8 @@ namespace Ring.Networking.Protocol
         /// `ProjectileRicocheted`; whoever appends the next kind moves it
         /// again, and `SnapshotCodecTests.EveryStage3Kind_RoundTripsItsOwnPayload`
         /// is the witness that says so for the Т29 five, with
-        /// `ProjectileRicocheted_RoundTripsPointAndNormal` for Т30's own.
+        /// `ProjectileRicocheted_RoundTripsTheNormalAndTheContactHeight` for
+        /// Т30's own.
         static bool IsKnown(SnapshotEventKind kind)
             => kind != SnapshotEventKind.None && (byte)kind <= (byte)SnapshotEventKind.ProjectileRicocheted;
 

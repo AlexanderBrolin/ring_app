@@ -927,11 +927,24 @@ namespace Ring.Presentation
         /// is checked against) rather than throwing, so this can't rely on
         /// the sim never emitting a degenerate contact normal — Presentation
         /// checks for itself.
+        ///
+        /// THE SPARK STANDS AT THE CONTACT HEIGHT (app-5o2q), the form
+        /// `HandleBlocked` above already uses and not fresh arithmetic: the
+        /// same wall hit by a round that stopped and by a round that mirrored
+        /// used to spark a meter apart, one at the hit and one on the floor.
+        /// The height reaches a networked client because the wire carries a
+        /// byte for it now; offline it was always in the event.
+        /// ⚠ DASH BEHAVIOR DOES NOT CHANGE, and that is a MEASUREMENT rather
+        /// than an assumption: this handler serves `DashRicocheted` too, and
+        /// for that kind the height is zero on both paths — `SimulationWorld`
+        /// emits it without a height argument at all, and the decoder's dash
+        /// branch assigns none — so the term added below is zero there and the
+        /// spark stays exactly where it was.
         void HandleRicocheted(in SimEvent e)
         {
             if (e.HitDir.x == 0f && e.HitDir.y == 0f) return;
 
-            PlayParticle(_blockSparkPool, SimSpace.ToWorld(e.Pos),
+            PlayParticle(_blockSparkPool, SimSpace.ToWorld(e.Pos) + Vector3.up * e.Height,
                 Quaternion.LookRotation(SimSpace.ToWorld(e.HitDir), Vector3.up));
         }
 
