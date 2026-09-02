@@ -1231,6 +1231,81 @@ namespace Ring.Simulation.Tests
                 "и спрашивать прошлое ему нечем");
         }
 
+        /// СВИДЕТЕЛЬ ВТОРОЙ ПОЛОВИНЫ ШВА `app-56kx` — МОБЬЕЙ РЕЛЬСЫ (app-88jb
+        /// Т32, RULING 291; выживший мутант, найденный ревью круга правок).
+        /// Число шагов рождения ассертили четыре фикстуры, и все четыре гонят
+        /// выстрел ЧЕРЕЗ `WeaponSystem`, то есть рельсу СБОРЩИКА:
+        /// `RewindTests.BirthEvent_CarriesTheStepsTheRoundTookOnItsBirthTick`
+        /// выше, `EventDeliveryTests.ProjectileSpawned_CarriesTheBirthStepsThe
+        /// WorldPut` и два ассерта `TracerFlightTests.TracerSeededFromTheWire_
+        /// StandsWhereTheWorldPutTheRound`. Мобьего раунда не спрашивал никто, а
+        /// `MobAiSystem` кладёт своё число ОТДЕЛЬНЫМ литералом
+        /// (`birthSteps: 1`), потому что мимо `WeaponSystem` идёт мимо всей
+        /// арифметики Т27.
+        ///
+        /// ⛔ МУТАНТ — «СНЯТЬ АРГУМЕНТ», И ЦЕНА ЕГО БОЛЬШЕ, ЧЕМ У ИГРОКОВОЙ
+        /// ПОЛОВИНЫ. Умолчание параметра — 0, «о тике рождения ничего не
+        /// известно»; трассер такого раунда садится на дуло и отстаёт на шаг
+        /// навсегда (D2-C7). Это ровно тот дефект, ради которого делался Т32-А,
+        /// только на рельсе, дающей БОЛЬШИНСТВО раундов на экране: стрелков в
+        /// арене на порядки больше, чем сборщиков (`ArenaConfig.MaxMobs` — 1350
+        /// при `MaxPlayers` 3). Собственный док `MobAiSystem`
+        /// честно называет ноль здесь «FALSEHOOD» — но док свидетелем не
+        /// является, и этот тест ровно тем и заведён.
+        ///
+        /// ⚠ ПОЧЕМУ ИМЕННО ЕДИНИЦА, А НЕ НОЛЬ И НЕ ГЛУБИНА СБОРЩИКА. У моба нет
+        /// ни клиента, ни односторонней задержки, поэтому догоняющих шагов Т27
+        /// он не получает вовсе (сосед сверху,
+        /// `MobFiredRound_GetsNoRewindAtAll`, сторожит именно это расстоянием).
+        /// Но ОДИН обычный шаг его раунд в своём тике рождения всё же делает:
+        /// `MobAiSystem` стоит в `TickAll` ПЕРЕД снарядной фазой, так что
+        /// `ProjectileSystem.Update` успевает прокрутить свежий раунд ровно
+        /// один раз до конца тика. Один шаг известен — один шаг и заявлен.
+        /// ⚠ Сборщик заявляет ПОЛНЫЙ кап отмотки и не стреляет: если бы
+        /// единица приезжала из его входа, она была бы не единицей, а
+        /// `кап − картинка + 1` = 4.
+        [Test]
+        public void MobFiredRound_CarriesExactlyONEBirthStep()
+        {
+            // Та же фикстура и по тем же двум причинам, что у соседа сверху:
+            // OpenField(), иначе Open() ставит сборщика на кольцо спавна в 159 м
+            // и ганнер его не увидит; ганнер стоит РОВНО на PreferredRange,
+            // иначе UpdateGunner уводит его в Reposition и стирает состояние
+            // Fire, которое ставит шов.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(cfg.Gunner.PreferredRange, 0f)));
+            var g = w.Mobs[0]; g.Ai = MobAiState.Fire; g.FireCooldown = 0f; w.SetMobForTest(0, g);
+
+            // Сборщик заявляет ПОЛНЫЙ кап и НЕ стреляет (`FireHeld` не
+            // заявлен): мобий раунд не должен взять из чужого входа ничего.
+            var deepInput = new SimInput { RewindTicks = (byte)cfg.Arena.RewindCapTicks,
+                AimHeight = cfg.Hero.MuzzleHeight };
+            // Бюджет — выражение фикстуры, а не магическое число: FSM может
+            // потратить тик-другой, прежде чем выстрел уйдёт.
+            int budget = SimulationWorld.TicksFromSeconds(cfg.Gunner.FireInterval);
+            for (int i = 0; i < budget && w.ProjectileCount == 0; i++) w.Tick(deepInput);
+
+            // Премисса: раунд ДЕЙСТВИТЕЛЬНО РОДИЛСЯ. Без неё пустой мир
+            // проходил бы тест молча — событий нет, ассертить нечего.
+            Assert.AreEqual(1, w.ProjectileCount, "ганнер не выстрелил — фикстура не о том");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.ProjectileFired),
+                "премисса фикстуры: событие рождения обязано быть РОВНО ОДНО, иначе тест "
+                + "может прочитать чужой выстрел вместо мобьего");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired,
+                    out SimEvent fired),
+                "события рождения нет — клиенту нечем сеять трассер мобьего раунда");
+            Assert.AreEqual(ProjectileOwner.Mob, fired.Owner,
+                "премисса фикстуры: событие обязано быть МОБЬИМ — рельса сборщика "
+                + "сторожится тремя фикстурами и здесь не предмет");
+
+            Assert.AreEqual(1, fired.BirthSteps,
+                "мобий раунд объявил не тот тик рождения: `MobAiSystem` обязан заявлять "
+                + "ОДИН шаг (снарядная фаза идёт после мобьей и успевает прокрутить свежий "
+                + "раунд), а умолчание 0 значит «о тике рождения ничего не известно» — "
+                + "трассер такого раунда садится на дуло и отстаёт на шаг навсегда (D2-C7)");
+        }
+
         [Test]
         public void PictureHalfIsSpentByEveryStepOfTheBirthTick_CatchUpIncluded()
         {

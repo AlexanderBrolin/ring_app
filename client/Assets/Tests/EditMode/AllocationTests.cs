@@ -509,6 +509,22 @@ namespace Ring.Simulation.Tests
 
             // Fixture-liveness check AFTER the measured window (Урок 87), the
             // same discipline the neighbors above keep.
+            // ⚠ AND IT IS THE SHAPE OF THAT DISCIPLINE RATHER THAN A LIVE
+            // GUARD, which is worth saying so the next author does not read it
+            // as one (app-88jb Т32 fix-round). It cannot fail by construction:
+            // `ttl: 100f` above makes `OutlivedItsEnd`'s lifetime 3000 ticks
+            // and no round here has an `EndTick`, so `Prune` removes nothing
+            // across a 50-tick window whatever the flight does.
+            // ⛔ THE DEGENERACY THAT WOULD ACTUALLY HOLLOW THIS FIXTURE IS THE
+            // ONE THE COMMENT ABOVE NAMES — "measuring stopped tracks instead
+            // of flying ones" — AND NOTHING GUARDS IT. A round that meets the
+            // arena's geometry is marked WAITING, and `StepTo` then reaches it
+            // by `continue`: the expensive half (`ProjectileFlight.Step` over
+            // 20 circles / 14 walls / 2 arcs) stops running for it entirely,
+            // while `Count` stays exactly what it was. Guarding it honestly
+            // needs a count of MOVING rounds, which this class has no member
+            // for today; the allocation claim itself survives either way —
+            // what shrinks is how much of the path the window covers.
             Assert.Greater(tracers.Count, 0,
                 "fixture premise: the table must not have emptied during the measured window");
         }

@@ -1031,9 +1031,19 @@ namespace Ring.Networking.Server
             // shooter's own input lag decides it (WeaponSystem.SpawnShot) — and
             // the capture above holds the round's end-of-tick STATE, not its
             // history. Unlike the velocity triple, therefore, it has no
-            // fallback to approximate from and needs none: a round that died
-            // inside its own birth tick (the branch above) never gets a tracer
-            // for the number to seed.
+            // fallback to approximate from AND NEEDS NONE FOR A SIMPLER REASON
+            // THAN THE ONE THAT USED TO STAND HERE: the count rides on the
+            // EVENT, which both branches above have in hand, so the question a
+            // fallback answers — "the capture no longer holds this round" —
+            // never arises for it.
+            // ⚠ THE OLD WORDING ("a round that died inside its own birth tick
+            // never gets a tracer for the number to seed") was not merely a
+            // weaker argument, it was false, and its own neighbour three lines
+            // up says so: the point-blank branch exists precisely so the round
+            // is REPORTED rather than silently missing, and the client does
+            // build a tracer for it. What keeps that tracer invisible is
+            // `endTick == spawnTick` on the ending that follows, not an absent
+            // record.
             SnapshotEvents.WriteProjectileSpawned(PayloadSpan(slot), ev.EntityId, ownerIndex,
                 velXY, math.length(velXY), velZ, height, ev.BirthSteps, in _cfg);
         }

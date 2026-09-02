@@ -505,20 +505,29 @@ namespace Ring.Simulation.Combat
                     // fixture that states MaxRicochets = 0.
                     //
                     // ONE EVENT ON SUCCESS, AND IT IS NOT AN ENDING
-                    // (app-88jb Т30, coordinator Ruling 234). Until this task
+                    // (app-88jb Т30, coordinator Ruling 234). Until that task
                     // a reflection was silent on the wire, and what that cost
                     // is a MEASUREMENT rather than the obvious guess. OFFLINE
                     // and on the HOST, Presentation saw only the round's own
                     // moved Pos through ViewRegistry.SyncProjectiles -- a
                     // tracer that changes direction for no visible reason. On
-                    // a NETWORKED client nothing turned at all:
-                    // TracerProjectiles is a closed form,
-                    // SpawnPos + Vel * (dt * age), fed by exactly two kinds,
-                    // so the tracer flew straight on THROUGH the wall until
-                    // the round's real ending retired it. Until Т32 this event
-                    // therefore buys the spark and the sound at the true
-                    // contact, not a tracer that bends -- that is Р420, spec
-                    // §3.8.
+                    // a NETWORKED client nothing turned at all BETWEEN Т30 AND
+                    // Т32: TracerProjectiles was then a closed form measured
+                    // from the spawn, SpawnPos + Vel * (dt * age), fed by
+                    // exactly two kinds, so the tracer flew straight on THROUGH
+                    // the wall until the round's real ending retired it, and
+                    // this event bought the spark and the sound at the true
+                    // contact and nothing else.
+                    //   ⛔ SINCE app-88jb Т32 (Р420, spec §3.8) IT BUYS THE
+                    // BEND TOO, and that is the argument a later reader has to
+                    // weigh instead of the one above. The tracer cranks THIS
+                    // FILE'S OWN ProjectileFlight against a cache and stops
+                    // dead in the contact it meets; this record -- the only
+                    // word the server says about a round between its birth and
+                    // its end, three kinds in its router rather than two
+                    // (NetworkSimBackend.RouteToTracers) -- is what releases it
+                    // onto the reflected line (TracerProjectiles.OnRicochet,
+                    // Ruling 290). Emitting it is no longer cosmetic.
                     //
                     // The fields are the neighboring ProjectileBlocked emit's,
                     // not a fresh choice: the same contact, the same normal,

@@ -73,16 +73,26 @@ namespace Ring.Networking.Protocol
         /// surface normal, so the client can put a spark and a sound where the
         /// contact actually happened.
         ///
-        /// ⚠ AND ONLY THAT, UNTIL Т32 — measured rather than assumed. A
-        /// networked client's tracer is `TracerProjectiles`' closed form
-        /// (`SpawnPos + Vel * (dt * age)`, with `ProjectileSpawned` and
-        /// `ProjectileEnded` the only two kinds its router reads), so it does
-        /// not turn on a reflection: it flies straight on THROUGH the wall
-        /// until the round's real ending retires it. This record moves the
-        /// spark and the sound to the right spot; moving the TRACER there is
-        /// Р420, i.e. spec §3.8, i.e. Т32. (The tracer that visibly turns is
-        /// the offline/host path, where `ViewRegistry.SyncProjectiles` draws
-        /// the world's real bodies.)
+        /// ⚠ AND ONLY THAT UNTIL Т32, WHICH HAS SINCE LANDED — the sentence is
+        /// kept because it was a measurement rather than an assumption, and it
+        /// is dated because it is no longer the state of the code. BETWEEN Т30
+        /// AND Т32 a networked client's tracer was `TracerProjectiles`' closed
+        /// form measured from the spawn (`SpawnPos + Vel * (dt * age)`, with
+        /// `ProjectileSpawned` and `ProjectileEnded` the only two kinds its
+        /// router read), so it did not turn on a reflection: it flew straight
+        /// on THROUGH the wall until the round's real ending retired it, and
+        /// this record moved only the spark and the sound to the right spot.
+        /// (The tracer that visibly turns even then is the offline/host path,
+        /// where `ViewRegistry.SyncProjectiles` draws the world's real bodies.)
+        /// ⛔ SINCE app-88jb Т32 (Р420, spec §3.8) THE TRACER TURNS ON THIS
+        /// RECORD. It is still a closed form, but measured from a CACHE the
+        /// client cranks through `ProjectileFlight`, and its router reads THREE
+        /// kinds (`NetworkSimBackend.RouteToTracers`). A tracer that meets the
+        /// geometry STANDS in the contact and waits; this record is the mid-life
+        /// word that releases it onto the reflected line
+        /// (`TracerProjectiles.OnRicochet`, Ruling 290). ⇒ its four bytes now
+        /// buy the turn as well as the spark, and a reader weighing what else a
+        /// client needs about a reflection has to start from that.
         ///
         /// APPENDED PAST `ContainerEmptied`, NOT INSERTED BESIDE THE OTHER
         /// `Projectile*` VALUES, and that is the same rule the five Т29 kinds

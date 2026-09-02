@@ -302,6 +302,18 @@ namespace Ring.Presentation.Net
         /// PLACED, and that is the right answer rather than a gap: the
         /// predicted tick then degenerates into the render tick, i.e. into
         /// exactly the picture this class drew before Т32.
+        /// ⛔ AND THAT ZERO IS THIS PROCESS'S FIRST MATCH ONLY. `SyncMatchEpoch`
+        /// clears six things keyed to the epoch and deliberately does NOT clear
+        /// this one, so the opening frames of a RESTART carry the depth the
+        /// previous match latched. It is harmless today and only today, for one
+        /// reason worth naming rather than rediscovering: the one consumer is
+        /// `predictedTick`, and the table it addresses has just been emptied on
+        /// the same event (`ClientMatchReset.ResetForEpoch` calls
+        /// `TracerProjectiles.Reset`), so a stale depth asks about a tick no
+        /// round is tracked at. The next consumer of this field — anything that
+        /// survives an epoch — would inherit the carry-over as a defect, and
+        /// the honest fix then is a line in `SyncMatchEpoch`, not a second
+        /// reader that re-measures.
         byte _rewindDepth;
 
         float _alpha;
@@ -2867,6 +2879,26 @@ namespace Ring.Presentation.Net
                     // instead would stall the round vertically by one tick per
                     // bounce (that method's own doc), which is why the height
                     // travels with the event rather than being recovered here.
+                    //
+                    // ⛔ THIS ARM HAS NO EditMode WITNESS, AND THAT IS SAID
+                    // OUT LOUD RATHER THAN LEFT TO BE NOTICED (lesson 649,
+                    // the same discipline Rulings 286/306 applied to the
+                    // spawn arm). `RouteToTracers` is a private instance
+                    // method on a class whose constructor takes a
+                    // `NetworkManager`, so no fixture can call it — which is
+                    // exactly why Ruling 306 MOVED the seed arithmetic out of
+                    // here into `TracerProjectiles.TrySpawn`. Nothing could be
+                    // moved out of this line: it is a routing decision, not
+                    // arithmetic, and its mutant is "delete the case" — after
+                    // which a tracer stopped against geometry is never
+                    // released and stands at the wall until `ProjectileEnded`
+                    // or `LostEndSlackTicks`. Both halves the line hands over
+                    // ARE witnessed one level down (`TracerProjectiles.
+                    // OnRicochet` has its own fixtures for the granted and the
+                    // refused path); what has no witness is that this kind
+                    // reaches that method at all, and its only judge is the Ф4
+                    // lag gate under 80 ms RTT and 5% loss (CR 7) — the same
+                    // judge `MeasureRewindTicks` names for the same reason.
                     _tracers.OnRicochet(p.Id, (int)eventTick, decoded.Pos, p.Dir, p.Height);
                     break;
             }

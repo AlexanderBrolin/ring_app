@@ -336,10 +336,16 @@ namespace Ring.Data
         //
         // BOTH ENDS OF THE [Range] ARE MODES, NOT MISTAKES, the same way
         // RewindSanityTicks' own doc argues about its own band. 1 is the
-        // slowest honest setting — one step per frame, so a round behind the
-        // clock never catches up while the clock keeps moving, and only a
-        // stopped round does; there is no 0, because 0 means nothing is ever
-        // drawn again and that is not a mode but a broken picture (the
+        // slowest honest setting — one step per FRAME, and what that means
+        // depends on the frame rate, which an earlier wording here did not say:
+        // TracerProjectiles.StepTo is called once per rendered frame while a
+        // tick is 1/30 s, so at 60 fps a budget of 1 already buys TWO steps per
+        // tick and a lagging round still closes the gap; only at 30 fps or
+        // below does it exactly match the clock and leave a behind round behind
+        // forever. So 1 is "never faster than the clock", not "never catches
+        // up", and the setting the owner tunes by feel behaves differently on
+        // the two sides of 30 fps. There is no 0, because 0 means nothing is
+        // ever drawn again and that is not a mode but a broken picture (the
         // constructor floors it for exactly that reason: a [Range] is an
         // Inspector hint and refuses nothing a hand-edited YAML assigns, as
         // this class's type doc says of every [Range] here). The ceiling is 90,

@@ -21,13 +21,18 @@ namespace Ring.Networking.Client
     /// nothing else. Т19 ended that: a round now reflects off static geometry,
     /// and a straight line drawn through a wall is not a simplification but a
     /// wrong picture. ⇒ THE ANSWER IS NOT A SECOND MODEL BUT THE SAME ONE.
-    /// `StepTo` below cranks `ProjectileFlight` — `Step`, `BarrierStops` and
-    /// `TryRicochet`, the very members `ProjectileSystem` itself calls, in the
-    /// one public home that exists so both sides can share it (that class's own
-    /// doc names this caller three times). Nothing about flight is restated
-    /// here; what IS here is the bookkeeping of a CACHE (which tick it stands
-    /// on, when it is thrown away, how many steps one frame may spend) and
-    /// nothing else.
+    /// This class cranks `ProjectileFlight` — the very members
+    /// `ProjectileSystem` itself calls, in the one public home that exists so
+    /// both sides can share it (that class's own doc names this caller three
+    /// times) — and it is worth saying WHICH MEMBER FROM WHERE, because an
+    /// earlier wording put all three inside `StepTo` and one of them is not
+    /// there: `StepTo` calls `Step` and `BarrierStops` (the frame half, walking
+    /// the cache); `OnRicochet` calls `TryRicochet` (the write half, answering
+    /// the server's own word). The split is the design rather than an accident
+    /// — the frame half never reflects anything, which is CR 3 in one line
+    /// (Р420). Nothing about flight is restated here; what IS here is the
+    /// bookkeeping of a CACHE (which tick it stands on, when it is thrown
+    /// away, how many steps one frame may spend) and nothing else.
     /// `TracerProjectilesTests` still pins the result against a REAL round
     /// fired through `ProjectileSystem` rather than against algebra restated
     /// here, and `TracerFlightTests` pins the new half the same way.
@@ -47,10 +52,11 @@ namespace Ring.Networking.Client
     ///     budget below, which only DELAYS the round, never shortens it);
     ///   * a doubled call cannot advance anything twice — the second one finds
     ///     `CacheTick` already at the target and steps nothing;
-    ///   * a clock that jumps BACKWARDS (`NetConfig.RenderClockSnapTicks` is
-    ///     10, so it does) throws the cache away and re-runs from the birth
-    ///     state, because an integrator that meets a wall cannot be stepped
-    ///     backwards through the reflection it made;
+    ///   * a TARGET TICK that moves BACKWARDS throws the cache away and
+    ///     re-runs from the birth state, because an integrator that meets a
+    ///     wall cannot be stepped backwards through the reflection it made
+    ///     (what actually moves it back is named at `StepTo`'s step 1 — it is
+    ///     NOT the render clock);
     ///   * and the drift the old argument feared has an authority to be
     ///     corrected against, which a bare accumulator did not have: every
     ///     `ProjectileRicocheted` re-seats the cache on the server's own
@@ -106,10 +112,21 @@ namespace Ring.Networking.Client
     /// loop, where an exception abandons every message behind it in the same
     /// datagram (Р82/195); the FRAME half (`StepTo`/`WriteInto`/`Prune`) runs
     /// from the render frame. So a full table, an unknown id and an undersized
-    /// destination are all VALUES. The table is scanned linearly on
-    /// purpose — `MaxProjectiles` is 384 for the whole arena, of which one
-    /// client sees only what `SightRadius` admits, and a dictionary would buy
-    /// nothing but garbage on a path that runs every frame.
+    /// destination are all VALUES. The table is scanned linearly on purpose,
+    /// and the argument is `_count` RATHER THAN THE CEILING — which is the
+    /// correction rather than the point. An earlier wording said
+    /// "`MaxProjectiles` is 384 for the whole arena"; the shipped number is
+    /// `ArenaConfig.MaxProjectiles` = 4096 — the ceiling was raised with the
+    /// mob cap and this line kept the figure of the stage before it (that
+    /// field's own comment carries the arithmetic) — so an argument leaning on
+    /// the ceiling would be an order of magnitude out. It does not have to lean
+    /// on it: EVERY loop in this class — `IndexOf`, `StepTo`, `WriteInto`,
+    /// `Prune` — runs to `_count`, the rounds actually tracked, and the array's
+    /// length is only how many may be tracked at once. What bounds `_count` is
+    /// what one client is SENT: relevance (Р32) and `SightRadius`, not the
+    /// arena's slot ceiling. A dictionary would buy nothing but garbage on a
+    /// path that runs every frame, and it would not shorten the walk the frame
+    /// half has to make over the live rounds anyway.
     public sealed class TracerProjectiles
     {
         /// One reconstructed round: what the wire said, the two ticks that
@@ -119,9 +136,11 @@ namespace Ring.Networking.Client
         /// THE TWO HALVES ARE NAMED APART ON PURPOSE. The `Spawn*` fields are
         /// what the wire said and never change after `TrySpawn`; the cache
         /// fields do change, and they are the ONLY ones that do (`EndTick`
-        /// aside). The birth half has to survive intact because a backwards
-        /// clock jump re-runs the flight from it — an integrator that has
+        /// aside). The birth half has to survive intact because a TARGET TICK
+        /// BEHIND THE CACHE re-runs the flight from it — an integrator that has
         /// already reflected cannot be stepped back through its own reflection.
+        /// (What moves the target back is the latched rewind depth, never the
+        /// render clock; `StepTo`'s step 1 carries the account.)
         ///
         /// THE CACHE IS FIELDS OF THIS STRUCT, NEVER A PARALLEL ARRAY
         /// (coordinator Ruling 288). `Prune` removes by swapping the last live
@@ -156,9 +175,21 @@ namespace Ring.Networking.Client
             public int Ricochets;
 
             /// STOPPED IN A CONTACT, WAITING FOR THE SERVER TO SAY WHAT
-            /// HAPPENED (coordinator Ruling 289/304). Set only by `StepTo`,
-            /// cleared by an authoritative event or by the cache being thrown
-            /// away. A waiting round IS drawn — in the contact, and in it for
+            /// HAPPENED (coordinator Ruling 289/304). SET FROM TWO PLACES, and
+            /// the pair is worth naming because an auditor who trusts a "only
+            /// `StepTo`" wording — which is what stood here — walks past the
+            /// second one, exactly as this task's first round of witnesses did:
+            ///   * `StepTo`, where the GEOMETRY stopped the round inside a step
+            ///     it had not finished;
+            ///   * `OnRicochet`, on the REFUSAL path, where the server named a
+            ///     bounce this client's own gates would not grant — that
+            ///     method's own doc calls marking it waiting the execution of
+            ///     Ruling 290's sentence, and the quantized contact point is
+            ///     why leaving the velocity pointing into the wall is not
+            ///     enough.
+            /// Cleared by an authoritative event that DOES move the round
+            /// (a granted reflection) or by the cache being thrown away
+            /// (`SeatOnBirth`). A waiting round IS drawn — in the contact, and in it for
             /// BOTH halves of the render pair, because an interpolator handed
             /// two different points would stretch the stopped round one frame
             /// further, i.e. straight through the wall the step refused to
@@ -166,7 +197,12 @@ namespace Ring.Networking.Client
             public bool Waiting;
 
             /// THE STEP BUDGET RAN OUT BEFORE THE ASKED-FOR TICK (coordinator
-            /// Rulings 295/304/305). Set only by `StepTo`. Such a round is NOT
+            /// Rulings 295/304/305). DECIDED only by `StepTo` — it is the one
+            /// member that can tell "behind the clock" from "arrived" — but,
+            /// like `Waiting` above, it is CLEARED elsewhere as well:
+            /// `SeatOnBirth` (a cache thrown away is not behind anything yet)
+            /// and `OnRicochet` (the server has just said where the round is,
+            /// so the gap the budget could not close is gone). Such a round is NOT
             /// DRAWN AT ALL — not drawn at its birth position, which for a
             /// round born 90 ticks ago is 42 m behind where it really is, and
             /// a bullet in the wrong place is worse than no bullet. It is a
@@ -285,6 +321,21 @@ namespace Ring.Networking.Client
         /// round's whole life to pay for a position that has just been paid for
         /// directly. Nor is the height: it already rides the wire as an
         /// end-of-tick capture and needs no correction at all.
+        /// ⚠ AND NEITHER IS `ttl`, WHICH IS THE ONE HALF OF THE SEAM LEFT
+        /// OPEN — stated rather than left for the next reader to find. The
+        /// server's round has already spent `birthSteps × TickDt` of its life
+        /// by the end of its birth tick (`ProjectileSystem` decrements at the
+        /// top of every step it takes, catch-up included), and `SpawnTtl` here
+        /// is the FULL lifetime, so this client's clock on the round runs up to
+        /// four steps = 0.133 s generous at the shipped cap. Nothing today is
+        /// wrong because of it and the error has ONE direction: the only reader
+        /// is `ProjectileFlight.TryRicochet`'s first gate (`Ttl <= 0` refuses),
+        /// and being generous there can only GRANT a reflection the server has
+        /// already granted by sending the event; `Prune` counts from `SpawnTtl`
+        /// and is generous by the same margin. It is written down because the
+        /// next reader of `Ttl` — a round whose glow fades toward the end of
+        /// its life, say — inherits it as a defect rather than a margin, and
+        /// because a seam closed by halves reads as a seam closed.
         ///
         /// Refuses a duplicate id rather than tracking a round twice. The
         /// authority's own ids are unique for the whole match
@@ -315,8 +366,8 @@ namespace Ring.Networking.Client
 
             // The birth half, and ONLY the birth half. Every cache field is
             // seated by `SeatOnBirth` below — one home for "the cache stands
-            // where the round was born", shared with the backwards-clock reset
-            // in `StepTo`, because a second copy of this list is exactly the
+            // where the round was born", shared with the backwards-target
+            // reset in `StepTo`, because a second copy of this list is exactly the
             // "two fields that must agree" the `NoEnd` doc refuses. Its
             // completeness is also what makes `Reset`/`Prune`'s `= default`
             // sufficient: an initializer starts from the struct's zero, so a
@@ -537,13 +588,37 @@ namespace Ring.Networking.Client
         ///
         /// WHAT ONE ROUND'S CALL DOES, in order:
         ///  1. A TARGET BEHIND THE CACHE THROWS THE CACHE AWAY. The cache is
-        ///     reset to the birth state and re-run forward from there. The
-        ///     render clock genuinely does move backwards — `NetConfig.
-        ///     RenderClockSnapTicks` is 10 and a snap is what that number is
-        ///     for — and an integrator that has bounced off a wall cannot be
-        ///     stepped back through its own reflection, so re-running is the
-        ///     only correct answer and the birth half of `Track` exists to make
-        ///     it possible;
+        ///     reset to the birth state and re-run forward from there, because
+        ///     an integrator that has bounced off a wall cannot be stepped back
+        ///     through its own reflection; the birth half of `Track` exists to
+        ///     make that possible.
+        ///     ⛔ AND THE TRIGGER IS NOT THE RENDER CLOCK, however plausible
+        ///     that reads. An earlier wording here (and at `SeatOnBirth`, and
+        ///     in the class doc) said "the render clock genuinely does move
+        ///     backwards — `RenderClockSnapTicks` is 10 and a snap is what that
+        ///     number is for". It does not: `RenderClock.Advance` snaps ONLY
+        ///     FORWARD and slews in both directions, and that class's own doc
+        ///     states the invariant — "a clock that has run AHEAD of its target
+        ///     is never snapped back … `renderTime` is monotonic inside an
+        ///     epoch (spec §3.9)". So `renderTick` never walks back inside an
+        ///     epoch, and a NEW epoch empties this table outright
+        ///     (`ClientMatchReset.ResetForEpoch` calls `Reset`), leaving no
+        ///     cache to rewind.
+        ///     WHAT DOES MOVE THE TARGET BACK IS THE OTHER SUMMAND. The caller
+        ///     asks about `renderTick + _rewindDepth`
+        ///     (`NetworkSimBackend.Advance`), and the latched depth SHRINKS —
+        ///     it is re-measured on the prediction tick, 30 Hz, while this is
+        ///     asked on the render frame, 60+ Hz, so most frames carry a
+        ///     `renderTick` that did not move and a depth that may have. One
+        ///     tick less of depth on such a frame is a target one tick behind
+        ///     the cache.
+        ///     ⚠ AND THE RESET IS THE WHOLE TABLE, NOT ONE ROUND: the branch
+        ///     stands inside the loop over `_count`, and the quantity that
+        ///     shrank is the same for every track, so one shrinking frame
+        ///     re-seats every round at once and hands the budget below every
+        ///     round's whole flight to re-walk. That is what the budget is
+        ///     bounding, and it is why the number is a client policy rather
+        ///     than a rule of the world (`NetConfig.TracerCatchUpBudget`);
         ///  2. otherwise it takes single `ProjectileFlight.Step`s, at most
         ///     `_catchUpBudget` of them, until `CacheTick` reaches the target;
         ///  3. of the three candidates that step reports it looks at TWO — the
@@ -574,7 +649,7 @@ namespace Ring.Networking.Client
                 // 1. Behind the cache: throw it away and re-run from birth.
                 // Asked BEFORE the waiting check below, because a waiting
                 // round is exactly the one whose cache must not survive a
-                // backwards jump — it is standing at a contact its re-run may
+                // backwards target — it is standing at a contact its re-run may
                 // never reach.
                 if (targetTick < t.CacheTick) SeatOnBirth(ref t);
 
@@ -736,14 +811,21 @@ namespace Ring.Networking.Client
         /// THE CACHE, PUT BACK WHERE THE ROUND WAS BORN — the one home of the
         /// list "which fields are the cache", called from the two places that
         /// need it: `TrySpawn`, where a new tenant's cache starts at its birth
-        /// state, and `StepTo`, where a render clock that jumped BACKWARDS
-        /// throws the cache away and re-runs the flight forward from here.
-        /// ⛔ RE-RUNNING IS THE ONLY CORRECT ANSWER TO A BACKWARDS JUMP, not a
-        /// simplification: an integrator that has already bounced off a wall
-        /// cannot be stepped back through its own reflection, and
-        /// `NetConfig.RenderClockSnapTicks` is 10 precisely because the clock
-        /// really does snap. That is also the whole reason the birth half of
-        /// `Track` is kept intact and named apart (see that struct's doc).
+        /// state, and `StepTo`, where a TARGET TICK BEHIND THE CACHE throws the
+        /// cache away and re-runs the flight forward from here.
+        /// ⛔ RE-RUNNING IS THE ONLY CORRECT ANSWER TO A BACKWARDS TARGET, not
+        /// a simplification: an integrator that has already bounced off a wall
+        /// cannot be stepped back through its own reflection. That is also the
+        /// whole reason the birth half of `Track` is kept intact and named
+        /// apart (see that struct's doc).
+        /// ⚠ AN EARLIER WORDING NAMED THE WRONG CAUSE — "`NetConfig.
+        /// RenderClockSnapTicks` is 10 precisely because the clock really does
+        /// snap". The clock's snap is FORWARD ONLY and `renderTime` is
+        /// monotonic inside an epoch (`RenderClock`'s own doc), so it can never
+        /// produce this call; the target moves back when the LATCHED REWIND
+        /// DEPTH shrinks on a frame the render tick did not advance. `StepTo`'s
+        /// step 1 carries the whole account, including the fact that such a
+        /// frame re-seats EVERY track at once.
         /// ⚠ `Ricochets` GOES BACK TO ZERO WITH THE REST, and it must: the
         /// re-run starts before any of this round's bounces happened, so a
         /// counter left standing would spend a budget the re-run has not used

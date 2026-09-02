@@ -145,19 +145,32 @@ namespace Ring.Simulation.Core
         /// which is the branch that used to retire the round silently: until
         /// this kind existed a reflection put nothing on the wire at all.
         ///
-        /// ⚠ WHAT THAT SILENCE COSTS IS A MEASUREMENT, NOT THE OBVIOUS
-        /// GUESS. An earlier wording here — "a client saw the round
-        /// inexplicably change direction" — is true only of the OFFLINE
-        /// and HOST paths, where `ViewRegistry.SyncProjectiles` draws the
-        /// world's own bodies. A NETWORKED client's tracer is a closed form:
-        /// `TracerProjectiles` computes `SpawnPos + Vel * (dt * age)`, and its
-        /// router knows exactly two kinds, `ProjectileSpawned` and
-        /// `ProjectileEnded`. It therefore never turned at all — it flew
-        /// STRAIGHT ON THROUGH the wall until the round's real ending retired
-        /// it. So what this kind buys over the wire before Т32 is the
-        /// SPARK AND THE SOUND at the true contact while the tracer still flies
-        /// past it; making the tracer itself stop there is Р420, i.e. spec
-        /// §3.8, i.e. Т32.
+        /// ⚠ WHAT THAT SILENCE COST WAS A MEASUREMENT, NOT THE OBVIOUS
+        /// GUESS — AND THE MEASUREMENT IS Т30's, NOT TODAY'S. An earlier
+        /// wording here — "a client saw the round inexplicably change
+        /// direction" — is true only of the OFFLINE and HOST paths, where
+        /// `ViewRegistry.SyncProjectiles` draws the world's own bodies.
+        /// BETWEEN Т30 AND Т32 a networked client's tracer was a closed form
+        /// measured from the spawn (`TracerProjectiles` computed
+        /// `SpawnPos + Vel * (dt * age)`, and its router read exactly two
+        /// kinds, `ProjectileSpawned` and `ProjectileEnded`), so it never
+        /// turned at all — it flew STRAIGHT ON THROUGH the wall until the
+        /// round's real ending retired it, and what this kind bought over the
+        /// wire was the SPARK AND THE SOUND at the true contact while the
+        /// tracer still flew past it.
+        /// ⛔ ALL OF THAT IS PAST TENSE SINCE app-88jb Т32 (Р420, spec §3.8),
+        /// AND THIS KIND IS WHAT MAKES THE NEW PICTURE POSSIBLE. The tracer is
+        /// still a closed form, but it is measured from a CACHE the client
+        /// cranks through `ProjectileFlight` (`TracerProjectiles.StateAt`), and
+        /// its router knows THREE kinds, not two — `NetworkSimBackend.
+        /// RouteToTracers`' own doc says so in as many words. Meeting geometry,
+        /// the tracer STOPS in the contact and waits; this record is the only
+        /// word the server says about a round between its birth and its end,
+        /// and it is what RELEASES that stopped round onto the reflected line
+        /// (`TracerProjectiles.OnRicochet`, coordinator Ruling 290). ⇒ what it
+        /// buys is no longer "the spark and the sound only": it buys the turn
+        /// itself. A reader deciding whether the client needs anything more
+        /// about a reflection has to weigh THAT, not the Т30 balance above.
         ///
         /// ⚠ THE ONLY `Projectile*` KIND THAT IS NOT AN ENDING, and that is the
         /// whole difficulty rather than a detail. Every other one reports that
@@ -375,6 +388,23 @@ namespace Ring.Simulation.Core
         /// finding D2-C7, bd app-56kx). `ProjectileFired` ONLY; zero for every
         /// other kind, same "unused for every other kind" contract as
         /// `Amount`/`Owner`/`Zone` above.
+        /// ⚠ AND FILLED ONLY WHERE THE EVENT IS THE SIMULATION'S OWN — offline,
+        /// on the host, and on the server. On a NETWORKED CLIENT the struct is
+        /// rebuilt from the wire by `ClientEventDecoder`, whose
+        /// `ProjectileSpawned` arm fills `Kind`/`EntityId`/`PlayerIndex`/
+        /// `Owner`/`Amount` and leaves this field at zero, so a client-side
+        /// `ProjectileFired` carries "nothing is known about the birth tick"
+        /// even though the wire record DOES carry the count. That is not a
+        /// drop: the count reaches its only consumer by the shorter road —
+        /// `NetworkSimBackend.RouteToTracers` hands
+        /// `SnapshotEventPayload.BirthSteps` straight to
+        /// `TracerProjectiles.TrySpawn`, and no reader of THIS struct wants it.
+        /// It is written down because "`ProjectileFired` ONLY" reads as a
+        /// promise that the field is there whenever the kind is, and the next
+        /// consumer of a client-side `ProjectileFired` would take the zero for
+        /// an answer instead of for an absence. A consumer that needs it on
+        /// that side adds the assignment in the decoder rather than deriving
+        /// the number locally — the world is the only place that knows it.
         ///
         /// WHY IT EXISTS. This event's own `Pos` is the MUZZLE — the pre-step
         /// point where the shot happened — while every BODY on the wire is an

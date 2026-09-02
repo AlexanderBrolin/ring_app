@@ -191,10 +191,17 @@ namespace Ring.Networking.Client
                 // `default` arm, which measures a different set — the three
                 // kinds that never reached the wire at all — while this
                 // predicate's own doc and its Т32 comment above both say five.)
-                // And what the client would lose is the CONTACT: no spark and
-                // no sound. Not a turning tracer — `TracerProjectiles` is a
+                // And what the client would lose is the CONTACT — and, since
+                // app-88jb Т32 (Р420), the TURN as well. An earlier wording
+                // here said "not a turning tracer: `TracerProjectiles` is a
                 // closed form that flies straight on through the wall either
-                // way, until Т32 (Р420) makes it converge on the point.
+                // way"; that was true of Т30's tracer and stopped being true in
+                // this very epic. Today the tracer cranks `ProjectileFlight`
+                // against a cache, STANDS in the geometry it meets, and it is
+                // this record that releases it onto the reflected line
+                // (`TracerProjectiles.OnRicochet`, Ruling 290). Walking past
+                // the record would therefore park the round at the wall until
+                // its ending arrives, not merely mute a spark.
                 case SnapshotEventKind.ProjectileRicocheted:
                     return true;
                 default:
@@ -284,6 +291,18 @@ namespace Ring.Networking.Client
                     // kind (the field's own doc); the wire carries the unit
                     // direction the angle is of.
                     e.Amount = math.atan2(p.Dir.y, p.Dir.x);
+                    // `BirthSteps` IS DELIBERATELY NOT COPIED, and the silence
+                    // is what needed fixing rather than the code (app-88jb Т32
+                    // fix-round). The record carries the count, but the only
+                    // consumer is the tracer table, and it is fed from the
+                    // PAYLOAD directly — `NetworkSimBackend.RouteToTracers`
+                    // hands `p.BirthSteps` to `TracerProjectiles.TrySpawn` off
+                    // the same record, on the same line. Copying it here as
+                    // well would be a second home for one number with no reader
+                    // (rule 2). What it does mean is that a client-side
+                    // `SimEvent.ProjectileFired` always carries zero, i.e.
+                    // "nothing is known about the birth tick" — see that
+                    // field's own doc, which now says so from the other side.
                     break;
 
                 case SnapshotEventKind.ShotHeard:
