@@ -191,26 +191,41 @@ namespace Ring.Simulation.Combat
         ///
         ///   angularImpulse = (hitHeight - centerOfMassHeight) * dv * gain     [rad/s]
         ///
-        /// PUBLIC and written once, because FOUR places need exactly this arithmetic
-        /// and two of them live outside Ring.Simulation: DamageMob (T5), DamagePlayer
-        /// (T7), the client's ClientEventDecoder building an ImpactPulse (T9) and
-        /// Ring.Networking.Client.MobTiltIntegrator rebuilding a struck mob's tilt
-        /// on a networked client (Т31 -- this line named Presentation's MobVisual
-        /// while the plan still put the integrator there; the owner moved it to the
-        /// network backend, where the speed scale the moment is sized by is
-        /// reachable at all). Four hand-written copies of one signed subtraction is
-        /// exactly the shape round 2 removed for the spring step, and the sign of
-        /// the arm is the half that silently flips.
+        /// PUBLIC and written once, because THREE places need exactly this arithmetic
+        /// and one of them lives outside Ring.Simulation: DamageMob (T5),
+        /// DamagePlayer (T7) and Ring.Networking.Client.MobTiltIntegrator, rebuilding
+        /// a struck mob's tilt on a networked client (Т31 -- this line named
+        /// Presentation's MobVisual while the plan still put the integrator there;
+        /// the owner moved it to the network backend, where the speed scale the
+        /// moment is sized by is reachable at all).
+        ///
+        /// THE COUNT IS THREE BY MEASUREMENT, not by intention (review round, B-4):
+        /// grepping the call sites of this method over Assets/Scripts answers with
+        /// exactly those three. The client's ClientEventDecoder building an
+        /// ImpactPulse (T9) used to be listed here as a fourth, and it does not
+        /// exist -- that decoder never calls this, the pulse it was to build is
+        /// still unbuilt, and the work is booked to app-7du2. Even three
+        /// hand-written copies of one signed subtraction is exactly the shape round
+        /// 2 removed for the spring step, and the sign of the arm is the half that
+        /// silently flips.
         public static float AngularImpulse(float hitHeight, float centerOfMassHeight,
             float dv, float gain)
             => (hitHeight - centerOfMassHeight) * dv * gain;
 
         /// The ONE home of the "who fired it" fork over projectile mass: the player
         /// weapon's for a player-owned round, the Gunner archetype's for a mob's
-        /// (round-3 finding C-I2). Written once because BOTH sides need it --
-        /// Ring.Simulation.Combat.ProjectileSystem on the server (T4) and the
-        /// client's ClientEventDecoder rebuilding an ImpactPulse (T9) -- and a fork
-        /// written out twice is a fork that drifts.
+        /// (round-3 finding C-I2). Written once because BOTH sides need it -- and
+        /// which callers those are is a measurement rather than a plan (review
+        /// round, B-5): on the SERVER, Ring.Simulation.Combat.ProjectileSystem
+        /// twice (T4) and ProjectileFlight once, as the mass it hands Pierces; on
+        /// the CLIENT,
+        /// Ring.Networking.Client.MobTiltIntegrator.AngularImpulseFor, which asks
+        /// this and SnapshotEvents.SpeedCapFor as a PAIR because a blow's moment
+        /// needs both halves of the same owner fork (Т31). The client's
+        /// ClientEventDecoder rebuilding an ImpactPulse (T9) was named here as the
+        /// far-side caller and never became one -- that pulse is unbuilt and the
+        /// work is booked to app-7du2. A fork written out twice is a fork that
+        /// drifts, and this one is worth several times the blow.
         ///
         /// Exact precedent, one namespace over: SnapshotEvents.SpeedCapFor, whose own
         /// note reads "ONE home for the rule, called by both sides -- the same fix

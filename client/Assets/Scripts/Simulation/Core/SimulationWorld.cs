@@ -1862,11 +1862,17 @@ namespace Ring.Simulation.Core
             //
             // Through Impact.AngularImpulse rather than written inline, and
             // that is a rule rather than a preference (round-3 finding C-I1):
-            // FOUR places need this one signed subtraction and TWO of them are
-            // outside Ring.Simulation -- DamagePlayer (Т7), the client's
-            // ClientEventDecoder (Т9) and Presentation's MobVisual (Т31). Four
-            // hand-written copies of one signed arm is the shape round 2
-            // already removed for the spring step.
+            // THREE places need this one signed subtraction, and one of them is
+            // outside Ring.Simulation -- this method, DamagePlayer (Т7) and
+            // Ring.Networking.Client.MobTiltIntegrator, which rebuilds a struck
+            // mob's tilt on a networked client (Т31). The client's own
+            // ImpactPulse of Т9 is an EXPECTED fourth caller rather than a
+            // present one: nothing builds that pulse today, and the work is
+            // booked to app-7du2 (review round, A-2 -- this comment named
+            // Presentation's MobVisual while the plan still put the integrator
+            // there, and the owner moved it to the network backend). Even three
+            // hand-written copies of one signed arm is the shape round 2 already
+            // removed for the spring step.
             //
             // `target` is the archetype config resolved for the shove above,
             // deliberately reused: a second MobConfigFor call here would be a

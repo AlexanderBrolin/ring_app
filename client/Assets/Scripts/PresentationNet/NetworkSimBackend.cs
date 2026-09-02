@@ -1387,9 +1387,22 @@ namespace Ring.Presentation.Net
             // frame's picture and this rewrites the same numbers into it. The
             // one residue that leaves is a body whose slot was freed on the
             // settle snap: its last written pair stays in `_curr` until the
-            // next resolved pair zeroes the array, and by definition that
-            // pair is under `Impact.RestEpsilon` — a ten-thousandth of a
-            // radian, which is the tolerance the snap itself is drawn at.
+            // next resolved pair zeroes the array.
+            //
+            // WHAT THAT RESIDUE IS WORTH, BY CONSTRUCTION (review round, A-4 —
+            // an earlier wording said "by definition that pair is under
+            // `Impact.RestEpsilon`", which is the one thing it cannot be).
+            // The snap writes zeros only once BOTH components are already
+            // inside the epsilon, and on the frame it happens the slot is
+            // freed before `WriteInto` runs — so what stands in `_curr` is the
+            // PRE-SNAP pair, the one written a frame earlier, and at least one
+            // of its components is by construction >= `Impact.RestEpsilon`.
+            // The review round measured the gap it can be off by: no more than
+            // about twice the epsilon in angular velocity and about one in
+            // tilt. One epsilon of tilt is 1e-4 rad, so what is actually left
+            // standing on screen is a hundredth of a degree — the argument
+            // survives its own correction, which is why the residue is still
+            // named rather than handled.
             //
             // BY TICKS, NOT BY FRAME TIME (Ruling 251): the spring's discrete
             // damping is part of its answer, so the client steps the same
@@ -1649,9 +1662,17 @@ namespace Ring.Presentation.Net
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
             _mobTypes = new MobTypeMemory(cfg.Arena.MaxMobs);
-            // app-88jb Т31: sized by the same cap, for the same reason — a
-            // frame can name no more bodies than one generation holds, so no
-            // reachable traffic can fill this table past its refusal.
+            // app-88jb Т31: sized by the same cap — `Arena.MaxMobs` — but NOT
+            // for the same reason, and the reason above does not carry over
+            // (review round, B-3). `_mobTypes` is bounded by one frame's
+            // roster; this table is bounded by the bodies STRUCK inside the
+            // decay window, and a slot lives until the spring snaps rather
+            // than until the next frame — a mob that died on the blow holds
+            // its slot for the rest of its swing. So the refusal is reachable
+            // in principle: enough distinct bodies hit inside one settle
+            // window and `Apply` answers false. That costs exactly one body
+            // that does not rock, which is what the integrator's own class doc
+            // prices it at, and this comment no longer claims otherwise.
             _mobTilt = new MobTiltIntegrator(in cfg);
 
             _prev = new RenderSnapshot(in cfg);
@@ -2797,12 +2818,19 @@ namespace Ring.Presentation.Net
         }
 
         /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the
-        /// moment the epoch it is keyed to changes. Three things qualify: the
-        /// frame's own event window — which may hold events of the match that
-        /// just ended, already drained out of the queue `ClientMatchReset`
-        /// clears — this backend's own readiness, and the mob-archetype memory
-        /// (fix-round 1, G-2), whose keys are entity ids a new match starts
-        /// minting over.
+        /// moment the epoch it is keyed to changes. THE LIST IS THE BODY'S AND
+        /// CARRIES NO COUNT — the header used to open with "three things
+        /// qualify" while the body already ended on a comment reading "and the
+        /// fourth", because every task that added a clear added it below and
+        /// left the number above (review round, B-9). What qualifies is
+        /// whatever this class holds that is KEYED TO THE EPOCH: the frame's
+        /// own event window — which may hold events of the match that just
+        /// ended, already drained out of the queue `ClientMatchReset` clears —
+        /// this backend's own readiness, the local seat's predicted pose, the
+        /// spectate window, the loot request in flight, the mob-archetype
+        /// memory (fix-round 1, G-2) and the mob tilt table (Т31). The last two
+        /// are keyed by entity ids a new match starts minting over; each clear
+        /// below carries its own reason, and the body is the list.
         ///
         /// `Ready` HAS TO GO WITH IT (fix-round 1, F-6). `ClientMatchReset`
         /// empties the ring and stops the clock, so the next `Advance` resolves
@@ -2866,11 +2894,12 @@ namespace Ring.Presentation.Net
             // no reply by construction (`MatchServer.OnLootRequest`'s own
             // doc) — so the ghost has to be dropped here or it never goes out.
             _lootRequests.Reset();
-            // The third thing that cannot survive a match: a new one mints its
-            // entity ids from 1 again, so a remembered id would answer with
-            // the archetype of a mob from the match before (fix-round 1, G-2).
+            // The archetype memory cannot survive a match either: a new one
+            // mints its entity ids from 1 again, so a remembered id would
+            // answer with the archetype of a mob from the match before
+            // (fix-round 1, G-2).
             _mobTypes.Reset();
-            // And the fourth, keyed the same way and cleared for the same
+            // And the tilt table, keyed the same way and cleared for the same
             // reason (app-88jb Т31): a slot that outlived the match would tilt
             // whatever body the new one happens to mint that id for — a wrong
             // answer rather than a missing one.

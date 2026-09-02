@@ -1059,6 +1059,24 @@ namespace Ring.Simulation.Tests
 
         // --- 15: ProjectileEnded_GoesToSpawnSubscribers (plan) ---
 
+        /// THE WALL NORMAL THIS FIXTURE EMITS IS DELIBERATELY NOT THE NEUTRAL
+        /// CODE, and that is what makes the two payload assertions below a
+        /// witness rather than a restatement (review round, B-7).
+        /// `Quantize.Dir(float2.zero)` is 128 and decodes back to (1, 0), an
+        /// ORDINARY heading along +X — so a fixture that stated a zero normal,
+        /// or one along +X, would agree with an assembler forwarding
+        /// `ev.HitDir` exactly as happily as with the one that drops it. The
+        /// emit states (0, -1) instead: a heading no neutral code can produce.
+        ///
+        /// WHAT THE SURFACE ARM SENDS, AND WHY IT IS A DECISION (Ruling 243).
+        /// `SnapshotAssembler`'s `Blocked` branch passes `float2.zero` and a
+        /// victim of 0 ON PURPOSE. The direction a surface contact would want
+        /// is the wall's NORMAL, which the simulation does put in `ev.HitDir`
+        /// — and through `Quantize.Dir` that normal is indistinguishable from
+        /// the floor's exact zero, so forwarding it would tell the receiver a
+        /// floor hit was a wall hit. The victim is 0 because a wall is nobody,
+        /// and the field is what every per-mob effect on the far side is looked
+        /// up by. Both were decisions with no witness until these two lines.
         [Test]
         public void ProjectileEnded_GoesToSpawnSubscribers()
         {
@@ -1104,6 +1122,13 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(endSub.TryFirstOf(SnapshotEventKind.ProjectileEnded, out int e));
             Assert.AreEqual(roundId, endSub.Payloads[e].Id, "and the payload names the round that ended");
             Assert.AreEqual(ProjectileEndKind.Blocked, endSub.Payloads[e].EndKind);
+            Assert.AreEqual(0, endSub.Payloads[e].VictimId,
+                "у стены нет жертвы: поле обязано остаться нулём, иначе приёмник ищет вьюху "
+                + "моба по id, которого никто не бил");
+            Assert.AreEqual(0f,
+                math.atan2(endSub.Payloads[e].Dir.y, endSub.Payloads[e].Dir.x), 1e-3f,
+                "стена не тело: направление удара у Blocked обязано быть нейтральным кодом, "
+                + "иначе приёмник прочтёт попадание в пол как попадание в стену");
             Assert.AreEqual(0, endBy.CountOf(SnapshotEventKind.ProjectileEnded),
                 "a connection that never received the spawn must not receive the ending");
 

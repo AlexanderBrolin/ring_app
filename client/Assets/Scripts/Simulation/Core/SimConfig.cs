@@ -948,10 +948,20 @@ namespace Ring.Simulation.Core
         /// `SimulationWorld.MobConfigRefFor` delegates to it (and the
         /// world's own value overload delegates to that), and the client's
         /// `Ring.Networking.Client.MobTiltIntegrator` reads the archetype's
-        /// spring and impact numbers out of a config it holds by value. A
-        /// third hand-written copy of the same four-way choice is exactly what
-        /// rule 2 forbids — and the fork is not hypothetical: `MobDied`'s HP
-        /// scale and the props director already carry narrower copies of it.
+        /// spring and impact numbers out of a config it holds by value.
+        ///
+        /// THE COUNT, EXACTLY (Ruling 259; review round, B-10 corrected an
+        /// earlier "third copy … narrower copies" that was wrong in both
+        /// halves). Before Т31 the same four-way choice was written THREE
+        /// times: `SimulationWorld.MobConfigRefFor`, which now delegates here;
+        /// `Presentation.PersistentPropsDirector.ArchetypeConfigFor`, which is
+        /// a FULL copy of it — the whole `MobSimConfig`, not a narrower slice
+        /// — and lives in the client track's zone, so it is not this task's to
+        /// move; and `SnapshotBlocks.MaxHpFor`, the one genuinely narrow copy
+        /// (`MaxHp` alone, and with a different policy on an unknown type: it
+        /// answers with the Gunner's number instead of throwing). The
+        /// integrator would have been the FOURTH, which is exactly what rule 2
+        /// forbids.
         ///
         /// `ref readonly`, SO NOTHING IS COPIED. `MobSimConfig` is a
         /// fifteen-field struct and this is asked from inside per-mob and

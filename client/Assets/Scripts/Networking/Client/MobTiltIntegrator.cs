@@ -66,15 +66,30 @@ namespace Ring.Networking.Client
     ///
     /// PREALLOCATED, NO DICTIONARY, REFUSALS RATHER THAN THROWS. Four parallel
     /// arrays of `Arena.MaxMobs` and a linear scan over the OCCUPIED prefix —
-    /// the shape `MobTypeMemory` and `TracerProjectiles` already keep, for
-    /// their reason: this is touched from the snapshot receive path and from
-    /// the render frame, and a dictionary would allocate as it grew on paths
-    /// that must not allocate (Р406, `AllocationTests`). A full table refuses
-    /// by value (`Apply` returns false) rather than throwing, because the
-    /// caller runs inside FishNet's batched parsing loop where a throw
-    /// abandons every message behind it (Р82/195); the cost of a refusal is
-    /// one body that does not rock. Nothing here allocates after the
+    /// the shape `MobTypeMemory` and `TracerProjectiles` already keep. The
+    /// ALLOCATION argument covers every method here and is the plain one: a
+    /// dictionary would allocate as it grew, and both paths this class sits on
+    /// forbid that (Р406, `AllocationTests`). Nothing here allocates after the
     /// constructor.
+    ///
+    /// WHICH PATH EACH METHOD IS ON, since the two are not the same and an
+    /// earlier wording put them all on the wrong one (review round, A-3/B-2).
+    /// `Apply`, `StepTicks` and `WriteInto` are reachable from the RENDER FRAME
+    /// only: `NetworkSimBackend.Advance` steps and patches in its own tail, and
+    /// `Apply` is reached through `Advance` → `DrainDueEvents` → `ApplyMobHit`,
+    /// which is the only call site of either. From FishNet's receive path the
+    /// one member reachable is `Reset` — `SyncMatchEpoch` is asked first by
+    /// `OnSnapshotBroadcast` and `OnLootResult`, and it is where the epoch
+    /// clear lives.
+    ///
+    /// SO THE Р82/195 ARGUMENT — a throw inside FishNet's batched parsing loop
+    /// abandons every message behind it — BELONGS TO `Reset` AND ONLY TO IT.
+    /// The honest reason `Apply` refuses a full table by value is a different
+    /// one, and it is not weaker: it runs on the frame, where an exception
+    /// costs the whole frame's remaining work (the step, the patch into the
+    /// published pair, everything `Advance` has not done yet) while the defect
+    /// it would report is worth exactly one body that does not rock. A refusal
+    /// prices itself correctly; a throw does not.
     ///
     /// NOT A SEVENTH SEAM. `ClientMatchReset` owns the six per-match objects
     /// and its own doc argues for one call site rather than six; this table is
@@ -92,11 +107,21 @@ namespace Ring.Networking.Client
         /// spring stops being worth it — three settle times, in ticks, over
         /// the SLOWEST of the four archetypes. It is the bound
         /// `Impact.PeakTilt` uses for its own loop, and it is a BOUND rather
-        /// than a tuned quantity: every impulse this table can hold has
-        /// snapped to rest through `Impact.RestEpsilon` well inside it (the
-        /// chaser's does at roughly two thirds of the window), so a jump wider
-        /// than this can only end with every slot at zero, and `Reset` is that
-        /// answer arrived at in one step instead of hundreds.
+        /// than a tuned quantity: a SINGLE blow snaps to rest through
+        /// `Impact.RestEpsilon` well inside it — the chaser's does at roughly
+        /// two thirds of the window — so a jump wider than this ends with every
+        /// slot at zero, and `Reset` is that answer arrived at in one step
+        /// instead of hundreds.
+        ///
+        /// FOR A SINGLE BLOW, AND THAT QUALIFICATION IS THE HONEST HALF
+        /// (review round, A-5). `Apply` SUMS, so a body hit again and again
+        /// carries a moment no single hit produces, and a big enough sum snaps
+        /// LATER than the window: the reviewer's measurement puts about
+        /// 277 rad/s at tick 82 against a window of 81. What the reset then
+        /// costs is a tilt that would still have been swinging, zeroed — on a
+        /// clock jump wider than 2.7 s, which has already torn the picture by
+        /// every other measure. The bound is kept for what it is bought for:
+        /// the loop is finite by construction, in both branches.
         readonly int _settleWindowTicks;
 
         int _count;
@@ -134,6 +159,20 @@ namespace Ring.Networking.Client
         /// The archetype of an OCCUPIED slot is not rewritten: one id is one
         /// body for the length of a match, and a new match resets the table
         /// before it can mint the id again.
+        ///
+        /// WITH THE QUALIFICATION THE NEIGHBOR ALREADY CARRIES (review round,
+        /// A-6; `TracerProjectiles.TrySpawn`'s own doc states it for rounds).
+        /// The key here is not the authority's `int` but the WIRE's truncated
+        /// u16 code — the decoded `SnapshotBlocks.MobRecord.Id` on the frame
+        /// side and `victimId & 0xFFFF` on the ending's — so two mobs exactly
+        /// 65536 apart in minting order arrive under ONE key, and the second
+        /// would inherit the first's archetype for as long as the slot lives.
+        /// The magnitude is reachable inside one match rather than absurd:
+        /// `SimulationWorld` mints entity ids off a single counter that
+        /// PROJECTILES spend too, and the caps bound how many live at once,
+        /// never how many a long match mints. What the collision costs is
+        /// bounded by the settle window — the wrong spring for one body's rock
+        /// — and the slot frees itself at the snap.
         public bool Apply(int mobId, MobType type, float angularImpulse)
         {
             for (int i = 0; i < _count; i++)
@@ -162,6 +201,15 @@ namespace Ring.Networking.Client
         /// inside one tick; a clock that went BACKWARDS has not made the
         /// bodies swing backwards either, and forgetting them would be a
         /// stronger claim than the clock made (Ruling 260).
+        ///
+        /// THAT GUARD IS REDUNDANT WITH THE LOOP BELOW AND IS KEPT ANYWAY
+        /// (review round, B-1, Ruling 266): `for (step = 0; step < ticks; …)`
+        /// runs zero iterations for any `ticks <= 0`, so removing the early
+        /// return — or writing it as `ticks < 0` — is indistinguishable on
+        /// every possible input. It has no witness for that reason and cannot
+        /// have one; it stands as a STATEMENT OF THE CONTRACT, which reads
+        /// faster at the top of the method than it deduces from the loop's
+        /// bounds.
         ///
         /// A JUMP PAST THE SETTLE WINDOW RESETS instead of stepping: see
         /// `_settleWindowTicks`. The loop is finite by construction in both

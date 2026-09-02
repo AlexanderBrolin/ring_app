@@ -384,5 +384,123 @@ namespace Ring.Simulation.Tests
                 "witness: the hard-hit body is still swinging at the end of the window, so the "
                 + "run above compared two live curves rather than two settled zeros");
         }
+
+        /// Test 18, from the review round (finding B-8). A FULL TABLE REFUSES
+        /// BY VALUE, and the refusal costs the bodies already in it nothing.
+        /// `Apply`'s capacity guard had no witness at all: no fixture in this
+        /// file ever filled the table, so the classic off-by-one there — `>`
+        /// where `>=` is meant — would have written one slot PAST four arrays
+        /// on the first blow the table could not hold, which is an exception
+        /// out of a guard whose whole purpose is not to throw one.
+        ///
+        /// THE CAPACITY COMES FROM THE CONFIG, NEVER STATED AS A NUMBER. The
+        /// constructor sizes the arrays by `Arena.MaxMobs`, so a fixture
+        /// carrying its own literal would keep passing a table that had
+        /// silently been sized by something else. It is also why the fill loop
+        /// mints DIFFERENT ids: same-id blows sum into one slot, and a table
+        /// filled with one id is not a full table.
+        ///
+        /// AND AN ID THE TABLE ALREADY HOLDS IS STILL SERVED WHEN IT IS FULL.
+        /// That is not a second rule but the ORDER of the method's body: the
+        /// scan over occupied slots runs BEFORE the capacity check, because
+        /// summing into a slot that already exists needs no new one. A body
+        /// under sustained fire therefore keeps rocking harder even in a match
+        /// crowded enough to refuse the next NEW body.
+        [Test]
+        public void AFullTable_RefusesANewBody_ButStillSumsIntoOneItAlreadyHolds()
+        {
+            const int firstId = 1;
+            const int watchedId = firstId;
+            // Three moments no two of which can be mistaken for each other: the
+            // watched slot's, its neighbors' and the one the refusal carries.
+            const float watchedImpulse = 3f;
+            const float fillerImpulse = 1f;
+            const float refusedImpulse = 9f;
+
+            SimConfig cfg = TestConfigs.OpenField();
+            int capacity = cfg.Arena.MaxMobs;
+            Assert.Greater(capacity, 1,
+                "премисса: ёмкость таблицы — Arena.MaxMobs, и слотов обязано быть больше одного, "
+                + "иначе «полная таблица» и «первый удар» — одно событие");
+
+            var integrator = new MobTiltIntegrator(in cfg);
+            for (int id = firstId; id < firstId + capacity; id++)
+                integrator.Apply(id, MobType.Chaser,
+                    id == watchedId ? watchedImpulse : fillerImpulse);
+
+            Assert.AreEqual(capacity, integrator.Count,
+                "премисса: таблица заполнена ровно до ёмкости — каждый из MaxMobs РАЗНЫХ id занял "
+                + "свой слот, иначе отказ ниже спрашивали бы у неполной таблицы");
+
+            int strangerId = firstId + capacity;
+            Assert.IsFalse(integrator.Apply(strangerId, MobType.Chaser, refusedImpulse),
+                "полная таблица обязана отказать ЗНАЧЕНИЕМ — не броском и не записью за край "
+                + "массива: цена отказа тут одно некачнувшееся тело");
+            Assert.AreEqual(capacity, integrator.Count,
+                "и отказ ничего не занял: счётчик остался на ёмкости");
+            Assert.IsFalse(integrator.TryGetTilt(strangerId, out _, out _),
+                "отказанное тело не наклонено — иначе отказ был бы враньём");
+            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float watchedVel));
+            Assert.AreEqual(watchedImpulse, watchedVel, 0f,
+                "тела, уже стоявшие в таблице, отказом не тронуты");
+
+            Assert.IsTrue(integrator.Apply(watchedId, MobType.Chaser, watchedImpulse),
+                "удар по УЖЕ занятому слоту принимается и при полной таблице: поиск занятого слота "
+                + "идёт до проверки ёмкости, потому что суммирование слота не требует");
+            Assert.AreEqual(capacity, integrator.Count,
+                "и он не занял второго слота под тем же id");
+            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float summedVel));
+            Assert.AreEqual(watchedImpulse * 2f, summedVel, 1e-6f,
+                "второй удар не сложился с первым: тело под огнём обязано качаться сильнее");
+        }
+
+        /// Test 19, from the same finding. `WriteInto`'s TWO REFUSALS — a null
+        /// destination and a `count` wider than the array it names — neither of
+        /// which had a witness either. The shape is the neighbor's
+        /// (`TracerProjectilesTests.WriteIntoNeverOverrunsTheDestination`),
+        /// which pins the same property for the table next door.
+        ///
+        /// WHY A BODY THE FRAME DOES NOT LIST IS PART OF THE FIXTURE. The
+        /// clamp can only be reached when the inner scan runs to the END, and
+        /// that scan breaks the moment it finds the id it is looking for — so a
+        /// table holding nothing but bodies the array lists never walks past
+        /// `mobs.Length`, and an unclamped `count` would go unnoticed there.
+        /// The unseen body is not a contrivance: it is the ordinary case the
+        /// class doc names, a mob that left this client's view while it was
+        /// still rocking and keeps its slot until the spring snaps.
+        ///
+        /// BOTH ARE REFUSALS RATHER THAN THROWS FOR THE PATH'S OWN REASON: this
+        /// is the tail of the render frame, and a frame that names no mobs at
+        /// all is an ordinary frame, not a defect worth an exception.
+        [Test]
+        public void WriteInto_TakesANullArrayAndAnOverstatedCount_WithoutThrowing()
+        {
+            const int listedId = 7;
+            const int unseenId = 11;
+
+            SimConfig cfg = TestConfigs.OpenField();
+            var integrator = new MobTiltIntegrator(in cfg);
+            float impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot, in cfg.Chaser,
+                HitHeight, in cfg);
+
+            Assert.IsTrue(integrator.Apply(listedId, MobType.Chaser, impulse), "удар не принят");
+            Assert.IsTrue(integrator.Apply(unseenId, MobType.Chaser, impulse),
+                "второй удар по ДРУГОМУ телу не принят — искать за краем массива будет нечего");
+            integrator.StepTicks(1, in cfg);
+            Assert.AreEqual(2, integrator.Count,
+                "премисса: качаются оба тела, и одного из них в массиве ниже НЕТ — только на нём "
+                + "внутренний обход доходит до конца");
+
+            Assert.DoesNotThrow(() => integrator.WriteInto(null, 0),
+                "кадр может не принести массива вовсе: WriteInto(null) — отказ значением, а не "
+                + "бросок в хвосте рендер-кадра");
+
+            var mobs = new[] { new MobState { Id = listedId, Type = MobType.Chaser } };
+            Assert.DoesNotThrow(() => integrator.WriteInto(mobs, mobs.Length + 5),
+                "count шире массива обязан клэмпиться его длиной: обход за краем — исключение "
+                + "там, где ценой ошибки должно быть одно некачнувшееся тело");
+            Assert.AreNotEqual(0f, mobs[0].Tilt,
+                "и тела ВНУТРИ массива всё-таки пропатчены: клэмп сужает обход, а не отменяет его");
+        }
     }
 }
