@@ -2961,6 +2961,20 @@ namespace Ring.Simulation.Tests
             int n = SnapshotEvents.WriteProjectileRicocheted(buf, id: 4242,
                 normal: new float2(0f, 1f), height: height, in cfg);
             Assert.AreEqual(4, n, "рикошет обязан весить четыре байта: id, нормаль, высота");
+            // THE SCALE IS THE CONFIG'S, NOT A NUMBER SOMEBODY TYPED. The
+            // layout test next door pins this same byte, but it runs on
+            // `EvtCfg`, whose `MaxAimHeight` is 6.5 — which is exactly the
+            // number a writer that hard-wired the scale would carry, so there
+            // the mutation writes the very code the assertion expects. Here the
+            // config says 4.9, the same height rides a DIFFERENT code, and a
+            // hard-wired 6.5 writes 69 where 91 belongs. Without this line that
+            // mutation survives EVERY witness in the tree: the round trip is
+            // symmetric, so writer and reader agree with each other, and all
+            // three decoded-value tolerances are wider than the error it leaves
+            // (0.0088 against 0.0106 here — measured, not estimated).
+            Assert.AreEqual((byte)91, buf[3],
+                "byte 3: 1.75/4.9 -> code 91; высота обязана ехать против cfg.Hero.MaxAimHeight, "
+                + "а не против числа, зашитого в код");
 
             Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileRicocheted,
                 buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));
@@ -2974,7 +2988,9 @@ namespace Ring.Simulation.Tests
         /// app-5o2q: THE BYTES THEMSELVES, by the form of every other kind in
         /// this file's layout region (`EventPayload_ProjectileEnded_ByteLayout_
         /// AndDecodedValues` is the nearest neighbor, down to the pair of
-        /// height and direction bytes). It lives here beside the round trip
+        /// height and direction bytes — though in the OPPOSITE order, height
+        /// before direction there and direction before height here, because
+        /// Ruling 269 executes the owner's decision by its letter). It lives here beside the round trip
         /// rather than in that region because the two are one kind's codec
         /// witnesses and a reader looking for either wants both.
         ///

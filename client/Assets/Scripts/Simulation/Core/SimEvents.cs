@@ -329,6 +329,10 @@ namespace Ring.Simulation.Core
         /// `Amount`, a slot that belongs to damage everywhere else in this struct.
         /// Freeing `Amount` is half the point: with a height of its own, the two
         /// fields stop meaning different things for different kinds.
+        /// app-5o2q added `ProjectileRicocheted` to the filled list: a
+        /// reflection has a surface behind it too, and it carries the height on
+        /// BOTH backends -- the world emits it, and the wire has carried it
+        /// since the payload was narrowed to make room.
         /// Zero for every kind with no contact behind it.
         public float Height;
         /// The round's speed AT THE MOMENT IT LANDED, in m/s (app-88jb Т8, spec

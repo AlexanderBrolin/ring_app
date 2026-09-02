@@ -193,9 +193,11 @@ namespace Ring.Networking.Protocol
 
         /// Decoded unit heading: the round's horizontal direction for
         /// `ProjectileSpawned`, the blow's impact direction for
-        /// `PlayerDamaged`, the wall normal for `DashRicocheted` and — since
-        /// app-88jb Т31 — the round's travel direction at contact for a
-        /// `ProjectileEnded` that ended on a BODY (`HitMob`/`HitPlayer`).
+        /// `PlayerDamaged`, the wall normal for `DashRicocheted` and (app-5o2q)
+        /// for `ProjectileRicocheted` — the same fact about one contact, seen
+        /// from the round's side rather than the actor's — and, since app-88jb
+        /// Т31, the round's travel direction at contact for a `ProjectileEnded`
+        /// that ended on a BODY (`HitMob`/`HitPlayer`).
         ///
         /// ⚠ THE TWO SURFACE ENDINGS CARRY NO HEADING, and the byte they
         /// still spend on one decodes to `(1, 0)` rather than to nothing:
@@ -229,6 +231,12 @@ namespace Ring.Networking.Protocol
         /// client drew on the FLOOR under the target instead of at the belt
         /// that was hit (`PersistentPropsDirector.SpawnHitSpark` and
         /// `SpawnPlayerHitSpark` both read this field).
+        ///
+        /// app-5o2q ADDED `ProjectileRicocheted` to that same list: a
+        /// reflection happens ON a surface, so it has a contact height like
+        /// any other, and `PersistentPropsDirector.HandleRicocheted` lifts its
+        /// spark by exactly this field. The "(0 otherwise)" above is therefore
+        /// one kind shorter than it was.
         public float Height;
 
         /// Speed of the round that landed, in m/s (app-88jb Т8). Quantized against

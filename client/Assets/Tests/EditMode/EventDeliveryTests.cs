@@ -1173,7 +1173,7 @@ namespace Ring.Simulation.Tests
         ///     so the only way to ask it is through a world.
         ///  2. THE RECORD REACHES THE SUBSCRIBER AND CARRIES THE CONTACT —
         ///     its POINT off the record header, and its NORMAL and HEIGHT out
-        ///     of the payload. Three assertions, two different questions:
+        ///     of the payload. Four assertions, two different questions:
         ///       • the HEADER's point proves the ASSEMBLER's sim-to-wire
         ///         MAPPING — the single `Enqueue(c, i, we.Source.Pos)` in the
         ///         shared arm of `RouteEvents`, which is what fills
@@ -1261,7 +1261,7 @@ namespace Ring.Simulation.Tests
             // a record that arrives came through the subscription, not through
             // visibility. The normal points back down -Y, i.e. INTO the round's
             // path, which is the only shape a real contact normal takes.
-            var contact = new float2(0f, 62f);
+            var contact = new float2(17f, 62f);
             var normal = new float2(0f, -1f);
             Assert.Greater(math.distance(contact, float2.zero),
                 cfg.Visibility.SightRadius + cfg.Visibility.ExitHysteresis,
@@ -1321,13 +1321,18 @@ namespace Ring.Simulation.Tests
             // drawn. The tolerance is the header's own quantizer at its own
             // scale (`Quantize.Pos(…, cfg.Arena.Radius)`, one code = one step
             // of `2 * Radius / 65535`).
-            // ⚠ The x half of this pair is one-sided by the fixture's own
-            // geometry: `contact.x` is 0, which is also what an unfilled field
-            // holds. Recorded as a finding rather than fixed here — closing it
-            // means moving the contact off the y axis, i.e. changing the
-            // fixture, not adding an assertion.
+            // BOTH HALVES OF THIS PAIR ARE LOAD-BEARING, which cost one
+            // number: `contact.x` used to be 0, the very value an unfilled
+            // field holds, so an assembler that enqueued `(0, pos.y)` passed
+            // the pair untouched. It matters more since the narrowing than it
+            // did before it — this pair is now the ONLY witness in the tree
+            // that the sim's point reaches the wire at all. The fixture's own
+            // premise survives the move: |(17, 62)| = 64.3 is still past
+            // `SightRadius + ExitHysteresis` = 48, still inside
+            // `Arena.Radius` = 173, and the bystander at (0, -60) is 123 m
+            // away from it.
             Assert.AreEqual(contact.x, mid.Events[r].Pos.x, tol,
-                "the contact point must ride the record HEADER too — that is the copy the client "
+                "the contact point must ride the record HEADER — that is the copy the client "
                 + "decodes into SimEvent.Pos and the one the spark is drawn at");
             Assert.AreEqual(contact.y, mid.Events[r].Pos.y, tol,
                 "the record header's own point must be the contact, not the origin: an assembler "

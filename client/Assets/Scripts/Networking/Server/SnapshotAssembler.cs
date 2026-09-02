@@ -852,8 +852,10 @@ namespace Ring.Networking.Server
                     {
                         int slot = Add(ref seq, i, in ev, SnapshotEventKind.ProjectileRicocheted);
                         // app-5o2q: the contact POINT is no longer an argument
-                        // — it rides the record header this method fills per
-                        // connection, like every other kind's position — and
+                        // — it rides the record header `RouteEvents` fills per
+                        // connection through `Enqueue`, like every other kind's
+                        // position (NOT this method: `BeginTick` runs once per
+                        // tick and outside any connection) — and
                         // the contact HEIGHT takes its place, which is what
                         // puts the spark at the hit instead of on the floor.
                         SnapshotEvents.WriteProjectileRicocheted(PayloadSpan(slot), ev.EntityId,

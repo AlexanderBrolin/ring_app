@@ -96,9 +96,10 @@ namespace Ring.Networking.Protocol
     ///   carries `MaxAimHeight: 4.9` where it carried `3.8`, so the same wire
     ///   code now decodes to a DIFFERENT height in meters than it did one
     ///   commit ago — on InputCodec's byte [6] (`Quantize.Unit(AimHeight,
-    ///   cfg.Hero.MaxAimHeight)`) and on the three event heights riding the
+    ///   cfg.Hero.MaxAimHeight)`) and on the four event heights riding the
     ///   same scale (SnapshotEvents.WriteProjectileSpawned's byte [7],
-    ///   WriteProjectileEnded's [4], WritePlayerDamaged's [5], and their
+    ///   WriteProjectileEnded's [4], WritePlayerDamaged's [5],
+    ///   WriteProjectileRicocheted's [3] since app-5o2q, and their
     ///   readers). Nothing about the FORMAT moved: no block kind was added, no
     ///   field changed width, and every peer built from this commit agrees
     ///   with itself — which is exactly why the reservation above is the whole
