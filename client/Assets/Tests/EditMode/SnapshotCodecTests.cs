@@ -2578,7 +2578,7 @@ namespace Ring.Simulation.Tests
                 "one velZ, two scales — a single hardcoded speedCap would make these agree");
             Assert.AreNotEqual(player[6], mob[6]);
 
-            // Decoded values, asserted separately from the bytes (урок 108).
+            // Decoded values, asserted separately from the bytes (lesson 108).
             SnapshotEventPayload dp = Decoded(player, kind);
             Assert.AreEqual(EvtRoundId, dp.Id);
             Assert.AreEqual(EvtSlot, dp.PlayerIndex);
@@ -3324,7 +3324,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WorstCaseFrame_RecomputedFromTheCalculators_WithTheRealCatalog()
         {
-            // Урок 103: the number is RECOMPUTED here, not quoted. Every
+            // Lesson 103: the number is RECOMPUTED here, not quoted. Every
             // earlier figure — spec §3.8's 1043, Task 26's 1052, Task 27's 1116
             // — predates the event catalog it depends on, and Task 27's comment
             // says so in as many words: 4 B of payload was an assumption. The
@@ -3458,7 +3458,7 @@ namespace Ring.Simulation.Tests
         [Test]
         public void WorstCaseFrame_RecomputedWithNewBlocks()
         {
-            // Урок 103 again, one stage later: the sibling above was written
+            // Lesson 103 again, one stage later: the sibling above was written
             // when nothing wrote the Task 25 blocks into a frame, and its own
             // text named Т27 as the task that would recompute it with them.
             // This is that recomputation — and it is a SECOND test rather than
@@ -4122,7 +4122,7 @@ namespace Ring.Simulation.Tests
             //
             // A BIG JUMP FORWARD must leave no dirty mask behind: a ring slot
             // reused by a much newer tick that still carried the old tick's bits
-            // would silently swallow real events (урок 110 — this is the second
+            // would silently swallow real events (lesson 110 — this is the second
             // invariant, and the one a naive implementation fails).
             var cfg = TestConfigs.Open();
             var dedup = new EventDedup(cfg);
