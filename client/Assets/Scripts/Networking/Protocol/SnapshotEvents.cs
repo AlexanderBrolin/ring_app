@@ -465,16 +465,29 @@ namespace Ring.Networking.Protocol
         /// sized by this constant — `_wirePayload`, and the per-connection
         /// `QueuePayload`, `HistoryPayload` and `EventPayloadScratch` — grew by
         /// an eighth, and all four grew by themselves.
-        ///   `ProtocolVersion` did NOT move with it, and the reason is a
-        /// precedent rather than a convenience: app-88jb Т8 widened
-        /// `PlayerDamaged` from four bytes to seven without a bump. That
-        /// file's rule asks for a bump when the MEANING of bytes already on
-        /// the wire changes or a DOMAIN grows, and a kind that simply got
-        /// wider is neither.
-        ///   THE NEXT KIND TO GROW IS STILL THE ONE THAT PAYS: any field added
-        /// to `ProjectileSpawned` lifts this constant again, while
-        /// `ProjectileEnded` now has one byte of room under it and would cost
-        /// nothing until it reaches nine.
+        ///   ⛔ `ProtocolVersion` DID NOT MOVE WITH IT, AND THAT READING HAS
+        /// SINCE BEEN OVERTURNED (coordinator Ruling 312, bd app-9c4m). The
+        /// note that stood here argued from a precedent rather than a
+        /// convenience — app-88jb Т8 widened `PlayerDamaged` from four bytes to
+        /// seven without a bump — and from that file's rule, which asked for a
+        /// bump only when the MEANING of bytes already on the wire changed or a
+        /// DOMAIN grew, so that a kind which simply got wider was neither.
+        ///   WHAT OVERTURNED IT WAS A MEASUREMENT, not a second opinion: the
+        /// handshake compares only `ProtocolVersion` and `SimConfigHash`
+        /// (`HandshakeNet.ClientHelloNet`), and a wider payload moves neither
+        /// of them — so a mixed pair CONNECTS and plays a whole match in which
+        /// every birth record is refused for its LENGTH (`MalformedLength`):
+        /// no bullets, no shot sound, no muzzle flash, for the entire match.
+        /// The note above had priced that as "one record refused at a time".
+        /// The rule in `ProtocolVersion` now covers payload length as well,
+        /// `Current` went 4 → 5 in Т35, and Т8, Т31 and Т32 are recorded in its
+        /// HISTORY as retroactive violations.
+        ///   THE NEXT KIND TO GROW IS STILL THE ONE THAT PAYS, AND IT NOW PAYS
+        /// TWICE: any field added to `ProjectileSpawned` lifts this constant
+        /// again, while `ProjectileEnded` has one byte of room under it and
+        /// costs nothing here until it reaches nine — but either growth earns a
+        /// `ProtocolVersion` bump on the same terms as a changed meaning, once
+        /// a build has shipped that speaks the narrower width.
         public const int MaxPayloadBytes = 9;
 
         /// Highest legal wire value of `HitZone` / `ProjectileEndKind`. Same

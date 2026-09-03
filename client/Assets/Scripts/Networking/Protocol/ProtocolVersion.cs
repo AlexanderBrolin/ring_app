@@ -12,14 +12,17 @@ namespace Ring.Networking.Protocol
     /// BUMP THIS ONLY DELIBERATELY. Client and server read the same constant
     /// from the same build, so a bump is invisible in a single-build test run
     /// and only shows up as "every snapshot refused" against an older peer.
-    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToFour pins the
+    /// SnapshotCodecTests.ProtocolVersion_Current_IsPinnedToFive pins the
     /// literal for exactly that reason: the value cannot drift without a
     /// human editing a test that says, in words, that this is a
     /// compatibility break.
     ///
     /// A version bump is required whenever the MEANING of existing bytes
     /// changes (field order, field width, the meaning of a block kind or of
-    /// a flags bit). ADDING a new block kind does NOT need one — that is the
+    /// a flags bit) OR THE PAYLOAD OF AN EXISTING KIND GROWS LONGER
+    /// (coordinator Ruling 312, rule (в); the 4 → 5 entry below says what the
+    /// narrower reading cost when it was measured). ADDING a new block kind
+    /// does NOT need one — that is the
     /// entire point of the tagged, length-prefixed block format documented on
     /// SnapshotWriter: an older reader skips a kind it does not know and
     /// counts it (Р29).
@@ -104,6 +107,45 @@ namespace Ring.Networking.Protocol
     ///   field changed width, and every peer built from this commit agrees
     ///   with itself — which is exactly why the reservation above is the whole
     ///   fix and `Current` stays 4.
+    ///   4 → 5 (app-88jb Т35, coordinator Ruling 312): the PAYLOAD LENGTH of
+    ///   three existing kinds grew inside this epic, which the rule above did
+    ///   not ask for a bump for — so this entry moves the RULE as well as the
+    ///   number. Rule (в) of Ruling 312: a longer payload on an EXISTING kind
+    ///   parts peers exactly as a changed meaning does and earns a bump on the
+    ///   same terms.
+    ///   WHAT THE NARROWER READING COST, MEASURED RATHER THAN ARGUED (bd
+    ///   app-9c4m): the handshake compares only `ProtocolVersion` and
+    ///   `SimConfigHash` (`HandshakeNet.ClientHelloNet`), and neither of them
+    ///   moves when a payload merely gets wider. So a mixed pair — old client,
+    ///   new server — CONNECTS and plays a whole match in which every affected
+    ///   record is refused for its LENGTH (`MalformedLength`), not one field of
+    ///   it. On `ProjectileSpawned` that is every round's birth: no bullets, no
+    ///   shot sound, no muzzle flash, for the entire match. The earlier reading
+    ///   had priced the same event as "one record refused at a time".
+    ///   THE THREE GROWTHS THIS ENTRY PAYS FOR, all landing inside one
+    ///   unreleased epic and therefore all riding this single 5 — the reason
+    ///   the "2 → 3, SECOND REASON" entry states in full, since no peer ever
+    ///   spoke any intermediate width:
+    ///     `PlayerDamaged`      4 → 7 bytes (Т8);
+    ///     `ProjectileEnded`    5 → 8 bytes (Т31);
+    ///     `ProjectileSpawned`  8 → 9 bytes (Т32).
+    ///   ⚠ ALL THREE ARE RETROACTIVE VIOLATIONS OF THE RULE AS IT NOW READS,
+    ///   and they are listed here rather than left to a commit log because a
+    ///   rule whose precedents are missing is a rule the next reader applies to
+    ///   two cases out of three. Ruling 312 named Т8 and Т32; coordinator
+    ///   Ruling 313 adds Т31, found by measuring `PayloadBytesFor` rather than
+    ///   by reading the ruling. Т32 also left a note in
+    ///   `SnapshotEvents.MaxPayloadBytes` arguing the narrower reading and
+    ///   citing Т8 as its precedent — that note is corrected in this same
+    ///   commit, because a rule and a doc denying it cannot both stand.
+    ///   ADDING a kind still costs nothing: `ProjectileRicocheted` (Т30, four
+    ///   bytes) is a NEW kind, an older reader skips and counts it, and it is
+    ///   deliberately absent from the list above.
+    ///   ⚠ EVERY BUILD MUST BE REMADE FROM THE COMMIT THAT CARRIES THIS: the
+    ///   handshake refuses a peer built one commit earlier, which is precisely
+    ///   what the bump is for, and the lag gate of phase Ф4 runs against a
+    ///   dev-server image built from here on.
+    ///
     ///   ⚠ THE C# SIDE MOVED EARLIER, IN Т13, AND DELIBERATELY: validation
     ///   rule 14 refuses any SimConfig whose ceiling sits below the tallest
     ///   body's crown, and the Director's is 4.80, so the C# default had to
@@ -114,6 +156,6 @@ namespace Ring.Networking.Protocol
     ///   travel together, and Т16 is where the shipped half arrived.
     public static class ProtocolVersion
     {
-        public const byte Current = 4;
+        public const byte Current = 5;
     }
 }

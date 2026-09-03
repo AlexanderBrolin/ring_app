@@ -172,7 +172,8 @@ namespace Ring.Simulation.Tests
             // ordinary body hit, not a graze, and the test would have been
             // asserting Head on a chest shot. RENAMED IN Т15 for the same
             // reason (precedent: ProtocolVersion_Current_IsPinnedToThree ->
-            // ...ToFour): the old name quoted a field that no longer exists.
+            // ...ToFour -> ...ToFive): the old name quoted a field that no
+            // longer exists.
             // The part's own Top is 2.70, so the
             // grazing line is 2.82 and the clearing line just above it. What the
             // test witnesses is unchanged and is the only witness of it in the

@@ -177,19 +177,22 @@ namespace Ring.Simulation.Tests
             var writer = new SnapshotWriter(buffer);
             writer.WriteHeader(Epoch, Tick, Flags);
 
-            // Literal 4, not ProtocolVersion.Current: comparing the writer
+            // Literal 5, not ProtocolVersion.Current: comparing the writer
             // against the very constant it wrote would pass under a version
             // bump that silently broke every peer. The literal is therefore
             // MEANT to be edited by hand on a bump — it moved 1 → 2 with
             // Task 44a's ProjectileEndKind growth, then 2 → 3 with Stage 3
             // Task 10's MobType growth, then 3 → 4 with app-88jb Т6's
-            // MobAiState growth (Downed), alongside the pin in
-            // ProtocolVersion_Current_IsPinnedToFour below.
+            // MobAiState growth (Downed), then 4 → 5 with app-88jb Т35's
+            // payload-length rule (coordinator Ruling 312), alongside the pin
+            // in ProtocolVersion_Current_IsPinnedToFive below.
             // ⚠ THIS ASSERTION IS THE SECOND HALF OF THAT PIN and moves with
             // it every time: it was named in neither the Т6 plan nor its
-            // errata, and a bump that edited only the other one would leave
-            // this test red for a reason nobody had written down.
-            Assert.AreEqual((byte)4, buffer[0], "byte 0: protocol version");
+            // errata, and NOT in Ruling 312 either — a bump that edited only
+            // the other one would leave this test red for a reason nobody had
+            // written down. Т35 found it by the very grep this warning asks
+            // for, which is the only reason the warning was worth writing.
+            Assert.AreEqual((byte)5, buffer[0], "byte 0: protocol version");
             Assert.AreEqual((byte)0x34, buffer[1], "byte 1: epoch low byte (little-endian)");
             Assert.AreEqual((byte)0x12, buffer[2], "byte 2: epoch high byte (little-endian)");
             Assert.AreEqual((byte)0xEF, buffer[3], "byte 3: tick byte 0 (little-endian)");
@@ -476,7 +479,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void ProtocolVersion_Current_IsPinnedToFour()
+        public void ProtocolVersion_Current_IsPinnedToFive()
         {
             // A silent bump would part client and server with no red test
             // anywhere: the version is compared in the handshake (Task 39)
@@ -486,10 +489,19 @@ namespace Ring.Simulation.Tests
             // …IsPinnedToTwo — the old name was already lying about which
             // literal it pinned the moment MobType grew Elite/Director; a
             // test named after a stale value is worse than an unnamed one.
-            // app-88jb Т6 renames it again, 3 → 4, on that same rule.
-            Assert.AreEqual((byte)4, ProtocolVersion.Current,
-                "protocol version 4 is the wire contract from app-88jb Т6 on — changing it "
+            // app-88jb Т6 renamed it again, 3 → 4, and Т35 a third time,
+            // 4 → 5 (coordinator Ruling 312), on that same rule.
+            Assert.AreEqual((byte)5, ProtocolVersion.Current,
+                "protocol version 5 is the wire contract from app-88jb Т35 on — changing it "
                 + "is a compatibility break that must be a deliberate, reviewed edit. It became "
+                + "5 under coordinator Ruling 312, which widened the bump rule itself: the "
+                + "PAYLOAD LENGTH of three existing kinds grew inside this epic — PlayerDamaged "
+                + "4 → 7 (Т8), ProjectileEnded 5 → 8 (Т31), ProjectileSpawned 8 → 9 (Т32) — and "
+                + "a reader built before them refuses every such record for its LENGTH "
+                + "(MalformedLength), while the handshake, which compares only this byte and "
+                + "SimConfigHash, lets the pair connect and play the whole match: on "
+                + "ProjectileSpawned that is every round's birth, so no bullets, no shot sound "
+                + "and no muzzle flash for the entire match. It became "
                 + "4 when MobAiState grew Downed = 6: a version-3 reader validates a Mobs "
                 + "record's ai nibble against its own MaxMobAiStateValue bound of 5 (Fire) and "
                 + "throws out the WHOLE MOBS BLOCK as MalformedContent — every mob in the arena "
@@ -498,7 +510,7 @@ namespace Ring.Simulation.Tests
                 + "fall (Т11a ships those), so nothing but this version byte separates the two "
                 + "builds. It became 3 in Stage 3 Task 10, when MobType grew Elite = 2 and "
                 + "Director = 3, and 2 in Task 44a, when ProjectileEndKind grew HitPlayer = 4 — "
-                + "see ProtocolVersion's own HISTORY doc for both entries.");
+                + "see ProtocolVersion's own HISTORY doc for every entry.");
         }
 
         // ---- 8. Failure is sticky ----
@@ -1652,7 +1664,7 @@ namespace Ring.Simulation.Tests
             // SnapshotBlocks.MaxMobTypeValue now reads
             // `(byte)MobType.Director`, alongside the ProtocolVersion bump
             // its own HISTORY entry records (ProtocolVersion_Current_
-            // IsPinnedToFour, this file, updates in the same commit — see
+            // IsPinnedToFive, this file, updates in the same commit — see
             // that test's own doc). WavePhase is UNCHANGED.
             //
             // app-88jb Т6 CANCELS THE OTHER HALF OF THAT SENTENCE, which used

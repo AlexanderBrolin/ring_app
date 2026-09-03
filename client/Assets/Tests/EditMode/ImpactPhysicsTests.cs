@@ -24,13 +24,17 @@ namespace Ring.Simulation.Tests
     /// cfg.Weapon.ProjectileSpeed), so the two-sources-of-numbers rule holds
     /// and no value from the shipped .asset appears here.
     ///
-    /// ProtocolVersion_IsPinnedToFour GOES THROUGH NEITHER
+    /// ProtocolVersion_IsPinnedToFive GOES THROUGH NEITHER
     /// (Т6). It is a wire-domain sentinel, not impact arithmetic: a new
     /// MobAiState enlarges the Mobs block's nibble domain, and a peer speaking
     /// the older version refuses the WHOLE block as MalformedContent
     /// (SnapshotBlocks.cs:510). It lives here because Т6 is the task that grows
     /// that domain, and a sentinel filed away from its own cause is a sentinel
-    /// nobody re-reads.
+    /// nobody re-reads. ⚠ Т35 moved the value it pins, 4 → 5, for a cause of
+    /// its own (payload length, coordinator Ruling 312): this sentinel is the
+    /// THIRD witness of that constant, named by neither Т6 nor Ruling 312, and
+    /// a bump that edited only the two in SnapshotCodecTests would have left
+    /// this file red with no written reason.
     ///
     /// `Ai = MobAiState.Idle` IN EVERY TEST HERE THAT SETS IT IS A STATED
     /// STARTING STATE, NOT A FREEZE (finding Н-5, caught by a run in Т4 and not
@@ -452,12 +456,13 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void ProtocolVersion_IsPinnedToFour()
+        public void ProtocolVersion_IsPinnedToFive()
         {
             // Domain sentinel: a new AI state IS A CHANGE OF THE WIRE DOMAIN,
             // and an older peer would refuse the whole Mobs block as
-            // MalformedContent.
-            Assert.AreEqual(4, Ring.Networking.Protocol.ProtocolVersion.Current);
+            // MalformedContent. The value moved to 5 in Т35 for a second and
+            // independent cause — payload length, coordinator Ruling 312.
+            Assert.AreEqual(5, Ring.Networking.Protocol.ProtocolVersion.Current);
         }
 
         [Test]

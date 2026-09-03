@@ -162,7 +162,7 @@ namespace Ring.Simulation.Tests
             // is not among them and cannot be: nothing here damages the mob,
             // so its tilt never passes TiltFallAngle. Precedent for renaming
             // rather than letting a name go stale: ProtocolVersion_Current_
-            // IsPinnedToTwo → …ToThree → …ToFour.
+            // IsPinnedToTwo → …ToThree → …ToFour → …ToFive (Т35).
             //
             // Spec Р214: Elite adds no MobAiState of its own — it is
             // documented to visit all six FIGHTING values over a fight.

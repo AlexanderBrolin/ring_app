@@ -300,7 +300,7 @@ namespace Ring.Simulation.Tests
         /// five-byte payload, not a rule. Two tests claiming opposite things
         /// about one byte are two homes of one rule, so the old one is gone
         /// rather than deprecated; and the NAME went with the claim, on the
-        /// precedent of `ProtocolVersion_Current_IsPinnedToFour` (a name whose
+        /// precedent of `ProtocolVersion_Current_IsPinnedToFive` (a name whose
         /// meaning has worn off is worse than no name at all).
         [Test]
         public void ProjectileEnded_HitMob_NamesTheVictimInEntityId_AndKeepsTheRoundInTheSecondaryField()
