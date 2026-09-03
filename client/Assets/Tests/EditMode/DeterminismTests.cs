@@ -429,8 +429,9 @@ namespace Ring.Simulation.Tests
             // doubled in this same phase, so pinning this constant first would
             // have meant re-pinning it immediately. Т36 was moved behind that
             // work for exactly this reason, and this constant held its first
-            // value until `app-ggvz` — see RE-PIN #4 below, which is the only
-            // time it has ever moved.
+            // value until `app-ggvz` — see RE-PIN #4 below, the first of the
+            // two times it has moved (RE-PIN #5, the epic's one sanction, is
+            // the second).
             //
             // ⚠ WHAT IT DOES NOT COVER, measured and named rather than left to
             // be assumed from the paragraph above: THE DIRECTOR'S DEATH, the
@@ -489,7 +490,16 @@ namespace Ring.Simulation.Tests
             // of it: with the collectors alive, the six 18 000-tick runs of
             // this file now execute for all 600 s instead of freezing at around
             // tick 1250. Measured, not estimated.
-            const ulong ExtractionGoldenHash = 0xA94975DFEDB976E9UL; // = 12198410670336210665
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #5 (app-88jb Т34, session 86) — the solo golden carries
+            // the full account. This constant moved for causes (1)–(11) and
+            // NOT for (12): the Hp budget has been here since RE-PIN #4, so
+            // its value with the cap and the ninth draw (below) is also its
+            // value with the budget — the measured control that (12) is the
+            // budget and nothing else. Cap alone: 8663844641023811190. The
+            // sanction is spent with this movement.
+            const ulong ExtractionGoldenHash = 0xB79F165FA4BC0C60UL; // = 13231318830279298144
             Assert.AreEqual(ExtractionGoldenHash,
                 RunExtractionScripted(123, ExtractionTicks, 3));
         }
@@ -1430,7 +1440,78 @@ namespace Ring.Simulation.Tests
             // unfrozen, sums of the rest), and the wire block stayed at four
             // bytes with `ProtocolVersion` at 3. None of that is hashed, and the
             // Т7 negative above is the evidence, not the argument.
-            const ulong GoldenHash = 0xDAA519A7FF4C889DUL; // = 15755027080758986909
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #5 (app-88jb Т34, session 86, 2026-09-03) — THE ONE
+            // SANCTIONED MOVEMENT OF THE WEAPON-NETCODE EPIC (owner decision
+            // Н1/Р352: one re-pin, in a commit of its own, at the end of phase
+            // Ф3), and it is SPENT here. All three constants move; nothing is
+            // left: any further movement of any of them is a stop and a
+            // question for the owner again.
+            //
+            // THE CONSTANTS WERE RED FROM Т4 TO Т34 ON PURPOSE (spec §4.1):
+            // every cause below accrued across Ф1–Ф3 and was measured at its
+            // own task — the "But was" of each is in the epic's ledger — and
+            // the re-pin was kept for the end of Ф3 so the digest moves ONCE.
+            // The nine causes the plan names, by name:
+            //   (1) the shape of ProjectileState — Ricochets (Т19) and
+            //       RewindLeft (Т28);
+            //   (2) MobState — Tilt and TiltVel (Т5), HistorySlot (Т24);
+            //   (3) PlayerState — Tilt and TiltVel (Т7), HistorySlot (Т24);
+            //   (4) the position history in the hash (spec §3.6.1, Т25:
+            //       PositionHistory.Fold runs one row per tick of capacity);
+            //   (5) the impact impulse in Vel (Т4 for mobs, Т7 for the
+            //       collector);
+            //   (6) tilt and the knockdown (Т5/Т6);
+            //   (7) hit parts instead of the height column (Т13/Т14);
+            //   (8) the hard separation of the three body pairs (Т22);
+            //   (9) the ricochet (Т19), the pierce (Т20) and RewindTicks in
+            //       SimInput (Т26) — a field the scripted generator did not
+            //       draw until this task.
+            // The value this constant held with all nine in and nothing of
+            // Т34's own: 6179821658852201134 (measured on 3c20d87, the tree
+            // Т34 started from; the multiplayer one 12948336956096453079, the
+            // extraction one 12266730622305861208).
+            //
+            // Т34'S OWN THREE CAUSES, SEPARATED BY MEASUREMENT. The
+            // coordinator's probe loads this very assembly under
+            // `mono -O=-float32` (the editor's float mode), reproduced the
+            // three values above bit for bit before predicting anything, and
+            // every prediction below was then confirmed by the editor's own
+            // run to the bit:
+            //  (10) Arena.RewindCapTicks 6 -> 5 (`app-gtj6`, owner decision
+            //       2026-09-01, spec §6i): Fold folds one row fewer per tick,
+            //       so every digest moves. ALONE, generator untouched: this
+            //       constant to 10926634735967585904, the multiplayer one to
+            //       14357526718779430336, the extraction one to
+            //       8663844641023811190.
+            //  (11) THE NINTH DRAW. Scripted() draws RewindTicks last, uniform
+            //       over 0..cap, so every tick consumes nine draws of the one
+            //       stream instead of eight — and the rewind is exercised at
+            //       all (plan Т34 step 2, finding D-I12). With (10): this
+            //       constant to 17266849595884202534, the multiplayer one to
+            //       13121105491736080597, the extraction one to
+            //       13231318830279298144.
+            //  (12) THE HP BUDGET (owner decision 2а, session 86):
+            //       BudgetHpForTheWholeRun for the solo and multiplayer runs,
+            //       whose collectors used to die before the run was over —
+            //       solo on tick 799 of 1000 before Т34 and on the 887th with
+            //       the ninth draw in; one of three on 615 in the multiplayer
+            //       run. With (10) and (11): the value pinned below and the
+            //       multiplayer one. THE EXTRACTION CONSTANT DID NOT MOVE for
+            //       (12) — it has carried the same budget since `app-ggvz` —
+            //       which is the control that (12) is the budget and nothing
+            //       else.
+            //
+            // WHAT THE SCENARIO NOW GUARDS, measured over this very run by
+            // GoldenScenario_ExercisesAllMechanics_Coverage: the impact, the
+            // tilt, the round's ricochet, both hard-separation pairs a solo
+            // run has, both halves of the rewind — and, pinned at their honest
+            // zero, the knockdown and the pierce, which the fixture's numbers
+            // put out of this scenario's reach (that test's own notes carry
+            // the arithmetic). The sanction is spent; the stop-and-ask rule
+            // stands.
+            const ulong GoldenHash = 0xDD4B31CB3E3C8CD4UL; // = 15945893654627650772
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -1606,7 +1687,18 @@ namespace Ring.Simulation.Tests
             // debt left over, while the solo run's first core wave (4) fits
             // underneath it untouched. The rings' own ceilings, 24 and 16, are
             // reached later in both runs as the clock raises the step.
-            const ulong MultiGoldenHash = 0x06FA4F44F3722466UL; // = 502801465965945958
+            //
+            // RE-PIN #5 (app-88jb Т34, session 86) — the solo golden above
+            // carries the full account: the one sanction of the epic (Н1/Р352,
+            // spent here), the nine causes that accrued across Ф1–Ф3, and
+            // Т34's three of its own, separated by measurement. What is true
+            // of THIS scenario only: cause (12), the Hp budget, is handed to
+            // THREE collectors, one of whom died on tick 615 before Т34 and
+            // two of whom (747, 876) with the ninth draw in. The values at each
+            // step, all confirmed by the editor's own run: cap alone
+            // 14357526718779430336, cap and the ninth draw 13121105491736080597,
+            // and the number below with the budget.
+            const ulong MultiGoldenHash = 0x4266DA7DB29960DCUL; // = 4784751887529894108
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
