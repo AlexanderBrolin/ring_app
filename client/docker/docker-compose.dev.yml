@@ -59,12 +59,22 @@ services:
       RING_MATCH_CONFIG: /config/match.json
 
     # A roster of its own, so that starting the dev stand cannot silently
-    # change what the release stand would play. `match-v4.json` carries
+    # change what the release stand would play. Every `match-v4*` roster carries
     # `matchesToPlay` above one — a playtest wants raid after raid without an
     # ssh session between them, while the release default stays one match per
     # container.
+    #
+    # WHICH ROSTER IS A LAUNCH DECISION, not a file edit: a playtest that turns
+    # out to be two people instead of three should not require editing a
+    # committed file on a remote host at the moment everyone is waiting.
+    #
+    #     RING_ROSTER=./match-v4-2p.json docker compose -f docker-compose.dev.yml up -d
+    #
+    # Shipped rosters: `match-v4.json` (three seats), `match-v4-2p.json` (two),
+    # `match-v4-1p.json` (one). All three wait for EVERY seat named in them
+    # (`waitForAll`), so the count is what decides when a raid begins.
     volumes:
-      - ./match-v4.json:/config/match.json:ro
+      - ${RING_ROSTER:-./match-v4.json}:/config/match.json:ro
 
     stop_grace_period: 15s
 
