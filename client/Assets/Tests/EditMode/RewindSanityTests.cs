@@ -30,11 +30,12 @@ namespace Ring.Simulation.Tests
     /// client states its depth as "predicted tick minus rendered tick", so an
     /// estimate without the buffer would punish an honest client with no ping
     /// at all; `sanityTicks` is the tolerance on top — 2 by Р404, which is
-    /// 33 % of a cap of 6 rather than the 67 % a tolerance of 4 would be. The
+    /// 40 % of the shipped cap of 5 (app-gtj6; the owner's 2 stands, the cap
+    /// moved under it) rather than the 80 % a tolerance of 4 would be. The
     /// ~20 % often quoted alongside it is the industry's published practice and
-    /// not this number: at a cap of 6 that guideline is 1.2 ticks, and whole
-    /// ticks leave 1 under it and 2 over it (fix-round, B-3 — an earlier
-    /// wording here called 2 "20 % of a cap of 6", which it is not).
+    /// not this number: at a cap of 5 that guideline is exactly 1.0 tick, so
+    /// 1 is 20 % and 2 is 40 %, one whole tick over it (fix-round, B-3 — an
+    /// earlier wording here called 2 "20 % of a cap of 6", which it is not).
     /// `NetConfig.RewindSanityTicks`' own doc carries the full arithmetic.
     ///
     /// TRIMMING IS NOT A REFUSAL. The input is legal and is simulated like any
@@ -130,8 +131,10 @@ namespace Ring.Simulation.Tests
             // `MaxRewindTicksOnWire` (7) instead of masking, and the decoder
             // clamps what it reads down to `RewindTicksWireCap` (6), so a
             // client that sends the eighth value is understood as 6 before any
-            // server code sees it — and `Arena.RewindCapTicks` is 6 as well,
-            // in the shipped asset and in the test fixtures alike. Read the
+            // server code sees it — while `Arena.RewindCapTicks` is 5 in the
+            // shipped asset and in `TestConfigs` since app-gtj6; the five
+            // fixtures of this file hand `capTicks: 6` EXPLICITLY, so the
+            // arithmetic of each case is unchanged. Read the
             // number below as "the function is bounded for every input it can
             // be given", never as "a claim of 7 happens".
             Assert.AreEqual((byte)6, MatchServer.SanitizedRewindDepth(
@@ -182,11 +185,13 @@ namespace Ring.Simulation.Tests
             // ⭐ THE SAME HOLE ON THE OTHER AXIS, AND IT IS A DIFFERENT ONE
             // FROM THE CAP FIXTURE ABOVE. That one pins the cap as the CEILING
             // OF THE ANSWER; this one pins that the ceiling is the caller's
-            // number rather than a literal. `Arena.RewindCapTicks` is 6 in the
-            // shipped asset and 6 in all four fixtures above, so
+            // number rather than a literal. `Arena.RewindCapTicks` is 5 in the
+            // shipped asset (app-gtj6) while all five fixtures above hand 6
+            // explicitly -- which is the whole point of this case: the cap
+            // comes from its parameter -- so
             //     `return (byte)math.min((int)claimed, math.min(estimate, 6));`
-            // survives every one of them too (their answers stay 5, 5, 4
-            // and 6).
+            // survives every one of them too (their answers stay 5, 5, 4, 6
+            // and 4).
             //
             // Computed from the same formula: 400 ms gives a one-way term of
             // TicksFromSeconds(0.2f) = 6, the buffer adds 3 and the tolerance

@@ -972,8 +972,9 @@ namespace Ring.Data
             // ⚠ WRITTEN IN TICKS THROUGH TicksFromSeconds, NEVER AS
             // `RewindCapTicks * TickDt <= 0.2f` (finding A-C5): six times
             // TickDt is 0.20000002, strictly greater than 0.2f, so the
-            // multiplied form would reject the cap of 6 that the spec itself
-            // assigns and that ships as ArenaConfig's default. The epic has
+            // multiplied form would reject the ceiling of 6 the spec itself
+            // assigns (the shipped default is 5 since app-gtj6; the ceiling is
+            // what this rule guards). The epic has
             // already paid for this exact float once — Т23's extraction
             // channel finished a whole tick late (SimulationWorld.TickDt's own
             // doc records it) — and RewindTests.CapRule_IsWrittenInTicks_

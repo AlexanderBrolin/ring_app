@@ -989,6 +989,26 @@ namespace Ring.Editor
             // there would never be delivered at all.
             if (gunnerShareRetunePending) waveChanged |= ApplyGunnerShareRetune(wave);
 
+            // Task app-gtj6 (owner decision 2026-09-01, spec §6i; app-88jb
+            // Т34-а): the rewind-cap retune, Arena.RewindCapTicks 6 -> 5,
+            // delivered into the already-committed ArenaConfig.asset. KEYED ON
+            // THE VALUE BEING REPLACED (lesson 413), like eliteScalePending's
+            // and playtestOneArenaPending's gates above: the field has existed
+            // on disk since app-88jb Т24, so no key's ARRIVAL can date the
+            // delivery. `"RewindCapTicks: 6\n"` can -- it is the field's own
+            // committed line (newline included, so a `16` can never match), it
+            // appears EXACTLY ONCE in the file, and it is gone the moment this
+            // runs. AND IT LEAVES THE OWNER'S TUNING ALONE: it fires only while
+            // the file still says 6, and again only if the owner types 6 back
+            // -- the one number the decision calls wrong. The text is read
+            // here, inside the same read-before-mutate window as every gate
+            // above: nothing up to this line has saved ArenaConfig.asset, and
+            // this run's own SaveAssets is further down.
+            bool rewindCapRetunePending = System.IO.File
+                .ReadAllText($"{DataDir}/ArenaConfig.asset")
+                .Contains("RewindCapTicks: 6\n");
+            if (rewindCapRetunePending) arenaChanged |= ApplyRewindCapRetune(arena);
+
             if (lootChanged) EditorUtility.SetDirty(loot);
             if (arenaChanged) EditorUtility.SetDirty(arena);
             if (waveChanged) EditorUtility.SetDirty(wave);
@@ -2754,6 +2774,34 @@ namespace Ring.Editor
             finally
             {
                 Object.DestroyImmediate(feelDefaults);
+            }
+        }
+
+        /// Task app-gtj6 (owner decision 2026-09-01, spec §6i; executed by
+        /// app-88jb Т34-а together with the golden re-pin): the rewind-cap
+        /// retune, Arena.RewindCapTicks 6 -> 5. Same shape as
+        /// ApplyPlaytestOneVisuals directly above -- a local defaults
+        /// instance, SetIfDifferent, destroyed in a finally -- so the shipped
+        /// number lives in ArenaConfig.cs's own field initializer and this
+        /// method only decides WHICH field is sanctioned to move.
+        ///
+        /// THE SANCTIONED LIST IS EXACTLY ONE FIELD. RewindPictureTicks is
+        /// DELIBERATELY ABSENT: the decision lowers the cap, not the picture
+        /// depth, and NetInvariants rule #11 pins that one to
+        /// Net.InterpBufferTicks -- a second writer here would be a second
+        /// home for a number that already has one. The reason for the number
+        /// itself is on ArenaConfig.cs's own RewindCapTicks doc; the reason
+        /// for the gate is at this method's call site.
+        static bool ApplyRewindCapRetune(ArenaConfig arena)
+        {
+            var arenaDefaults = ScriptableObject.CreateInstance<ArenaConfig>();
+            try
+            {
+                return SetIfDifferent(ref arena.RewindCapTicks, arenaDefaults.RewindCapTicks);
+            }
+            finally
+            {
+                Object.DestroyImmediate(arenaDefaults);
             }
         }
 

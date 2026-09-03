@@ -387,9 +387,24 @@ namespace Ring.Simulation.Tests
                 + "к концу своего тика (Т32-А) — без него сеять нечем");
 
             ProjectileState authoritative = w.Projectiles[0];
-            Assert.Greater(math.distance(authoritative.Pos, fired.Pos), 4f,
-                "премисса: мир обязан увести раунд от дула НА ЗАМЕТНОЕ расстояние, иначе "
-                + "фикстура слепа к шву ровно так же, как тест 48");
+            // THE PREMISE IS A FIXTURE EXPRESSION, NOT A DISTANCE LITERAL
+            // (coordinator ruling 308, app-88jb Т34). It used to read `> 4f`,
+            // a number calibrated by eye at the cap of 6 — four birth-tick
+            // steps of 1.1667 m, 4.67 m — and it went red the day app-gtj6
+            // lowered the shipped cap to 5: three steps are 3.5 m, and 3.5 is
+            // not above 4. What the premise actually guards is that the round
+            // moved FURTHER than the one ordinary step every round takes on
+            // its birth tick — i.e. that catch-up steps happened at all, the
+            // exact thing test 48's SpawnProjectileForTest path never has —
+            // so it is stated as "more than one step", derived from the same
+            // config the world stepped with, and holds at any legal cap above
+            // the picture depth (the premise two asserts up already demands
+            // that). A literal here was the fourth red of the pre-pin full run
+            // of Т34, found by the run and by nothing else.
+            float birthStep = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            Assert.Greater(math.distance(authoritative.Pos, fired.Pos), birthStep + 1e-3f,
+                "премисса: мир обязан увести раунд от дула ДАЛЬШЕ одного обычного шага — иначе "
+                + "догоняющих шагов не было и фикстура слепа к шву ровно так же, как тест 48");
 
             var t = new TracerProjectiles(capacity: 4, in cfg, ShippedBudget);
             var buf = new ProjectileState[4];

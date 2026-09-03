@@ -421,7 +421,17 @@ namespace Ring.Data
 
         /// app-88jb Т24 (spec §3.6, decision Н24/Р407): the REWIND CAP — how
         /// many ticks a shot may be rewound by when the server asks where a
-        /// body stood. Six ticks is 0.2 s, the cap CRITICAL RULE 5 names.
+        /// body stood. Five ticks is 0.1667 s, UNDER the 0.2 s ceiling
+        /// CRITICAL RULE 5 names; the ceiling itself (6 at 30 Hz) is what
+        /// `SimConfigBuilder.Validate` rule 12 guards, and it did not move.
+        ///
+        /// WHY 5, AND WHY IT MOVED TOGETHER WITH A GOLDEN RE-PIN: owner
+        /// decision 2026-09-01 (spec §6i, bd `app-gtj6`), executed by Т34
+        /// together with the golden re-pin because `PositionHistory.Fold`
+        /// folds one row per tick of capacity, so the cap moves all three
+        /// digests. With the shipped picture depth of 3 the input half never
+        /// exceeds 2 ticks, so the band where a round is effectively hitscan
+        /// falls from 5.25 m to the 3.5 m spec §3.6's table promises.
         ///
         /// The `[Range]` ceiling is DELIBERATELY WIDER than the real limit.
         /// The real one is `RewindCapTicks <= SimulationWorld.TicksFromSeconds(0.2f)`
@@ -431,7 +441,7 @@ namespace Ring.Data
         /// only keeps the Inspector from offering nonsense. Precedent is
         /// RelaxIterations right above -- `[Range(1, 16)]` for a rule that
         /// only says `>= 1`.
-        [Range(1, 16)] public int RewindCapTicks = 6;
+        [Range(1, 16)] public int RewindCapTicks = 5;
 
         /// app-88jb Т24 (spec §3.6, decision Н24/Р407): the PICTURE TIME --
         /// how many ticks of the compensation are spent on the QUESTION

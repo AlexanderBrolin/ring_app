@@ -284,14 +284,15 @@ namespace Ring.Simulation.Core
         /// AN ARRAY INDEX CANNOT BE THIS ADDRESS, which is the whole reason
         /// the field exists (findings A-C2/B/C-C2/D-C2). A mob is removed by
         /// swapping the tail into its place -- `_mobs[index] = _mobs[--_mobCount]`,
-        /// the last statement of DamageMob's death branch -- so across the six
-        /// ticks of the rewind window one index can have been three different
-        /// mobs, and a shot rewound against the index would ask where the
-        /// WRONG body stood.
+        /// the last statement of DamageMob's death branch -- so across the five
+        /// ticks of the rewind window (RewindCapTicks, 5 as shipped since
+        /// app-gtj6) one index can have been three different mobs, and a shot
+        /// rewound against the index would ask where the WRONG body stood.
         /// The slot rides INSIDE the struct through that very swap, which is
         /// also why it is stored here rather than in a side table: a hash
         /// table keyed by Id was rejected (Р406) because one table cannot
-        /// serve seven rows whose populations differ, and it would have been
+        /// serve the ring's rows (RewindCapTicks + 1, six as shipped since
+        /// app-gtj6) whose populations differ, and it would have been
         /// the first hash structure in Simulation, which has chosen linear
         /// scans five times in writing.
         ///

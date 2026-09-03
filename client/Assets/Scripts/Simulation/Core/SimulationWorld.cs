@@ -365,7 +365,7 @@ namespace Ring.Simulation.Core
             // "preallocate to the arena's cap, never resize" contract
             // _sepForces/_pushBodies follow below, and the cap is what
             // ArenaTopologyMatches refuses to hot-tweak.
-            // Rows = RewindCapTicks + 1: the six ticks a shot may be rewound
+            // Rows = RewindCapTicks + 1: the five ticks a shot may be rewound
             // by, plus the tick it is rewound FROM.
             _history = new PositionHistory(config.Arena.RewindCapTicks + 1,
                 config.Arena.MaxMobs + config.Arena.MaxPlayers);

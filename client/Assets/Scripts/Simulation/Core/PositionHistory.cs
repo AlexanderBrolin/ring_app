@@ -3,13 +3,15 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Core
 {
     /// Ring of per-body positions over the rewind window (app-88jb Т24,
-    /// spec §3.6). Capacity is RewindCapTicks + 1 = 7 rows.
+    /// spec §3.6). Capacity is RewindCapTicks + 1 = 6 rows as shipped
+    /// (app-gtj6; the ceiling of 6 would give 7).
     /// ⚠ THE `+ 1` IS THE WIDTH OF THE CLOSED WINDOW, NOT A ROW FOR "THE TICK
     /// BEING REWOUND FROM" (review finding A-4). Т24 wrote the second reading
     /// and Т25 made it false: PosAt's own table says the row for tick T does
     /// not exist while T is still running, because Write closes the tick. What
-    /// 7 counts is DISTINCT TICK NUMBERS -- `T-6 … T`, the six a shot may be
-    /// rewound by plus the one it is fired on -- and that span is exactly what
+    /// the count is: DISTINCT TICK NUMBERS -- `T-5 … T` at the shipped cap of
+    /// 5, the five a shot may be rewound by plus the one it is fired on (7
+    /// rows and `T-6 … T` at the ceiling of 6) -- and that span is exactly what
     /// Fold walks once Write has closed T. Both statements cannot be true of a
     /// ROW; both are true of a tick NUMBER, which is what the ring is keyed by.
     ///

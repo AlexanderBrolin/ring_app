@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
         public void HistorySlot_SurvivesASwapRemoveOfANeighbor()
         {
             // ⭐ TEST 33 -- the witness of Р406. A mob dies in the MIDDLE of
-            // the window, and the SURVIVOR's history must not shift: over six
+            // the window, and the SURVIVOR's history must not shift: over five
             // ticks one array index has time to be three different mobs, a
             // slot does not.
             //
@@ -707,10 +707,13 @@ namespace Ring.Simulation.Tests
             // WHAT IT COSTS TO BE WRONG, from spec finding C-I5 read backwards:
             // a collector who was mid-slide `k` ticks ago is tested against a
             // STANDING profile, so a round that visibly went over his head
-            // lands; and DashIframes is 0.2 s, which is EXACTLY the six-tick
-            // rewind cap, so a whole dodge fits inside the deepest rewind and a
-            // lost invulnerability bit awards a hit the victim had already
-            // earned away.
+            // lands; and DashIframes is 0.2 s -- six ticks, one MORE than the
+            // shipped five-tick cap (app-gtj6) -- so a whole dodge spans the
+            // deepest rewind and a lost invulnerability bit awards a hit the
+            // victim had already earned away. This fixture fires nothing and
+            // idles nothing -- it writes one row and reads it back -- so
+            // neither the cap nor the picture depth enters the code below,
+            // only the argument.
             //
             // ⛔ THE TIMERS ARE SET DIRECTLY, NOT DRIVEN THROUGH INPUT, and that
             // is the safer of the two. A real slide is gated on a run-up and a
@@ -879,10 +882,11 @@ namespace Ring.Simulation.Tests
             // everybody else -- the extra meters would be free, paid for by
             // nobody's lifetime.
             //
-            // FOUR SUBTRACTIONS ON THE BIRTH TICK, NOT ONE. At the arena cap
-            // the depth splits into a saturated picture half and three ticks of
-            // input half, and the birth tick spends those three catch-up steps
-            // PLUS the ordinary ProjectileSystem step every round gets. The
+            // THREE SUBTRACTIONS ON THE BIRTH TICK, NOT ONE. At the arena cap
+            // of 5 (app-gtj6) the depth splits into a saturated picture half
+            // and two ticks of input half, and the birth tick spends those two
+            // catch-up steps PLUS the ordinary ProjectileSystem step every
+            // round gets. The
             // expectation is written as that expression rather than as a
             // number, so it follows the fixture's own cap and picture depth
             // instead of restating them.
@@ -922,17 +926,23 @@ namespace Ring.Simulation.Tests
             // review looked at.
             //
             // ⛔ TWO DEPTHS, NOT ONE, and each one kills a mutant the other
-            // survives. At the shipped picture depth of 3 and cap of 6 they are
-            // k = 4 -> 2 steps and k = 6 -> 4 steps:
+            // survives. At the shipped picture depth of 3 and cap of 5 they are
+            // k = 4 -> 2 steps and k = 5 -> 3 steps:
             //   * a weapon phase that spent the ARENA'S CAP instead of this
             //     shooter's own claimed depth (the easiest wrong read of
-            //     `input`) passes k = 6 and dies on k = 4;
+            //     `input`) passes k = 5 and dies on k = 4;
             //   * one that reported a CONSTANT dies on whichever of the two it
             //     does not equal;
-            //   * neither expectation collides with `k` itself, with the cap,
-            //     with the picture depth, with the input half alone (i.e. the
-            //     dropped `+ 1`), with the picture half, or with zero — so no
-            //     neighboring quantity can stand in for the right one.
+            //   * the k = 4 expectation (2) collides with nothing -- not with
+            //     `k`, the cap, the picture depth, the input half alone (i.e.
+            //     the dropped `+ 1`), the picture half, or zero; the k = 5
+            //     expectation (3) DOES equal the picture depth and the picture
+            //     half since app-gtj6 (at the cap of 6 it was 4 and collided
+            //     with nothing either), so a weapon phase reporting either of
+            //     those survives k = 5 -- and dies on k = 4, where it would
+            //     say 3 against an expected 2. No neighboring quantity can
+            //     stand in for the right one on BOTH depths, which is the
+            //     whole reason there are two.
             //
             // ⚠ THE EXPECTATION IS WRITTEN OUT OF THE ARENA, NOT OUT OF
             // `RewindSplit`. It is the same number either way — the split's
@@ -1010,6 +1020,18 @@ namespace Ring.Simulation.Tests
         /// stop witnessing. Hence an assertion, and a message that says which
         /// half went.
         ///
+        /// ⚠ THE SHIPPED CAP HAS NO MIDDLE STEP SINCE app-gtj6 (coordinator
+        /// ruling 307). A middle catch-up step needs at least three of them,
+        /// i.e. RewindCapTicks - RewindPictureTicks >= 3; the shipped cap of 5
+        /// against the picture depth of 3 leaves TWO, so on the shipped number
+        /// `1 < contactStep < 2` has no integer solution. Every caller
+        /// therefore states `cfg.Arena.RewindCapTicks = cfg.Arena
+        /// .RewindPictureTicks + 3` itself -- the property it needs, not a
+        /// literal; it equals the validation ceiling of 6 and is legal -- and
+        /// states it BEFORE building its world, because the history ring is
+        /// sized off the cap in the constructor. A caller that forgets goes
+        /// red HERE, on Assert.Less, by design.
+        ///
         /// EVERY NUMBER IS DERIVED, NONE IS READ OFF A RUN. The muzzle is
         /// MuzzleOffset plus the first shot's whole tick of fire-cooldown
         /// overshoot (WeaponSystem.SpawnShot); the contact is where the
@@ -1070,7 +1092,8 @@ namespace Ring.Simulation.Tests
             // ⛔ AND THAT WITNESS ONLY EXISTS BECAUSE A CATCH-UP STEP IS LEFT
             // UNEXECUTED (coordinator RULING 179, executor finding of the
             // green round). The contact has to land BEFORE the last of the
-            // three catch-up steps, or the loop would end of its own accord on
+            // three catch-up steps this fixture states for itself (its cap
+            // line below), or the loop would end of its own accord on
             // the very step that kills the round and dropping the `break`
             // would change nothing observable -- the guard would read as
             // witnessed while no assertion here could tell it from its own
@@ -1140,6 +1163,17 @@ namespace Ring.Simulation.Tests
             // already met the wall, and neither of them emits a projectile
             // event. The fixture is single-tick precisely so that stays true.
             SimConfig cfg = TestConfigs.Quiet();
+            // THE FIXTURE STATES ITS OWN CAP (coordinator ruling 307, app-gtj6).
+            // RULING 172/179 need a contact on a MIDDLE catch-up step, which
+            // needs at least three catch-up steps; the shipped cap of 5 leaves
+            // two, so the witness has no home on the shipped number and is
+            // measured at the validation ceiling instead -- picture + 3 = 6 =
+            // SimulationWorld.TicksFromSeconds(0.2f), legal. The PROPERTY is
+            // stated, not a literal, and it is stated before the world is
+            // built because the history ring is sized off the cap in the
+            // constructor. The mechanism under test -- the catch-up loop and
+            // its break -- is the same code at any legal cap.
+            cfg.Arena.RewindCapTicks = cfg.Arena.RewindPictureTicks + 3;
             cfg.Weapon.MaxRicochets = 0;
             var w = new SimulationWorld(7, cfg);
             float2 obstacle = cfg.Arena.ObstaclePos[0];
@@ -1607,7 +1641,8 @@ namespace Ring.Simulation.Tests
             // and the fixture above turns on the same ordering), so collector 0
             // takes the only slot and collector 1 is refused; collector 1 is
             // the one claiming the arena cap, so under a dropped guard his
-            // three catch-up steps would be spent on collector 0's round.
+            // two catch-up steps (cap 5 - picture 3, app-gtj6) would be spent
+            // on collector 0's round.
             //
             // THE NUMBER THAT SEPARATES THE TWO OUTCOMES. Collector 0 fires at
             // depth zero, so his round owes no catch-up and ends the tick one
@@ -1616,8 +1651,9 @@ namespace Ring.Simulation.Tests
             // FireCooldown at -TickDt, so the pre-advance is a full 35/30 m --
             // plus the projectile pass's own 35/30 m, i.e. 2.9333333 m. Under a
             // dropped guard that same round would also have taken collector 1's
-            // three catch-up steps and stood at 6.4333333 m. The gap is 3.5 m
-            // against a tolerance of 0.05.
+            // two catch-up steps and stood at 5.2666667 m. The gap is 2.3333 m
+            // against a tolerance of 0.05 (three steps, 6.4333333 m and a gap
+            // of 3.5 m at the earlier cap of 6).
             //
             // OpenField(), and neither collector at the origin, for the two
             // reasons the fixtures above state: Open() spawns them 159 m out on
@@ -1693,6 +1729,15 @@ namespace Ring.Simulation.Tests
             // activate the Director in the middle of the measurement (lesson
             // 590).
             SimConfig cfg = TestConfigs.OpenField();
+            // THE FIXTURE STATES ITS OWN CAP (coordinator ruling 307, app-gtj6),
+            // for the reason WallOnACatchUpStep_EndsTheRoundInThePast_
+            // SpawnBeforeEnd's cap line spells out: a MIDDLE catch-up step
+            // needs at least three of them, the shipped cap of 5 leaves two,
+            // so the witness is measured at the validation ceiling (picture +
+            // 3 = 6, legal) -- the property, not a literal -- and before the
+            // world is built, because the ring is sized off the cap. The
+            // catch-up loop under test is the same code at any legal cap.
+            cfg.Arena.RewindCapTicks = cfg.Arena.RewindPictureTicks + 3;
             // No cone: the premise below is a straight line down +X, and a
             // randomized muzzle angle would move the contact it is computed
             // from -- the same statement, for the same reason, that
@@ -1767,8 +1812,9 @@ namespace Ring.Simulation.Tests
             // fixture raising the threshold would be witnessing Т20's rule
             // rather than Т27's.
             //
-            // THE ARITHMETIC. The contact lands on the SECOND of three catch-up
-            // steps (asserted, not assumed), the reflection is head-on off a
+            // THE ARITHMETIC. The contact lands on the SECOND of the three
+            // catch-up steps this fixture states for itself (its cap line
+            // above; asserted, not assumed), the reflection is head-on off a
             // circle the round flies straight at, so the round leaves at
             // ProjectileSpeed * RicochetRetention back down -X, and TWO steps of
             // that damped speed are still owed to it on this tick: the third
@@ -1784,6 +1830,15 @@ namespace Ring.Simulation.Tests
             // cannot reach what is measured here, because the phase machine is
             // the LAST step of TickAll and the fixture is single-tick.
             SimConfig cfg = TestConfigs.Quiet();
+            // THE FIXTURE STATES ITS OWN CAP (coordinator ruling 307, app-gtj6),
+            // for the reason WallOnACatchUpStep_EndsTheRoundInThePast_
+            // SpawnBeforeEnd's cap line spells out: a MIDDLE catch-up step
+            // needs at least three of them, the shipped cap of 5 leaves two,
+            // so the witness is measured at the validation ceiling (picture +
+            // 3 = 6, legal) -- the property, not a literal -- and before the
+            // world is built, because the ring is sized off the cap. The
+            // catch-up loop under test is the same code at any legal cap.
+            cfg.Arena.RewindCapTicks = cfg.Arena.RewindPictureTicks + 3;
             // No cone, so the shot meets the circle head-on and the reflection
             // is exactly -X: the expected position below is an arithmetic
             // consequence of the fixture rather than a number off a run.
@@ -1843,7 +1898,8 @@ namespace Ring.Simulation.Tests
         // "every" (review finding, Т28 fix-round):
         // ShotOnTheFirstTick_WithFullDepth_DoesNotHitTheArenaCenter fires with
         // k = Arena.RewindCapTicks, precisely so the shot has an INPUT half as
-        // well -- three catch-up steps plus the ordinary one, all inside its
+        // well -- two catch-up steps plus the ordinary one (app-gtj6), all
+        // inside its
         // single tick. It has to, because its subject is the EMPTY ring, and the
         // ring is empty only during the very first tick of a match; its own doc
         // carries the arithmetic. Every other fixture below reads as this
@@ -1864,7 +1920,8 @@ namespace Ring.Simulation.Tests
         // said "one" until the second of them was written, which is the same
         // class of drift the constants below are named rather than counted for.
         // At this fixture's balance that is a muzzle at 1.7667 m and a step of
-        // 1.1667 m, so the step ends run 2.9333 / 4.1000 / 5.2667 / 6.4333 m.
+        // 1.1667 m, so the step ends run 2.9333 / 4.1000 / 5.2667 m (a fourth,
+        // 6.4333 m, at the earlier cap of 6).
 
         /// Where the collector victims below stand: the flag fixtures, and the
         /// position fixture that borrows their geometry
@@ -2109,7 +2166,7 @@ namespace Ring.Simulation.Tests
             // survivor untouched -- the same red as before, for a different
             // reason. The assertion was never in doubt; only this sentence was.
             //
-            // The kill is the middle of the window on purpose: over six ticks
+            // The kill is the middle of the window on purpose: over five ticks
             // one array index has time to be several different bodies, and a
             // slot does not.
             // The rest of the arithmetic is TargetThatMovedAway's, unchanged:
@@ -2748,17 +2805,20 @@ namespace Ring.Simulation.Tests
             // real one and survive.
             //
             // THE ARITHMETIC, AND IT IS WHY THE DEPTH IS THE CAP AND NOT THE
-            // PICTURE DEPTH. k = RewindCapTicks = 6 splits into a saturated
-            // picture half of 3 and an input half of 3, so the birth tick
-            // spends THREE catch-up steps plus the ordinary one -- ends at
-            // 2.9333 / 4.1000 / 5.2667 / 6.4333 -- and the whole flight fits
-            // inside the one tick this fixture runs. The contact circle is
-            // 3.38 m, so the blow lands on the SECOND of those four steps.
-            // ⚠ THAT IS THE SECOND OF THE THREE REWOUND STEPS, NOT THE LAST,
-            // and the count is stated because the plan's own text calls it "the
-            // last rewound step" at this very point. Counting step ENDS: three
-            // steps carry a positive RewindLeft (3, 2, 1) and the fourth is
-            // already in the present, and 3.38 m falls in the second of them.
+            // PICTURE DEPTH. k = RewindCapTicks = 5 (app-gtj6) splits into a
+            // saturated picture half of 3 and an input half of 2, so the birth
+            // tick spends TWO catch-up steps plus the ordinary one -- ends at
+            // 2.9333 / 4.1000 / 5.2667 -- and the whole flight fits inside the
+            // one tick this fixture runs. The contact circle is 3.38 m, so the
+            // blow lands on the SECOND of those three steps.
+            // ⚠ THAT IS THE SECOND OF THE TWO REWOUND STEPS -- at the shipped
+            // cap of 5 it is also the last of them, a coincidence of the cap's
+            // move and not a property of the fixture: at the cap of 6 it was
+            // the second of THREE and NOT the last, and the count is stated
+            // because the plan's own text calls it "the last rewound step" at
+            // this very point. Counting step ENDS: two steps carry a positive
+            // RewindLeft (2, 1) and the third is already in the present, and
+            // 3.38 m falls in the second of them.
             //
             // ⚠ THE FREEZE IS NOT PROBED HERE, AND NEITHER HALF OF THAT IS AN
             // OVERSIGHT. There is no "before" to probe in -- the fixture is one
@@ -2987,10 +3047,12 @@ namespace Ring.Simulation.Tests
         public void TargetInvulnerableAtTheRewoundTick_IsNotDamaged()
         {
             // ⭐ THE Invulnerable BIT, ASKED BY THE SHOT, and the half of the
-            // pair that says "the dodge counts". Hero.DashIframes is 0.2 s,
-            // which is EXACTLY the six-tick rewind cap, so a whole dodge fits
-            // inside the deepest rewind -- reading invulnerability off the LIVE
-            // body would award a hit the victim had already earned away.
+            // pair that says "the dodge counts". Hero.DashIframes is 0.2 s --
+            // six ticks, one MORE than the shipped five-tick cap (app-gtj6) --
+            // so a whole dodge spans the deepest rewind; the recorded picture
+            // depth of 3 is what this fixture idles through, so the argument
+            // stands. Reading invulnerability off the LIVE body would award a
+            // hit the victim had already earned away.
             //
             // ⚠ THE LIVE i-FRAME GATE LIVES IN THE HitPlayer BRANCH AND IN
             // DamagePlayer, not in AcceptCandidate (coordinator RULING 205):

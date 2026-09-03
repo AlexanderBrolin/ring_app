@@ -143,5 +143,5 @@ MonoBehaviour:
   MaxContainers: 300
   MaxContainerSlots: 8
   RelaxIterations: 4
-  RewindCapTicks: 6
+  RewindCapTicks: 5
   RewindPictureTicks: 3

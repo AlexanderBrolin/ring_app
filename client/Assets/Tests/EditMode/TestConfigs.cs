@@ -596,11 +596,13 @@ namespace Ring.Simulation.Tests
                 // app-88jb Т24 (decision Н24/Р407): mirrors ArenaConfig's C#
                 // defaults, same field-for-field discipline (Р117). Leaving
                 // them at the struct's zeros would not have been caught by
-                // rule 12 — it is an upper bound on both (0 <= 6 and 0 <= 0),
+                // rule 12 — it is an upper bound on both (0 <= 5 and 0 <= 0),
                 // so a fixture with no rewind at all would have validated
                 // silently and every Ф3 test would have measured a window
                 // the game never ships.
-                RewindCapTicks = 6,
+                // RewindCapTicks mirrors the 6 -> 5 move of `app-gtj6` (owner
+                // decision 2026-09-01, spec §6i), same field-for-field discipline.
+                RewindCapTicks = 5,
                 RewindPictureTicks = 3,
                 // Stage 2 Task 4: same values as ArenaConfig's C# defaults
                 // (two-sources-of-numbers discipline — this is the test/code-default side).

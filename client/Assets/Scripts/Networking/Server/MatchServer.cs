@@ -2050,7 +2050,8 @@ namespace Ring.Networking.Server
         /// the reading at zero the middle term degenerates to
         /// `pictureTicks + sanityTicks`, an effective ceiling of 5 ticks at the
         /// shipped 3 and 2. That is 167 ms, inside the 200 ms CRITICAL RULE 5
-        /// allows, and STRICTER than the cap of 6 rather than looser. The fact
+        /// allows, and since app-gtj6 EQUAL to the shipped cap of 5 (the
+        /// 200 ms ceiling is still 6) rather than looser. The fact
         /// is recorded here, not repaired: a server-side measurement of our own
         /// (a private ping, a tick echo, transport internals) is forbidden by
         /// coordinator ruling 223, because the spec's own input declares that

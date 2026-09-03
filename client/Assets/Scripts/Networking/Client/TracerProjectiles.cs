@@ -327,7 +327,8 @@ namespace Ring.Networking.Client
         /// by the end of its birth tick (`ProjectileSystem` decrements at the
         /// top of every step it takes, catch-up included), and `SpawnTtl` here
         /// is the FULL lifetime, so this client's clock on the round runs up to
-        /// four steps = 0.133 s generous at the shipped cap. Nothing today is
+        /// three steps = 0.100 s generous at the shipped cap of 5 (app-gtj6;
+        /// four steps and 0.133 s at the earlier cap of 6). Nothing today is
         /// wrong because of it and the error has ONE direction: the only reader
         /// is `ProjectileFlight.TryRicochet`'s first gate (`Ttl <= 0` refuses),
         /// and being generous there can only GRANT a reflection the server has

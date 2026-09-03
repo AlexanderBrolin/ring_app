@@ -543,9 +543,10 @@ namespace Ring.Simulation.Tests
             // WHAT THE MUTANT COSTS IS NOT COSMETIC, which is why the line is
             // worth a test of its own. PositionHistory's rows are sized to
             // RewindCapTicks + 1 in the world's constructor and are never
-            // resized. Let a hot-tweak of 6 -> 10 through and the config claims
-            // a ten-tick window while the ring still holds seven; from Т27/Т28
-            // every shot rewound deeper than the seventh tick reads a row
+            // resized. Let a hot-tweak of 5 -> 10 through and the config claims
+            // a ten-tick window while the ring still holds six rows (T-5 … T,
+            // app-gtj6); from Т27/Т28 every shot rewound deeper than the fifth
+            // tick reads a row
             // belonging to another tick, and reads it SILENTLY — no throw, no
             // counter, just hits landing where nobody stood.
             // Same shape as the entity caps above, and for the same reason:

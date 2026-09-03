@@ -416,8 +416,8 @@ namespace Ring.Simulation.Core
         /// walked once by the ordinary loop as well). A client seeding a tracer
         /// at the muzzle therefore draws the round permanently short by exactly
         /// this many steps — 1.75 m each at the shipped ProjectileSpeed of 52.5
-        /// over a 1/30 tick, and up to four of them at the shipped cap of 6 and
-        /// picture depth of 3.
+        /// over a 1/30 tick, and up to three of them at the shipped cap of 5
+        /// (app-gtj6) and picture depth of 3.
         ///
         /// ⛔ AND THE FIX IS THIS COUNT RATHER THAN A MOVED `Pos`, because the
         /// point has readers and every one of them wants the MUZZLE. Measured

@@ -240,42 +240,58 @@ namespace Ring.Data
         // seconds-to-ticks conversion would be a second answer to a question
         // that already has one.
         //
-        // 2 AND NOT 4, AND THE RATIO IS THE ARGUMENT. The rewind cap is six
-        // ticks (Arena.RewindCapTicks — the 200 ms of CRITICAL RULE 5), so a
-        // tolerance of 4 hands 67 % of the whole compensation window over on
-        // trust and 2 hands 33 % — half as much.
+        // 2 AND NOT 4, AND THE RATIO IS THE ARGUMENT. The shipped rewind cap
+        // is five ticks (Arena.RewindCapTicks, 0.1667 s, under the 200 ms of
+        // CRITICAL RULE 5; 5 since app-gtj6), so a tolerance of 4 hands 80 %
+        // of the whole compensation window over on trust and 2 hands 40 % —
+        // half as much. THE OWNER'S 2 STANDS (round decision 4б); the cap
+        // moved under it by app-gtj6, and only the ratios here were restated.
         // ⚠ THE ~20 % IS THE INDUSTRY'S PUBLISHED PRACTICE, NOT THIS NUMBER,
         // and an earlier wording here compressed the two into "2 is 20 % of 6",
-        // which is arithmetically false (fix-round, B-3): 20 % of a cap of 6 is
-        // 1.2 ticks, and this field is stated in WHOLE ticks, so the guideline
-        // falls between 1 (16.7 %, under it) and 2 (33.3 %, over it). The
-        // owner's 2 is that guideline rounded UP to a whole tick; it is not
-        // claimed to BE the guideline.
+        // which is arithmetically false (fix-round, B-3): 20 % of a cap of 5 is
+        // 1.0 tick, and this field is stated in WHOLE ticks, so the guideline
+        // is 1 (20 %) exactly and 2 (40 %) sits one whole tick over it. The
+        // owner's 2 is one tick above that guideline; it is not claimed to BE
+        // the guideline.
         // Concretely, and this is why the number is not a matter of taste: with
         // the round trip reading at zero (MatchServer.SanitizedRewindDepth
         // measures why it does) the estimate is 5, while a client on a perfect
         // connection is honestly 3 ticks behind — his whole depth IS the
         // interpolation buffer — so TWO unearned ticks are believed, not the
         // four an earlier wording claimed (fix-round, B-5). At a tolerance of 4
-        // it would be three: the estimate becomes 7,
-        // the wire holds the claim at 6, and 6 - 3 = 3. PvP is switched on, so
-        // that slack is paid for by the collector who gets shot.
+        // it would STILL be two since app-gtj6: the estimate becomes 7, the
+        // wire holds the claim at 6, the cap holds the answer at 5, and
+        // 5 - 3 = 2 — the binding term is the cap, not the tolerance (spec
+        // §6i: the third argument of the min starts to bind for real). At the
+        // earlier cap of 6 it was three (6 - 3). PvP is switched on, so that
+        // slack is paid for by the collector who gets shot.
         //
         // BOTH ENDS OF THE RANGE ARE MODES, NOT MISTAKES, which is why neither
         // is excluded. 0 is the STRICTEST form of the check — no tolerance at
         // all, the claim believed only as far as the estimate itself reaches —
-        // and emphatically not "the check switched off". 6 is the opposite end
-        // and equals the rewind cap: at that tolerance the estimate can never
-        // fall below the cap, so the minimum is always the cap or the claim and
-        // the check trims nothing ever again. That is a deliberate mode too,
-        // and the ceiling is stated as 6 rather than as some number pretending
-        // the field cannot be neutralized.
-        // ⚠ 6 IS WHERE NEUTRALITY HOLDS FOR EVERY READING; ON THE SHIPPED
-        // SERVER IT ARRIVES ALREADY AT 3 (fix-round, B-5). The round trip time
-        // a dedicated server reads is identically zero, so the estimate is
-        // 0 + Arena.RewindPictureTicks + this field: at 3 that is 6, the cap
-        // itself, and nothing is trimmed from there on. Between 3 and 6 the
+        // and emphatically not "the check switched off". 5, the shipped rewind
+        // cap, is the opposite end: at that tolerance the estimate can never
+        // fall below the cap whatever the other two terms are, so the minimum
+        // is always the cap or the claim and the check trims nothing ever
+        // again. That is a deliberate mode too. The [Range] ceiling of 6 on
+        // the declaration below is the VALIDATION ceiling of the cap
+        // (SimulationWorld.TicksFromSeconds(0.2f)), not the shipped cap, and
+        // it is stated as a number rather than as some value pretending the
+        // field cannot be neutralized.
+        // ⚠ 5 IS WHERE NEUTRALITY HOLDS WHATEVER THE OTHER TERMS ARE; ON THE
+        // SHIPPED SERVER IT ARRIVES ALREADY AT 2 — THE SHIPPED TOLERANCE
+        // (fix-round, B-5; app-gtj6). The round trip time a dedicated server
+        // reads is identically zero, so the estimate is
+        // 0 + Arena.RewindPictureTicks + this field: at 2 that is 5, the
+        // shipped cap itself, and nothing is trimmed from there on; a live
+        // round trip can only push the estimate higher. Between 2 and 5 the
         // field changes nothing at all on such a server.
+        // STATED PLAINLY: at the earlier cap of 6 this check trimmed a claimed
+        // 6 down to 5 on a dedicated server; since app-gtj6 the cap already
+        // holds every claim at 5 and there is nothing left here to trim. That
+        // is a consequence of the owner's decision (spec §6i), not a defect
+        // of the check, and the check keeps its home for the day either
+        // number moves.
         //
         // The [Range] on the declaration BELOW is an Inspector hint and nothing
         // more — see this class's own type doc, which says it of every [Range]
