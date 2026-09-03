@@ -46,8 +46,9 @@ namespace Ring.Simulation.Tests
         /// re-read; their VALUES from the second tick on do change, because
         /// every tick now consumes nine draws of the one stream instead of
         /// eight — and that movement of all three digests is the ONE sanctioned
-        /// re-pin of Т34 (owner decision Н1/Р352), spent by the coordinator in
-        /// a commit of its own, not a side effect for anyone to hunt down.
+        /// re-pin of Т34 (owner decision Н1/Р352), taken in a commit of its
+        /// own that follows this change, not a side effect for anyone to hunt
+        /// down.
         /// UNIFORM OVER THE WHOLE DOMAIN, 0..cap INCLUSIVE — NextInt(min, max)
         /// answers [min, max), hence the `+ 1` — because a depth has three
         /// different fates and the scenario has to reach all three: k = 0 is
@@ -1624,11 +1625,16 @@ namespace Ring.Simulation.Tests
             //   2. SlidesUsed > 0, DashesUsed > 0, at least one DashRicocheted,
             //      and a Head-zone hit or an aimed shot (I4's originals, kept
             //      word for word);
-            //   3. IMPACT, on both kinds of body: a PlayerDamaged with
-            //      ImpactSpeed > 0 (a mob's round shoved the collector — that
-            //      field IS the impulse's carrier, Т8) and a ProjectileHit on a
-            //      mob (DamageMob adds Impact.VelocityDelta into Vel on every
-            //      one of them, Т4);
+            //   3. IMPACT, on both kinds of body — as "the blow REACHED the
+            //      impact seam", not as "the impulse landed": a PlayerDamaged
+            //      with ImpactSpeed > 0 (a mob's round struck the collector;
+            //      the field is the round's own speed, Т8) and a ProjectileHit
+            //      on a mob (emitted BEFORE DamageMob, which is where the
+            //      Impact.VelocityDelta shove goes into Vel, Т4). The shove
+            //      itself has no event and no trace of its own here; a mutant
+            //      that dropped `Vel += dir * dv` survives both asserts and is
+            //      caught by the digest and by ImpactPhysicsTests — said out
+            //      loud (review round, finding M-8) rather than implied;
             //   4. TILT — the peak |MobState.Tilt| over every mob and every tick
             //      is above zero (Impact.AngularImpulse into TiltVel, integrated
             //      by TiltSystem, Т5);
@@ -1661,7 +1667,7 @@ namespace Ring.Simulation.Tests
             // 7 PlayerDamaged with ImpactSpeed > 0 and 23 ProjectileHit on
             // mobs; 295 ticks with a tilted mob and a peak of 0.7111 rad; 0
             // entries into Downed; 202 ProjectileRicocheted; 0 pierced rounds;
-            // 7 mob↔mob pairs in exact contact and 1 collector↔mob contact tick
+            // 7 mob↔mob pair-ticks in exact contact and 1 collector↔mob contact tick
             // (gap 0.0010), with 0 overlaps deeper than a millimeter in either
             // pair; 825 inputs with RewindTicks > 0 (the depths 0..5 drawn
             // 175/161/152/174/174/164 times), 76 births with BirthSteps > 1
@@ -1703,7 +1709,9 @@ namespace Ring.Simulation.Tests
             // app-88jb Т34: the seven mechanics' counters. EVERYTHING THAT
             // ALLOCATES IS BUILT HERE, before the first tick — the three sets
             // and the radius scratch are the only heap objects, and the loop
-            // only reads, clears and swaps them.
+            // reads, clears and swaps them. A HashSet.Add can grow a set, but
+            // both adds sit behind the two zero-pinned conditions (a Downed
+            // entry, a pierced round) and never fire on this run.
             int collectorImpacts = 0;      // PlayerDamaged with ImpactSpeed > 0
             int mobImpacts = 0;            // ProjectileHit on a mob
             float peakTilt = 0f;           // max |Tilt| over every mob and tick
@@ -1778,7 +1786,8 @@ namespace Ring.Simulation.Tests
                 // is not a body (SeparationSystem.SnapshotBodies gives it no
                 // radius), so a mob walking over one would read here as an
                 // "overlap" the mechanic never promised to prevent. Measured on
-                // this run: he dies on tick 886, the one contact tick is 520,
+                // this run: he dies on the 887th tick (loop index 886), the one
+                // contact tick is 520,
                 // and the gate changes neither number — 1 contact tick and no
                 // overlap, gated or not.
                 downedNow.Clear();
@@ -1830,13 +1839,18 @@ namespace Ring.Simulation.Tests
 
             // IMPACT (item 3). ImpactSpeed is the field a receiver sizes the
             // shove by (Т8), and it is zero for a chaser's contact strike by
-            // decision — so "above zero" is precisely "a round hit him".
+            // decision — so "above zero" is precisely "a round hit him". Both
+            // asserts witness that the blow REACHED the seam where the impulse
+            // is applied; the impulse itself (DamageMob / DamagePlayer adding
+            // Impact.VelocityDelta into Vel) leaves no event and is guarded by
+            // the digest and by ImpactPhysicsTests, not by these two lines.
             Assert.GreaterOrEqual(collectorImpacts, 1,
                 "импакт по сборщику не исполнился: ни одного PlayerDamaged с ImpactSpeed > 0 — " +
-                "раунд моба ни разу не толкнул сборщика");
+                "раунд моба ни разу не дошёл до шва импакта по сборщику");
             Assert.GreaterOrEqual(mobImpacts, 1,
-                "импакт по мобу не исполнился: ни одного ProjectileHit — DamageMob ни разу не положил " +
-                "Impact.VelocityDelta в Vel");
+                "импакт по мобу не исполнился: ни одного ProjectileHit — раунд ни разу не дошёл до " +
+                "шва импакта по мобу (само событие идёт до DamageMob; толчок в Vel сторожат " +
+                "дайджест и ImpactPhysicsTests)");
 
             // TILT (item 4). Any non-zero Tilt on any mob is the spring having
             // been struck at all; the measured peak is 0.7111 rad.
@@ -1860,6 +1874,16 @@ namespace Ring.Simulation.Tests
             // AndItGetsUpOnItsOwn and TiltExactlyAtTheThreshold_DoesNotKnockDown
             // (spec tests 8/10), with a fixture built to cross the line. THIS
             // DIGEST DOES NOT GUARD THE KNOCKDOWN — said here, not implied.
+            // The premise is ASSERTED IN NUMBERS, like the pierce's below
+            // (review round, finding I-1): the peak tilt of the run sits under
+            // the lowest fall angle of the four archetypes, so the zero pinned
+            // next is the consequence of a measured margin, not of a wish.
+            float lowestFallAngle = math.min(
+                math.min(cfg.Chaser.TiltFallAngle, cfg.Gunner.TiltFallAngle),
+                math.min(cfg.Elite.TiltFallAngle, cfg.Director.TiltFallAngle));
+            Assert.Less(peakTilt, lowestFallAngle,
+                "премисса: пик крена сценария обязан лежать ниже самого низкого TiltFallAngle — " +
+                "если он его перешагнул, пин нуля ниже обязан обновиться, а не молча зеленеть");
             Assert.AreEqual(0, downedEntries,
                 "опрокидывание в этом сценарии недостижимо (пик крена ниже TiltFallAngle), и дайджест " +
                 "его НЕ охраняет — свидетели живут в ImpactPhysicsTests; стало достижимо — обнови пин");

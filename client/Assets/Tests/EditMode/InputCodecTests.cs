@@ -596,8 +596,10 @@ namespace Ring.Simulation.Tests
         public void RewindTicksSeven_ReadsAsSix_AndDoesNotThrow()
         {
             // Test 43 (Р82): three bits offer eight values and only seven are
-            // legal. The eighth is NOT a wire error — it reads as the cap and
-            // the decoder stays silent.
+            // legal. The eighth is NOT a wire error — it reads as the WIRE cap
+            // (6, the validation ceiling of the arena cap; the arena's own
+            // shipped cap, 5 since app-gtj6, is the sanitizer's business, not
+            // the codec's) and the decoder stays silent.
             SimConfig cfg = ConfigA;
             System.Span<byte> buf = stackalloc byte[InputCodec.SizeBytes];
             var input = new SimInput { AimHeight = cfg.Hero.MuzzleHeight };
@@ -642,7 +644,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(decodedDeep.SlideRequested, "the maximum depth must not perturb SlideRequested");
             Assert.IsTrue(decodedDeep.InventoryOpen, "the maximum depth must not perturb InventoryOpen");
             Assert.AreEqual((byte)6, decodedDeep.RewindTicks,
-                "the maximum legal depth must survive the wire with all five flags raised");
+                "the maximum WIRE depth (6, the codec's ceiling; the arena's shipped cap is applied later, by the sanitizer) must survive the wire with all five flags raised");
 
             SimInput shallow = deep;
             shallow.RewindTicks = 0;
@@ -664,7 +666,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(decodedBare.SlideRequested, "the depth must not raise SlideRequested");
             Assert.IsFalse(decodedBare.InventoryOpen, "the depth must not raise InventoryOpen");
             Assert.AreEqual((byte)6, decodedBare.RewindTicks,
-                "the maximum legal depth must survive the wire with every flag down");
+                "the maximum WIRE depth (6, the codec's ceiling; the arena's shipped cap is applied later, by the sanitizer) must survive the wire with every flag down");
         }
 
         static void AssertSingleFlagByte(in SimInput input, byte expected, string what)

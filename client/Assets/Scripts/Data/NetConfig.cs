@@ -283,15 +283,19 @@ namespace Ring.Data
         // (fix-round, B-5; app-gtj6). The round trip time a dedicated server
         // reads is identically zero, so the estimate is
         // 0 + Arena.RewindPictureTicks + this field: at 2 that is 5, the
-        // shipped cap itself, and nothing is trimmed from there on; a live
-        // round trip can only push the estimate higher. Between 2 and 5 the
-        // field changes nothing at all on such a server.
-        // STATED PLAINLY: at the earlier cap of 6 this check trimmed a claimed
-        // 6 down to 5 on a dedicated server; since app-gtj6 the cap already
-        // holds every claim at 5 and there is nothing left here to trim. That
-        // is a consequence of the owner's decision (spec §6i), not a defect
-        // of the check, and the check keeps its home for the day either
-        // number moves.
+        // shipped cap itself, so THIS TERM trims nothing from there on. A
+        // claim above the cap is still cut -- the wire admits up to 6, the
+        // codec's own ceiling, and MatchServer answers 5 and logs "trimming"
+        // for it as before -- but by the CAP term, not by the estimate; a
+        // live round trip can only push the estimate higher. Between 2 and 5
+        // the field changes nothing at all on such a server.
+        // STATED PLAINLY: at the earlier cap of 6 the ESTIMATE was the binding
+        // term and cut a claimed 6 down to 5 on a dedicated server; since
+        // app-gtj6 the cap term reaches 5 first, and the tolerance has no bite
+        // left there -- the observable answer (6 -> 5) is unchanged, only the
+        // binding term moved. That is a consequence of the owner's decision
+        // (spec §6i), not a defect of the check, and the check keeps its home
+        // for the day either number moves.
         //
         // The [Range] on the declaration BELOW is an Inspector hint and nothing
         // more — see this class's own type doc, which says it of every [Range]

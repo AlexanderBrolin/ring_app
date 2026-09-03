@@ -199,11 +199,12 @@ namespace Ring.Simulation.Core
         /// The flag is what makes the rewound question ask about the body that
         /// was there, not the body that is.
         /// Invulnerability is the same argument at the other end of the
-        /// window: HeroConfig.DashIframes is 0.2 s, which is EXACTLY 6 ticks
-        /// (SimulationWorld.TicksFromSeconds(0.2f)) -- the rewind cap itself
-        /// -- so a whole iframe window fits inside the deepest rewind, and
-        /// reading invulnerability from the LIVE body would award a hit the
-        /// victim had already dodged.
+        /// window: HeroConfig.DashIframes is 0.2 s, which is 6 ticks
+        /// (SimulationWorld.TicksFromSeconds(0.2f)) -- the validation CEILING
+        /// of the rewind cap, and one tick more than the shipped cap of 5
+        /// (app-gtj6) -- so a dodge spans the deepest rewind rather than
+        /// fitting inside it, and reading invulnerability from the LIVE body
+        /// would award a hit the victim had already dodged.
         ///
         /// THE CONSTRUCTOR ARRIVED WITH ITS FIRST CALLER (Т25), which is what
         /// Т24 deliberately waited for: while the only value this struct could
@@ -454,9 +455,11 @@ namespace Ring.Simulation.Core
         /// from bodies that are in the digest already.
         ///
         /// THE WALK IS FIXED WIDTH -- always `capacity` steps, never a function
-        /// of the tick. On tick 3 the window runs from -3, and those four steps
-        /// fold a zero each without touching the ring: a tick from before the
-        /// match contributed no records, and that is the honest number.
+        /// of the tick. On tick 3 the window runs from `3 - (capacity - 1)` --
+        /// from -2 at the shipped six rows (app-gtj6; it was -3 at seven) --
+        /// and the steps before tick 0 fold a zero each without touching the
+        /// ring: a tick from before the match contributed no records, and that
+        /// is the honest number.
         /// ⚠ WHAT THE FIXED WIDTH DOES AND DOES NOT BUY IN SAFETY (review
         /// finding A-2/B-6, which caught this claim promising more than it
         /// proves). It buys ONE case: rows are indexed only for ticks the ring

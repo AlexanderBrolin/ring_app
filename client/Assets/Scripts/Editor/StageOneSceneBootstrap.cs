@@ -990,7 +990,7 @@ namespace Ring.Editor
             if (gunnerShareRetunePending) waveChanged |= ApplyGunnerShareRetune(wave);
 
             // Task app-gtj6 (owner decision 2026-09-01, spec §6i; app-88jb
-            // Т34-а): the rewind-cap retune, Arena.RewindCapTicks 6 -> 5,
+            // Т34): the rewind-cap retune, Arena.RewindCapTicks 6 -> 5,
             // delivered into the already-committed ArenaConfig.asset. KEYED ON
             // THE VALUE BEING REPLACED (lesson 413), like eliteScalePending's
             // and playtestOneArenaPending's gates above: the field has existed
@@ -2778,7 +2778,7 @@ namespace Ring.Editor
         }
 
         /// Task app-gtj6 (owner decision 2026-09-01, spec §6i; executed by
-        /// app-88jb Т34-а together with the golden re-pin): the rewind-cap
+        /// app-88jb Т34 together with the golden re-pin): the rewind-cap
         /// retune, Arena.RewindCapTicks 6 -> 5. Same shape as
         /// ApplyPlaytestOneVisuals directly above -- a local defaults
         /// instance, SetIfDifferent, destroyed in a finally -- so the shipped

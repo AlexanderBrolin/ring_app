@@ -398,8 +398,8 @@ namespace Ring.Simulation.Tests
             // exact thing test 48's SpawnProjectileForTest path never has —
             // so it is stated as "more than one step", derived from the same
             // config the world stepped with, and holds at any legal cap above
-            // the picture depth (the premise two asserts up already demands
-            // that). A literal here was the fourth red of the pre-pin full run
+            // the picture depth (the fixture's first premise assert already
+            // demands that). A literal here was the fourth red of the pre-pin full run
             // of Т34, found by the run and by nothing else.
             float birthStep = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
             Assert.Greater(math.distance(authoritative.Pos, fired.Pos), birthStep + 1e-3f,

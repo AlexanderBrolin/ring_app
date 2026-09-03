@@ -1911,6 +1911,16 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.ExtractRadius, a.ExtractRadius, Eps);
             Assert.AreEqual(e.MaxContainers, a.MaxContainers);
             Assert.AreEqual(e.MaxContainerSlots, a.MaxContainerSlots);
+            // app-88jb Т34 (review round, finding M-7): the three Ф2/Ф3 arena
+            // numbers -- RelaxIterations (Т22), RewindCapTicks and
+            // RewindPictureTicks (Т24) -- flow SO -> builder -> SimConfig like
+            // every field above and were never compared here, so the
+            // two-sources parity (Р117) had no witness for them: app-gtj6 moved
+            // the cap in both homes, and nothing would have said so had it
+            // moved in only one.
+            Assert.AreEqual(e.RelaxIterations, a.RelaxIterations);
+            Assert.AreEqual(e.RewindCapTicks, a.RewindCapTicks);
+            Assert.AreEqual(e.RewindPictureTicks, a.RewindPictureTicks);
             Assert.AreEqual(e.ZoneRadius.Length, a.ZoneRadius.Length);
             for (int i = 0; i < e.ZoneRadius.Length; i++)
                 Assert.AreEqual(e.ZoneRadius[i], a.ZoneRadius[i], Eps);
