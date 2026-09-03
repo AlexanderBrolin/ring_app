@@ -1,0 +1,75 @@
+# Dev game server: the SAME code as the release container, built from the
+# development target so that the latency simulator exists at all (app-88jb Т35).
+#
+# Usage, from the directory this file sits in on the host:
+#
+#     docker compose -f docker-compose.dev.yml up -d      # start, detached
+#     docker compose -f docker-compose.dev.yml logs -f    # watch it
+#     docker compose -f docker-compose.dev.yml restart    # start the run over
+#     docker compose -f docker-compose.dev.yml down       # stop and remove
+#
+# ⛔ IT IS A SEPARATE FILE AND NOT AN OVERRIDE OF `docker-compose.yml`, on
+# purpose. Compose loads `docker-compose.override.yml` automatically, and this
+# host's override exists for the RELEASE service (`pull_policy: never`, because
+# the host has no Docker Hub login). Folding the dev stand into the same
+# service would mean the release stand and the dev stand could never be
+# described at once, and telling them apart in a log is exactly what the lag
+# gate needs. Two files, two container names, one port — whichever is up owns
+# 7777/udp, and starting the second one fails loudly instead of quietly
+# shadowing the first.
+#
+# THE IMAGE TAG IS PINNED TO A REVISION, unlike the release file's moving
+# `dev` tag. A stand whose numbers go into a milestone has to name the commit
+# they came from — the moving tag is what "cost this project a session's
+# measurements" in the release file's own words. Override it when a newer
+# build is delivered:
+#
+#     RING_DEV_IMAGE=brolin/ring-server-dev:<rev> docker compose -f docker-compose.dev.yml up -d
+
+services:
+  ring-server-dev:
+    image: ${RING_DEV_IMAGE:-brolin/ring-server-dev:6ed99ed}
+
+    # The host has no Hub credentials and this image arrives by
+    # `docker save | ssh docker load` (see docs/deploy.md §3.2). `always`
+    # would fail every start against a private repository.
+    pull_policy: never
+    container_name: ring-server-dev
+
+    # ⚠ THE LATENCY SIMULATOR, AND THE WHOLE REASON THIS FILE EXISTS.
+    # CRITICAL RULE 7 accepts a networked feature only under 80 ms RTT and 5%
+    # loss, and the release container cannot do it: everything under
+    # DEVELOPMENT_BUILD is cut by the preprocessor there.
+    #
+    # ⛔ ONE TOKEN WITH A SLASH. The form `80 5` parses as "RTT 80, loss from
+    # NetConfig" SILENTLY (`DevLatencyOptions`), so a stand configured that way
+    # reports loss numbers nobody set.
+    #
+    # ⛔ AND ONLY THIS SIDE SETS IT. The simulator delays each direction on
+    # whichever side runs it, so 80 on both ends is 160 on the link (Р107/Р192):
+    # clients connect with `-ring-latency off`.
+    command: ["-ring-latency", "80/5"]
+
+    restart: unless-stopped
+
+    ports:
+      - "${RING_PORT:-7777}:7777/udp"
+
+    environment:
+      RING_MATCH_CONFIG: /config/match.json
+
+    # A roster of its own, so that starting the dev stand cannot silently
+    # change what the release stand would play. `match-v4.json` carries
+    # `matchesToPlay` above one — a playtest wants raid after raid without an
+    # ssh session between them, while the release default stays one match per
+    # container.
+    volumes:
+      - ./match-v4.json:/config/match.json:ro
+
+    stop_grace_period: 15s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
