@@ -479,6 +479,85 @@ namespace Ring.Simulation.Tests
                 "премисса: сборщик прошёл сквозь тело — фикстура ничего не разводила");
         }
 
+        /// bd `app-njmi`: THE SAME PARITY, ON THE PATH THE GAME ACTUALLY TAKES.
+        ///
+        /// `PredictionAndServerAgree_WhenTheBodyIsVisible` above calls
+        /// `PlayerPrediction.Step` directly and proves the RULE. It cannot see
+        /// what the combat path hands that rule, and for three sessions the
+        /// answer was `ReadOnlySpan<PushableBody>.Empty`: `Step` gained the
+        /// parameter in Т22, every fixture filled it, and the one production
+        /// caller left it empty. A networked client therefore separated off
+        /// NOTHING while the server separated off everything, and every contact
+        /// with a mob arrived as a reconciliation jerk — the defect owner
+        /// decision Н20 exists to forbid and the one that made point 7 of the
+        /// lag gate unmeasurable.
+        ///
+        /// SO THE SUBJECT HERE IS `PlayerPredictionCore`, not `Step`: the core
+        /// is what `PerformReplicate` drives, and it is the last piece of the
+        /// combat path that can be reached without a `NetworkManager`. What is
+        /// asserted is the whole reason the seam exists — the core's own copy
+        /// of the player lands where the world puts it, on a tick where a body
+        /// is in the way.
+        ///
+        /// The fixture is deliberately the one above, down to the frozen
+        /// bodies and the immobilized chaser, so a failure here can only mean
+        /// the wiring: the rule itself is already under an assert of its own,
+        /// and two fixtures drifting apart would leave neither trustworthy.
+        [Test]
+        public void CombatPath_SeparatesTheClientFromVisibleBodies()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Chaser.MaxSpeed = 0f;
+            cfg.Chaser.Accel = 0f;
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(0f, 60f));
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(2f, 0f)));
+            var m = w.Mobs[0]; m.Ai = MobAiState.Idle; m.Hp = 1e6f; w.SetMobForTest(0, m);
+
+            var input = new SimInput { MoveDir = new float2(1f, 0f) };
+            for (int i = 0; i < 5; i++) w.TickAll(new[] { input, default(SimInput) });
+
+            // The core, seated on the world's answer exactly as a reconcile
+            // seats it — that is also what makes it predict at all.
+            var core = new Ring.Networking.PlayerPredictionCore();
+            core.BeginReconcile(1u, w.PlayerAt(0));
+            core.FinishReconcile();
+
+            var frozen = new List<float2>();
+            var bodies = new List<PushableBody>();
+
+            for (int i = 0; i < 25; i++)
+            {
+                frozen.Clear(); bodies.Clear();
+                for (int k = 0; k < w.MobCount; k++)
+                {
+                    frozen.Add(w.Mobs[k].Pos);
+                    var c = w.MobConfigFor(w.Mobs[k].Type);
+                    bodies.Add(new PushableBody(w.Mobs[k].Pos, c.Radius, c.Mass));
+                }
+
+                // The two calls the backend and FishNet make, in their order:
+                // the snapshot lands first, the tick is replicated after it.
+                core.SetVisibleBodies(System.MemoryExtensions.AsSpan(bodies.ToArray()));
+                core.Predict(in input, in cfg);
+                w.TickAll(new[] { input, default(SimInput) });
+
+                for (int k = 0; k < w.MobCount && k < frozen.Count; k++)
+                {
+                    var mob = w.Mobs[k];
+                    mob.Pos = frozen[k];
+                    mob.Vel = float2.zero;
+                    w.SetMobForTest(k, mob);
+                }
+            }
+
+            Assert.Less(math.distance(core.Predicted.Pos, w.PlayerAt(0).Pos), 0.01f,
+                "боевой путь предсказания разошёлся с сервером на ВИДИМОМ теле: "
+                + "ядро получило тела, но в PlayerPrediction.Step они не доехали");
+            Assert.Less(w.PlayerAt(0).Pos.x, 2f - cfg.Chaser.Radius,
+                "премисса: сборщик прошёл сквозь тело — фикстура ничего не разводила");
+        }
+
         /// Victim of mutation M22a (apply displacements INSIDE the scan) and the
         /// reason the double buffer is a contract rather than a preference.
         ///

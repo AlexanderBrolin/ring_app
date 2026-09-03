@@ -138,6 +138,15 @@ namespace Ring.Networking
         /// here.
         internal void SetPendingInput(in SimInput input) => _core.SetPendingInput(in input);
 
+        /// The bodies this client may be pushed off, from the newest snapshot
+        /// (bd `app-njmi`). Called by the backend once per TICK, beside
+        /// `SetPendingInput` and for the same reason: prediction consumes both
+        /// on the same tick, and a frame without a tick has nothing to feed.
+        /// See `PlayerPredictionCore.SetVisibleBodies` for why the list is
+        /// copied and what owner decision Н20 makes of it.
+        internal void SetVisibleBodies(System.ReadOnlySpan<PushableBody> bodies)
+            => _core.SetVisibleBodies(bodies);
+
         /// Our own `PlayerDied` arrived (Р41/Р59). Task 44 owns the
         /// subscription — this is the seam it calls.
         internal void NotifyOwnDeath() => _core.NotifyOwnDeath();
@@ -334,6 +343,29 @@ namespace Ring.Networking
 
         SimInput _pending;
         PlayerState _predicted;
+
+        /// THE BODIES THIS CLIENT MAY PUSH OFF, held between snapshots (bd
+        /// `app-njmi`, spec §3.5 finding Н20). A `ReadOnlySpan` cannot be
+        /// stored in a field, and the two events are not the same moment
+        /// anyway: the backend decodes a snapshot when one arrives, while
+        /// `Predict` runs on every tick FishNet replicates. So the span is
+        /// copied here and read from here until the next snapshot replaces it
+        /// — which is exactly the shape the spec prices: the client separates
+        /// against positions one snapshot old (§3.6's D2-C11, up to 0.73 m of
+        /// disagreement in the inputs each tick), and no arrangement of this
+        /// class can make them fresher.
+        ///
+        /// GROWS AND NEVER SHRINKS, which is what keeps it off the per-tick
+        /// allocation path `AllocationTests` guards: the array is replaced only
+        /// when a snapshot carries more bodies than any snapshot before it, so
+        /// a match allocates here a handful of times while the wave builds and
+        /// never again. Sizing it from `Arena.MaxMobs` up front would be the
+        /// other legal answer and a worse one — this core is constructed before
+        /// any config is resolved (`PlayerNetworkController`'s field
+        /// initializer), and 1350 bodies is two orders of magnitude past what a
+        /// visible frame ever holds.
+        PushableBody[] _visibleBodies = System.Array.Empty<PushableBody>();
+        int _visibleBodyCount;
         uint _lastReconciledTick;
         bool _ownDeathReported;
         float _lastCorrectionMeters;
@@ -467,6 +499,33 @@ namespace Ring.Networking
         /// send, `ClearLatches` after) — this class cannot know either.
         internal void SetPendingInput(in SimInput input) => _pending = input;
 
+        /// The bodies the local player may be pushed off by, as of the newest
+        /// snapshot (bd `app-njmi`). Called by the backend where a snapshot is
+        /// decoded, and NOT once per tick: the client has no way to advance
+        /// somebody else's body, and inventing motion for one would be the
+        /// prediction of a foreign body that CRITICAL RULE 3 forbids.
+        ///
+        /// ONLY WHAT THE CLIENT CAN SEE GOES IN, and that is a property of the
+        /// wire rather than a filter written here: fog of war is served
+        /// (`VisibilityConfig`, CR 4), so a snapshot holds exactly the bodies
+        /// this player is allowed to know about. That is what makes owner
+        /// decision Н20 — "the client separates only against bodies visible to
+        /// it, and the server resolves this collector's input by the same
+        /// rule" — reproducible on both sides rather than a promise.
+        ///
+        /// The collector's OWN body is never in this list. The server passes
+        /// one snapshot of every body to every collector and skips the caller's
+        /// slot by index; the client's list simply never contains it, which is
+        /// the `skipIndex = -1` case `BodySeparation.Accumulate` already
+        /// documents as the client's shape.
+        internal void SetVisibleBodies(System.ReadOnlySpan<PushableBody> bodies)
+        {
+            if (bodies.Length > _visibleBodies.Length)
+                _visibleBodies = new PushableBody[bodies.Length];
+            bodies.CopyTo(_visibleBodies);
+            _visibleBodyCount = bodies.Length;
+        }
+
         /// One-way for the lifetime of this player. There is no respawn inside
         /// a match (ADR-001), so nothing legitimately un-kills the local
         /// player; clearing the latch on a later "alive" reconcile would let a
@@ -567,7 +626,7 @@ namespace Ring.Networking
         {
             if (!IsPredicting) return;
             PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg, in ImpactPulse.None,
-                System.ReadOnlySpan<Ring.Simulation.Core.PushableBody>.Empty);
+                new System.ReadOnlySpan<PushableBody>(_visibleBodies, 0, _visibleBodyCount));
         }
 
         /// Server side: publish the input the world must consume, and the tick

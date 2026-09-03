@@ -355,6 +355,12 @@ namespace Ring.Presentation.Net
         // heard of, is not logged at all (see `ReadEvents`).
         SnapshotBlocks.PlayerRecord[] _playerScratch;
         SnapshotBlocks.MobRecord[] _mobScratch;
+
+        /// bd `app-njmi`: the per-tick scratch `FeedVisibleBodies` fills and
+        /// hands to prediction. One array for the life of the match — the
+        /// core copies what it is given, so this one is never aliased past the
+        /// call.
+        PushableBody[] _visibleBodies = System.Array.Empty<PushableBody>();
         SnapshotBlocks.EventRecord[] _eventScratch;
         // Stage 3 Т32б, sized from the same caps `SnapshotAssembler` sizes its
         // own sending scratch from, so a legal frame can never overrun one of
@@ -1185,6 +1191,64 @@ namespace Ring.Presentation.Net
             _rewindDepth = MeasureRewindTicks();
             frame.RewindTicks = _rewindDepth;
             _controller.SetPendingInput(in frame);
+            FeedVisibleBodies();
+        }
+
+        /// bd `app-njmi`: the bodies the local collector may be pushed off,
+        /// handed to prediction once per tick, right beside the input it
+        /// predicts with.
+        ///
+        /// WHY HERE AND NOT IN `ReadMobs`. A snapshot is decoded whenever one
+        /// arrives — which is neither once per tick nor in tick order, and a
+        /// frame the queue refused a slot to decodes too. Prediction needs the
+        /// NEWEST accepted picture and needs it on the tick it runs, so the
+        /// list is built where the tick is, from the newest slot the queue
+        /// will admit to having. Between snapshots the core keeps the last
+        /// list it was given (`PlayerPredictionCore.SetVisibleBodies`), which
+        /// is the honest answer: the client has no way to advance a foreign
+        /// body and CRITICAL RULE 3 forbids it from trying.
+        ///
+        /// THE PRICE IS THE SCHEME'S AND IS NAMED, NOT HIDDEN (spec §3.6,
+        /// finding D2-C11): these positions are one snapshot old — about
+        /// 140 ms under the lag gate's 80 ms link — worth up to 0.73 m of
+        /// disagreement per tick between what the client separates against and
+        /// what the server does. No arrangement of this method makes them
+        /// fresher; point 7 of the Ф4 gate is where that number gets measured
+        /// instead of computed.
+        ///
+        /// DEAD COLLECTORS ARE LEFT OUT rather than admitted with a zero
+        /// radius. The server keeps the corpse's slot because its reciprocal
+        /// buffers are indexed by slot, and marks it unpushable with
+        /// `Radius = 0`; this list feeds no reciprocals and is not indexed by
+        /// anybody, so leaving the corpse out reaches the same outcome by the
+        /// shorter road — `BodySeparation.Accumulate` declines it either way.
+        /// The local collector is never in the list at all, which is the
+        /// `skipIndex = -1` case that method documents as the client's shape.
+        void FeedVisibleBodies()
+        {
+            if (!_snapshots.HasNewestTick
+                || !_snapshots.TryGet(_snapshots.NewestTick, out RenderSnapshot newest)
+                || newest == null)
+            {
+                _controller.SetVisibleBodies(System.ReadOnlySpan<PushableBody>.Empty);
+                return;
+            }
+
+            int n = 0;
+            for (int i = 0; i < newest.MobCount && n < _visibleBodies.Length; i++)
+            {
+                ref readonly MobSimConfig mc = ref SimConfig.MobConfigFor(in _cfg, newest.Mobs[i].Type);
+                _visibleBodies[n++] = new PushableBody(newest.Mobs[i].Pos, mc.Radius, mc.Mass);
+            }
+            for (int i = 0; i < newest.PlayerCount && n < _visibleBodies.Length; i++)
+            {
+                if (i == newest.LocalPlayerIndex) continue;
+                if (!newest.Players[i].Alive) continue;
+                _visibleBodies[n++] = new PushableBody(newest.Players[i].Pos,
+                    _cfg.Hero.Radius, _cfg.Hero.Mass);
+            }
+
+            _controller.SetVisibleBodies(new System.ReadOnlySpan<PushableBody>(_visibleBodies, 0, n));
         }
 
         /// How far into the past the server has to look at its targets so that
@@ -1773,6 +1837,12 @@ namespace Ring.Presentation.Net
 
             _playerScratch = new SnapshotBlocks.PlayerRecord[math.max(1, cfg.Arena.MaxPlayers)];
             _mobScratch = new SnapshotBlocks.MobRecord[math.max(1, cfg.Arena.MaxMobs)];
+            // bd `app-njmi`: every body a snapshot can hold, sized once from the
+            // same two ceilings the server sizes its own list from
+            // (`SimulationWorld._pushBodies`). Taken here rather than grown on
+            // demand because this one is filled on the TICK path, which
+            // `AllocationTests` walks — see `FeedVisibleBodies`.
+            _visibleBodies = new PushableBody[math.max(1, cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers)];
             _eventScratch = new SnapshotBlocks.EventRecord[math.max(1, _net.SnapshotEventBudget)];
             _selfScratch = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];
             _pickupScratch = new SnapshotBlocks.PickupRecord[math.max(1, cfg.Arena.MaxPickups)];
