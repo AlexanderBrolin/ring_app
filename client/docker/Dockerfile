@@ -29,14 +29,22 @@
 #     --build-context game="$RING_BUILD_ROOT/linux-server" \
 #     -t <repo>:<tag> client/docker
 #
+# ONE FILE, TWO PLAYERS (app-88jb Т35). `build.sh --dev` hands in
+# "$RING_BUILD_ROOT/linux-server-dev" instead and tags a repository of its own,
+# `<repo>-dev`: the Development server carries the latency simulator that
+# Critical Rule 7's lag gate needs, and nothing below has to change for it --
+# the COPY list names root files one by one, so the extra files a Development
+# player leaves in the artifact root stay out by construction.
+#
 # THIS IS THE SHAPE, NOT THE COMMAND. The real invocation lives in
 # client/docker/build.sh (T51) and differs on purpose: `buildx build --load`,
 # two tags, and the provenance labels, none of which a reader needs in order to
 # understand what this file expects to be handed.
 #
 # Named contexts need BuildKit, which is the default builder here. The artifact
-# directory is the output of Ring.Editor.BuildCommands.BuildLinuxServer, whose
-# subtarget is StandaloneBuildSubtarget.Server -- a headless dedicated-server
+# directory is the output of Ring.Editor.BuildCommands.BuildLinuxServer -- or of
+# BuildLinuxServerDev under `build.sh --dev` -- whose subtarget is
+# StandaloneBuildSubtarget.Server in both cases: a headless dedicated-server
 # player. Unity itself is never installed into the image.
 
 FROM debian:12-slim
@@ -83,14 +91,21 @@ ENV HOME=/home/ring
 
 WORKDIR /app
 
-# Targeted COPY, not a copy of the whole artifact directory. Three entries of
-# the build output are deliberately left behind:
+# Targeted COPY, not a copy of the whole artifact directory. Three entries of a
+# RELEASE build's output are deliberately left behind, and a Development one
+# adds two more (app-88jb Т35):
 #   ring-client-new_BurstDebugInformation_DoNotShip/ - debug symbols, the name
 #     states the intent;
 #   libdecor-0.so.0, libdecor-cairo.so - Wayland window decorations. A
 #     dedicated-server player draws nothing, and their own dependencies (cairo,
 #     pango, wayland, dbus) are not installed, so shipping them would only
-#     enlarge the image.
+#     enlarge the image;
+#   RingServer_s.debug, UnityPlayer_s.debug - separated native debug info, and
+#     only a Development player writes them. 23 MB of symbols are of no use to
+#     a container that carries no debugger, and the dev image must differ from
+#     the release one by its PLAYER, not by its baggage. They are inventoried
+#     in build.sh's ARTIFACT_ROOT_OPTIONAL, which is the half of this pair that
+#     decides what may legitimately appear next to the executable.
 # Filtering here rather than in .dockerignore is what makes the result
 # independent of who runs the build and from which directory.
 #

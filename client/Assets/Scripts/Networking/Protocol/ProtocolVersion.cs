@@ -19,13 +19,17 @@ namespace Ring.Networking.Protocol
     ///
     /// A version bump is required whenever the MEANING of existing bytes
     /// changes (field order, field width, the meaning of a block kind or of
-    /// a flags bit) OR THE PAYLOAD OF AN EXISTING KIND GROWS LONGER
-    /// (coordinator Ruling 312, rule (в); the 4 → 5 entry below says what the
-    /// narrower reading cost when it was measured). ADDING a new block kind
-    /// does NOT need one — that is the
+    /// a flags bit) OR THE PAYLOAD LENGTH OF AN EXISTING EVENT KIND CHANGES
+    /// — longer or shorter alike, since a peer refuses either by
+    /// `MalformedLength` (coordinator Ruling 312, rule (в); the 4 → 5 entry
+    /// below says what the narrower reading cost when somebody finally
+    /// measured it). ADDING a new BLOCK kind does NOT need one — that is the
     /// entire point of the tagged, length-prefixed block format documented on
     /// SnapshotWriter: an older reader skips a kind it does not know and
-    /// counts it (Р29).
+    /// counts it (Р29). Adding a new EVENT kind is the same bargain one level
+    /// down, and for the same reason: `SnapshotBlocks.TryReadEventsBlock`
+    /// steps records by their declared length and never consults the catalog
+    /// of kinds at all.
     ///
     /// HISTORY — one line per break, so the reason is here and not in a log:
     ///   1 → 2 (Stage 2 Task 44a): the DOMAIN of `ProjectileEndKind` grew by
@@ -105,8 +109,17 @@ namespace Ring.Networking.Protocol
     ///   WriteProjectileRicocheted's [3] since app-5o2q, and their
     ///   readers). Nothing about the FORMAT moved: no block kind was added, no
     ///   field changed width, and every peer built from this commit agrees
-    ///   with itself — which is exactly why the reservation above is the whole
-    ///   fix and `Current` stays 4.
+    ///   with itself — which is exactly why the reservation above was the
+    ///   whole fix, and `Current` stayed 4 until Т35.
+    ///   ⚠ THE C# SIDE MOVED EARLIER, IN Т13, AND DELIBERATELY: validation
+    ///   rule 14 refuses any SimConfig whose ceiling sits below the tallest
+    ///   body's crown, and the Director's is 4.80, so the C# default had to
+    ///   rise in the same task that declared the parts (HeroConfig.
+    ///   MaxAimHeight's own doc says so). Between Т13 and Т16 the test
+    ///   fixtures therefore spoke the new scale while the shipped asset still
+    ///   spoke the old one — one of the two halves issue app-f6yp required to
+    ///   travel together, and Т16 is where the shipped half arrived.
+    ///
     ///   4 → 5 (app-88jb Т35, coordinator Ruling 312): the PAYLOAD LENGTH of
     ///   three existing kinds grew inside this epic, which the rule above did
     ///   not ask for a bump for — so this entry moves the RULE as well as the
@@ -115,7 +128,10 @@ namespace Ring.Networking.Protocol
     ///   same terms.
     ///   WHAT THE NARROWER READING COST, MEASURED RATHER THAN ARGUED (bd
     ///   app-9c4m): the handshake compares only `ProtocolVersion` and
-    ///   `SimConfigHash` (`HandshakeNet.ClientHelloNet`), and neither of them
+    ///   `SimConfigHash` (`HandshakeDecision.Evaluate`, whose own doc says
+    ///   "version and balance checks ONLY" — the roster token is
+    ///   `MatchRoster`'s business and refuses a JOIN, not a mismatch of
+    ///   format), and neither of them
     ///   moves when a payload merely gets wider. So a mixed pair — old client,
     ///   new server — CONNECTS and plays a whole match in which every affected
     ///   record is refused for its LENGTH (`MalformedLength`), not one field of
@@ -145,15 +161,6 @@ namespace Ring.Networking.Protocol
     ///   handshake refuses a peer built one commit earlier, which is precisely
     ///   what the bump is for, and the lag gate of phase Ф4 runs against a
     ///   dev-server image built from here on.
-    ///
-    ///   ⚠ THE C# SIDE MOVED EARLIER, IN Т13, AND DELIBERATELY: validation
-    ///   rule 14 refuses any SimConfig whose ceiling sits below the tallest
-    ///   body's crown, and the Director's is 4.80, so the C# default had to
-    ///   rise in the same task that declared the parts (HeroConfig.
-    ///   MaxAimHeight's own doc says so). Between Т13 and Т16 the test
-    ///   fixtures therefore spoke the new scale while the shipped asset still
-    ///   spoke the old one — one of the two halves issue app-f6yp required to
-    ///   travel together, and Т16 is where the shipped half arrived.
     public static class ProtocolVersion
     {
         public const byte Current = 5;

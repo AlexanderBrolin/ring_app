@@ -189,7 +189,7 @@ ssh -p <порт> <пользователь>@<хост> 'cd /opt/ring && docker 
 ```
 ServerBootstrap: listening matchId=… seed=… maxPlayers=3 port=7777
   startMode=WaitForAll countdownSeconds=0 rosterEntries=3 epoch=1
-  protocolVersion=2 simConfigHash=0x… joinTimeoutSeconds=120
+  protocolVersion=5 simConfigHash=0x… joinTimeoutSeconds=120
 ServerBootstrap: server started — requestedFrameRate=45 effectiveTargetFrameRate=45 tickRate=30
 ```
 

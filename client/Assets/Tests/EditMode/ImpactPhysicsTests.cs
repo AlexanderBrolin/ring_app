@@ -28,7 +28,8 @@ namespace Ring.Simulation.Tests
     /// (Т6). It is a wire-domain sentinel, not impact arithmetic: a new
     /// MobAiState enlarges the Mobs block's nibble domain, and a peer speaking
     /// the older version refuses the WHOLE block as MalformedContent
-    /// (SnapshotBlocks.cs:510). It lives here because Т6 is the task that grows
+    /// (SnapshotBlocks.TryReadMobsBlock, at its MaxMobTypeValue/
+    /// MaxMobAiStateValue guard). It lives here because Т6 is the task that grows
     /// that domain, and a sentinel filed away from its own cause is a sentinel
     /// nobody re-reads. ⚠ Т35 moved the value it pins, 4 → 5, for a cause of
     /// its own (payload length, coordinator Ruling 312): this sentinel is the

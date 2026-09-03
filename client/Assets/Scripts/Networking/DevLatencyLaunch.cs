@@ -66,14 +66,21 @@ namespace Ring.Networking
     /// launching Unity with `-ring-latency off` stands the simulator down in
     /// Play mode without building anything. In a player they are the player's.
     ///
-    /// THE CONTAINER IS NOT ONE OF THOSE PLAYERS, AND SAYING SO IS THE POINT.
+    /// WHICH PLAYER THE CONTAINER HOLDS IS NOW A CHOICE, AND SAYING SO IS THE
+    /// POINT (app-88jb Т35 — the paragraph below used to say the container
+    /// could never be one of those players, and that stopped being true).
     /// `client/docker/build.sh` packs the image from `BuildLinuxServer` — the
     /// RELEASE server — where `UNITY_EDITOR || DEVELOPMENT_BUILD` is false and
     /// this type, the simulator and both call sites are removed by the
-    /// preprocessor. Appending `-ring-latency` to `docker run` therefore
+    /// preprocessor. Appending `-ring-latency` to a `docker run` of THAT image
     /// changes nothing: the argument reaches the player and no code is left to
-    /// read it. A measurement that needs the simulator on the server side needs
-    /// `linux-server-dev`, not the image.
+    /// read it.
+    /// ⚠ `build.sh --dev` packs `BuildLinuxServerDev` into a repository of its
+    /// own, `<repo>-dev`, and in THAT image this type is present and the
+    /// switch is read — the entry point appends everything after the image
+    /// name to the player, so `docker run … <image> -ring-latency 80/5` is how
+    /// the lag gate of Critical Rule 7 puts latency on the server side without
+    /// running the player outside a container.
     public static class DevLatencyLaunch
     {
         /// This process's answer, parsed at first read and kept.

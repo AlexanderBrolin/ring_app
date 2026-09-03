@@ -474,7 +474,8 @@ namespace Ring.Networking.Protocol
         /// DOMAIN grew, so that a kind which simply got wider was neither.
         ///   WHAT OVERTURNED IT WAS A MEASUREMENT, not a second opinion: the
         /// handshake compares only `ProtocolVersion` and `SimConfigHash`
-        /// (`HandshakeNet.ClientHelloNet`), and a wider payload moves neither
+        /// (`HandshakeDecision.Evaluate` — "version and balance checks ONLY",
+        /// its own words), and a wider payload moves neither
         /// of them — so a mixed pair CONNECTS and plays a whole match in which
         /// every birth record is refused for its LENGTH (`MalformedLength`):
         /// no bullets, no shot sound, no muzzle flash, for the entire match.
@@ -485,9 +486,14 @@ namespace Ring.Networking.Protocol
         ///   THE NEXT KIND TO GROW IS STILL THE ONE THAT PAYS, AND IT NOW PAYS
         /// TWICE: any field added to `ProjectileSpawned` lifts this constant
         /// again, while `ProjectileEnded` has one byte of room under it and
-        /// costs nothing here until it reaches nine — but either growth earns a
-        /// `ProtocolVersion` bump on the same terms as a changed meaning, once
-        /// a build has shipped that speaks the narrower width.
+        /// costs nothing HERE until it reaches nine — but either growth earns a
+        /// `ProtocolVersion` bump on the same terms as a changed meaning, and
+        /// it earns it the moment the width changes, not the moment a build
+        /// ships. ⚠ THE SHIPPING QUESTION DECIDES THE COUNT OF BUMPS AND NEVER
+        /// THE DEBT: breaks landing inside one unreleased epic ride a single
+        /// bump (that file's HISTORY says why), which is exactly why Т8, Т31
+        /// and Т32 are recorded there as violations rather than excused as
+        /// free — no build had shipped for any of them either.
         public const int MaxPayloadBytes = 9;
 
         /// Highest legal wire value of `HitZone` / `ProjectileEndKind`. Same

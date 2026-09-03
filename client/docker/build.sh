@@ -52,8 +52,11 @@
 #
 # THE DOCKERFILE IS UNCHANGED BY IT. Its COPY list names root files one by one
 # and the entry point already appends "$@" to the player, so the extra player
-# arguments the gate needs (-ring-latency 80 5) reach the process at `docker
-# run` time without a second Dockerfile. What the Development player DOES add
+# arguments the gate needs reach the process at `docker run` time without a
+# second Dockerfile. ⚠ THE SWITCH IS ONE TOKEN WITH A SLASH -- `-ring-latency
+# 80/5`, not `-ring-latency 80 5`: the parser reads `<rtt>` or `<rtt>/<loss>`
+# out of a SINGLE argument (DevLatencyOptions), and the spaced form would be
+# taken as an RTT of 80 with the loss left at NetConfig's value, silently. What the Development player DOES add
 # to the artifact root is two files of separated debug symbols, and those are
 # handled by the inventory below, not by a COPY.
 #
@@ -239,8 +242,9 @@ described by client/docker/Dockerfile under two tags -- <commit sha> and
 '$DEV_TAG' -- prints the image size and id, and pushes both tags.
 
 Options:
-  --dev       build the DEVELOPMENT server player ($DEV_UNITY_METHOD)
-              and pack it into a repository of its own, '<repo>$DEV_REPO_SUFFIX'.
+  --dev       build the DEVELOPMENT server player
+              ($DEV_UNITY_METHOD) and pack it
+              into a repository of its own, '<repo>$DEV_REPO_SUFFIX'.
               That player is the one carrying the latency simulator and the
               -ring-latency switch the lag gate of Critical Rule 7 needs; the
               release repository and its '$DEV_TAG' tag are never touched.
@@ -311,6 +315,13 @@ readonly project_dir="$repo_root/client"
 # IMAGE_REPO included: the point of the flag is that a Development player never
 # lands in the repository a release player lands in, and an operator who
 # redirected the base name did not thereby ask for the two to share one.
+#
+# THE GUARANTEE IS ONE-WAY, AND THAT IS THE ONLY DIRECTION THAT MATTERS HERE.
+# No --dev run can produce a name without the suffix, so the release repository
+# -- the one the LAN host pulls -- is unreachable from the dev path. The
+# converse is not defended: RING_IMAGE_REPO='<user>/ring-server-dev' on a
+# RELEASE run would write the dev repository, because an operator who spells
+# out a repository is taken at his word everywhere else in this script too.
 image_repo="${RING_IMAGE_REPO:-$DEFAULT_IMAGE_REPO}${dev:+$DEV_REPO_SUFFIX}"
 readonly image_repo
 
@@ -568,9 +579,14 @@ optional_absent=$(LC_ALL=C comm -23 <(lines_of "${ARTIFACT_ROOT_OPTIONAL[@]}") \
     <(lines_in "$artifact_actual"))
 info "artifact root as inventoried: ${#ARTIFACT_ROOT_REQUIRED[@]} required entries" \
      "present, none new"
+#
+# THE WORDING SAYS "not in this artifact", NOT "the build failed to make it":
+# two of the three optional entries are the Development player's debug symbols
+# and a RELEASE build is never supposed to produce them, so a line phrased as a
+# shortfall would report the normal case as a deficiency on every release run.
 if [[ -n "$optional_absent" ]]; then
     while IFS= read -r entry; do
-        info "  optional, not produced by this build: $entry"
+        info "  optional, not in this artifact (expected for a $build_note build): $entry"
     done <<<"$optional_absent"
 fi
 
@@ -604,10 +620,17 @@ fi
 # as a fact rather than as a string in a tag). `created` is deliberately absent:
 # the image config already carries its own creation time, and a label repeating
 # it would be a second home for one fact.
+#
+# `ring.build.kind` is the ONE fact the repository name carries and a digest
+# does not, which matters because both the compose file and the deploy runbook
+# offer pinning by digest: `docker pull <repo>@sha256:...` resolves an image
+# whose name is then gone, and "does this server carry the latency simulator"
+# is precisely the question a lag-gate measurement must not have to guess.
 labels=(
     --label "org.opencontainers.image.revision=$git_sha"
     --label "org.opencontainers.image.version=$version_tag"
     --label "ring.build.unity-version=$unity_version"
+    --label "ring.build.kind=$build_note"
     --label "ring.build.tool=client/docker/$PROG"
 )
 
