@@ -154,6 +154,16 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg);
             TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
+            // app-88jb Т34 (owner decision 2а, session 86): the SAME Hp budget
+            // the extraction scenario has carried since `app-ggvz`, through the
+            // same one home. MEASURED before it was added: this collector died
+            // on tick 799 of 1000 in the pre-Т34 run and on the 887th with the
+            // ninth draw in, so the digest was pinning a tail of a corpse —
+            // 201 and then 113 ticks in which nothing this file claims to
+            // exercise could happen. The scenario measures DETERMINISM, never
+            // survivability (Р325), and the budget moves nobody; it rides
+            // inside Т34's one sanctioned re-pin rather than costing a second.
+            BudgetHpForTheWholeRun(world, in cfg, ticks);
             var rng = new Random(inputSeed);
             bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
@@ -175,6 +185,11 @@ namespace Ring.Simulation.Tests
         {
             SimConfig cfg = TestConfigs.Default();
             var world = new SimulationWorld(42, cfg, playerCount);
+            // app-88jb Т34 (owner decision 2а): the same Hp budget as RunScripted
+            // and the extraction generator, for the same measured reason — one
+            // of these three collectors died on tick 615 in the pre-Т34 run and
+            // two (747, 876) with the ninth draw in. Moves nobody.
+            BudgetHpForTheWholeRun(world, in cfg, ticks);
             var rng = new Random(inputSeed);
             var aimHeld = new bool[playerCount];
             var inputs = new SimInput[playerCount];
@@ -317,6 +332,11 @@ namespace Ring.Simulation.Tests
         /// SCRIPTED RUN, handed to EVERY collector. Same seam and same
         /// derivation TestWorlds.TrioSaturated already uses — not a second
         /// invention, and not a number picked by eye.
+        /// Since app-88jb Т34 (owner decision 2а) the solo and the multiplayer
+        /// generators — and the coverage test that mirrors the solo one — call
+        /// it as well, for the reason measured in RunScripted's own note: their
+        /// collectors died before the run was over, and a digest was pinning
+        /// the tail of a corpse.
         ///
         /// (1) WHY A FIXTURE MAY DO THIS AT ALL. These scenarios measure
         /// DETERMINISM, never survivability — the reason every number in
@@ -1662,17 +1682,19 @@ namespace Ring.Simulation.Tests
             // editor's own float mode — called Scripted/ScenarioStart/
             // RunScripted through reflection, reproduced all three pinned
             // digests bit for bit first, and only then counted over this very
-            // scenario with both edits of Т34 in: the cap of 5 (app-gtj6) and
-            // the ninth draw. What it found, in the order of the list above:
-            // 7 PlayerDamaged with ImpactSpeed > 0 and 23 ProjectileHit on
+            // scenario with all three edits of Т34 in: the cap of 5 (app-gtj6),
+            // the ninth draw, and the Hp budget (owner decision 2а, which keeps
+            // the collector alive for all 1000 ticks where he used to die on
+            // the 887th). What it found, in the order of the list above:
+            // 9 PlayerDamaged with ImpactSpeed > 0 and 24 ProjectileHit on
             // mobs; 295 ticks with a tilted mob and a peak of 0.7111 rad; 0
-            // entries into Downed; 202 ProjectileRicocheted; 0 pierced rounds;
+            // entries into Downed; 222 ProjectileRicocheted; 0 pierced rounds;
             // 7 mob↔mob pair-ticks in exact contact and 1 collector↔mob contact tick
             // (gap 0.0010), with 0 overlaps deeper than a millimeter in either
             // pair; 825 inputs with RewindTicks > 0 (the depths 0..5 drawn
-            // 175/161/152/174/174/164 times), 76 births with BirthSteps > 1
-            // and 134 ticks with a round at RewindLeft > 0 (108 rounds); and
-            // for the originals SlidesUsed 2, DashesUsed 11, 4 DashRicocheted,
+            // 175/161/152/174/174/164 times), 85 births with BirthSteps > 1
+            // and 155 ticks with a round at RewindLeft > 0 (124 rounds); and
+            // for the originals SlidesUsed 2, DashesUsed 13, 5 DashRicocheted,
             // an aimed shot, and a run that stays in the outer ring. Every
             // threshold below is "at least one" or an equality at the measured
             // zero — never a number tuned to the run.
@@ -1690,6 +1712,11 @@ namespace Ring.Simulation.Tests
             // Same start RunScripted states (Ф5-0) — this test only means
             // anything if it runs the very scenario the golden pins.
             TestWorlds.RelocatePlayerForTest(world, 0, ScenarioStart(in cfg));
+            // The SAME budget RunScripted hands out, through the same one home
+            // (app-88jb Т34, owner decision 2а): this loop is a deliberate copy
+            // of that generator, and a copy that skipped the budget would
+            // measure a different run than the digest it exists to describe.
+            BudgetHpForTheWholeRun(world, in cfg, Ticks);
             var rng = new Random(123);
             bool aimHeld = false; // LOCAL, same no-static-leak reasoning as RunScripted's own
 
@@ -1785,11 +1812,13 @@ namespace Ring.Simulation.Tests
                 // collector↔mob gap is measured ONLY WHILE HE IS ALIVE: a corpse
                 // is not a body (SeparationSystem.SnapshotBodies gives it no
                 // radius), so a mob walking over one would read here as an
-                // "overlap" the mechanic never promised to prevent. Measured on
-                // this run: he dies on the 887th tick (loop index 886), the one
-                // contact tick is 520,
-                // and the gate changes neither number — 1 contact tick and no
-                // overlap, gated or not.
+                // "overlap" the mechanic never promised to prevent. Measured
+                // before the Hp budget went in: he died on the 887th tick (loop
+                // index 886), the one contact tick was 520, and the gate changed
+                // neither number — 1 contact tick and no overlap, gated or not.
+                // With the budget (owner decision 2а) he lives all 1000 ticks,
+                // so the gate is a guard for the day the budget goes, not a
+                // branch this run takes.
                 downedNow.Clear();
                 int mobCount = world.MobCount;
                 PlayerState collector = world.Player;
