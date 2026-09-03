@@ -20,8 +20,9 @@ namespace Ring.Simulation.Tests
         /// Scripted input generator (Task 29 Interfaces) — a separate Random in
         /// TEST code is fine, this is not Simulation. Drives every input axis so
         /// the determinism/golden runs below exercise movement, aiming, firing,
-        /// dashing, sliding and both fire modes together instead of just
-        /// idle-input replay. `aimHeld` is threaded in by ref from RunScripted
+        /// dashing, sliding, both fire modes and — since app-88jb Т34 — the
+        /// rewind depth together instead of just idle-input replay. `aimHeld`
+        /// is threaded in by ref from RunScripted
         /// (a LOCAL there, not a static field here — statics would leak across
         /// RunScripted's three per-test-session calls and make the golden hash
         /// order-dependent, Task 16 QA5/QB5/QD5) so the aim level persists
@@ -30,11 +31,41 @@ namespace Ring.Simulation.Tests
         /// upper bound has to BE Hero.MaxAimHeight — that is what Sanitize clamps
         /// to, and what keeps the tower head belts inside the scripted run's reach
         /// — so a literal here would silently drift the day that number moves.
+        /// `rewindCap` comes in exactly the same way and for exactly the same
+        /// reason, from the caller's own cfg.Arena.RewindCapTicks: the
+        /// RewindTicks draw's upper bound has to BE the arena cap Sanitize
+        /// clamps to, and a literal here would have gone stale, silently, on
+        /// the day app-gtj6 lowered that cap.
         /// Draw order is FIXED (reorder only with a golden repin): MoveDir
         /// direction, MoveDir magnitude, AimPoint, FireHeld, DashRequested,
-        /// SlideRequested, aimHeld toggle roll, AimHeight.
+        /// SlideRequested, aimHeld toggle roll, AimHeight, RewindTicks.
+        ///
+        /// THE NINTH DRAW IS LAST ON PURPOSE (app-88jb Т34, plan Т34 step 2).
+        /// The eight draws before it keep their order inside the tick, so
+        /// nothing that reasons about "the N-th draw of a tick" has to be
+        /// re-read; their VALUES from the second tick on do change, because
+        /// every tick now consumes nine draws of the one stream instead of
+        /// eight — and that movement of all three digests is the ONE sanctioned
+        /// re-pin of Т34 (owner decision Н1/Р352), spent by the coordinator in
+        /// a commit of its own, not a side effect for anyone to hunt down.
+        /// UNIFORM OVER THE WHOLE DOMAIN, 0..cap INCLUSIVE — NextInt(min, max)
+        /// answers [min, max), hence the `+ 1` — because a depth has three
+        /// different fates and the scenario has to reach all three: k = 0 is
+        /// the path with no rewind at all, which stays in the digest rather
+        /// than vanishing from it; 0 < k <= Arena.RewindPictureTicks buys the
+        /// PICTURE half only (RewindSplit.PictureTicks — the round's
+        /// RewindLeft, Т28); k above the picture depth buys the INPUT half as
+        /// well (RewindSplit.InputTicks — Т27's catch-up steps on the birth
+        /// tick, which is what puts a ProjectileFired's BirthSteps above 1).
+        /// OFFLINE, NOBODY ELSE WRITES THIS FIELD. In a networked match the
+        /// depth is measured on the client (NetworkSimBackend.
+        /// MeasureRewindTicks) and rides the wire in; an offline world reads a
+        /// zero forever, so the scripted scenario has to feed the field itself
+        /// — exactly as it feeds AimHeight, which no offline device produces
+        /// either. Every value drawn is inside the arena's own domain by
+        /// construction, so Sanitize's clamp is a no-op on this stream.
         static SimInput Scripted(ref Unity.Mathematics.Random rng, ref bool aimHeld,
-            float maxAimHeight)
+            float maxAimHeight, int rewindCap)
         {
             var moveDir = rng.NextFloat2Direction() * rng.NextFloat();
             var aimPoint = rng.NextFloat2(new float2(-30f, -30f), new float2(30f, 30f));
@@ -45,6 +76,7 @@ namespace Ring.Simulation.Tests
             // tower head belts [2.70, 3.50] stay reachable: the bound IS the
             // config's MaxAimHeight, threaded in rather than restated
             float aimHeight = rng.NextFloat(0f, maxAimHeight);
+            byte rewindTicks = (byte)rng.NextInt(0, rewindCap + 1); // [0, cap]: NextInt's max is exclusive
 
             return new SimInput
             {
@@ -54,7 +86,8 @@ namespace Ring.Simulation.Tests
                 DashRequested = dashRequested,
                 SlideRequested = slideRequested,
                 AimHeld = aimHeld,
-                AimHeight = aimHeight
+                AimHeight = aimHeight,
+                RewindTicks = rewindTicks
             };
         }
 
@@ -123,7 +156,8 @@ namespace Ring.Simulation.Tests
             var rng = new Random(inputSeed);
             bool aimHeld = false; // LOCAL — RunScripted runs 3x/session, no static leak (QA5/QB5/QD5)
             for (int i = 0; i < ticks; i++)
-                world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
+                world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight,
+                    cfg.Arena.RewindCapTicks));
             return world.StateHash();
         }
 
@@ -146,7 +180,8 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < ticks; i++)
             {
                 for (int p = 0; p < playerCount; p++)
-                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight,
+                        cfg.Arena.RewindCapTicks);
                 world.TickAll(inputs);
             }
             return world.StateHash();
@@ -338,7 +373,8 @@ namespace Ring.Simulation.Tests
             {
                 for (int p = 0; p < playerCount; p++)
                 {
-                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight,
+                        cfg.Arena.RewindCapTicks);
                     if (p == CoreWalker && i >= CoreEntryTick)
                         inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
                 }
@@ -482,7 +518,8 @@ namespace Ring.Simulation.Tests
             {
                 for (int p = 0; p < 3; p++)
                 {
-                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight);
+                    inputs[p] = Scripted(ref rng, ref aimHeld[p], cfg.Hero.MaxAimHeight,
+                        cfg.Arena.RewindCapTicks);
                     if (p == CoreWalker && i >= CoreEntryTick)
                         inputs[p].MoveDir = WalkInToCore(world.PlayerAt(p).Pos, in cfg);
                 }
@@ -716,7 +753,7 @@ namespace Ring.Simulation.Tests
             // assignment instead of `math.min`) satisfies it exactly and kills
             // nothing. This is the axis that mutation dies on: a depth BELOW
             // the cap has to come back untouched, and an assignment of the cap
-            // would read as 6.
+            // would read as 5.
             //
             // It is a SEPARATE test rather than a second case inside the one
             // above, because that one is named for the clamp and a legal depth
@@ -725,8 +762,9 @@ namespace Ring.Simulation.Tests
             // the sanitizer is already right, and what makes this one a witness
             // is the mutation, not a red run.
             //
-            // TestConfigs.Open() carries the cap of 6 it inherits from
-            // Default(), so 2 is legal by construction.
+            // TestConfigs.Open() carries the cap of 5 it inherits from
+            // Default() (6 until app-gtj6 lowered it), so 2 is legal by
+            // construction.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             SimInput legal = w.SanitizeForTest(new SimInput { RewindTicks = 2 });
@@ -1573,6 +1611,66 @@ namespace Ring.Simulation.Tests
             // claims to (slide, dash, ricochet, both fire modes), not merely
             // that its hash is stable.
             //
+            // app-88jb Т34 STEP 2 (plan Т34, finding D-I12): SEVEN MORE
+            // MECHANICS, AND THEY COME BEFORE THE RE-PIN ON PURPOSE. The epic
+            // put the impact, the tilt, the knockdown, the round's ricochet,
+            // the pierce, the hard body separation and the rewind into the
+            // simulation, and each of them is a branch the digest would have
+            // pinned WITHOUT any witness that the scenario reaches it — a
+            // re-pin taken first would have frozen a number that guards
+            // nothing new. Every assertion of this test, old and new, in the
+            // order they stand below:
+            //   1. ZONE — the run never enters the core (Р299);
+            //   2. SlidesUsed > 0, DashesUsed > 0, at least one DashRicocheted,
+            //      and a Head-zone hit or an aimed shot (I4's originals, kept
+            //      word for word);
+            //   3. IMPACT, on both kinds of body: a PlayerDamaged with
+            //      ImpactSpeed > 0 (a mob's round shoved the collector — that
+            //      field IS the impulse's carrier, Т8) and a ProjectileHit on a
+            //      mob (DamageMob adds Impact.VelocityDelta into Vel on every
+            //      one of them, Т4);
+            //   4. TILT — the peak |MobState.Tilt| over every mob and every tick
+            //      is above zero (Impact.AngularImpulse into TiltVel, integrated
+            //      by TiltSystem, Т5);
+            //   5. KNOCKDOWN — pinned at ZERO entries into MobAiState.Downed,
+            //      the honest depth; the assertion's own note says why;
+            //   6. RICOCHET — at least one ProjectileRicocheted (Т19/Т30);
+            //   7. PIERCE — pinned at ZERO pierced rounds behind a numeric
+            //      premise that says why; the assertion's own note again;
+            //   8. SEPARATION, two of the three pairs Т22 resolves — mob↔mob and
+            //      collector↔mob — each as "a contact was reached" plus "no
+            //      overlap survives to the end of a tick". The third pair,
+            //      collector↔collector, is NOT here and cannot be: this is the
+            //      solo scenario, and the multiplayer golden has no coverage
+            //      companion of its own;
+            //   9. REWIND, as three separate witnesses: the scenario fed a depth
+            //      above zero at all (the premise, counted off the SimInput this
+            //      test itself hands to Tick), a ProjectileFired with
+            //      BirthSteps > 1 (the INPUT half — Т27's catch-up steps, Т32's
+            //      count of them), and a tick with a live round at
+            //      RewindLeft > 0 (the PICTURE half, Т28).
+            //
+            // MEASURED, NOT ESTIMATED (2026-09-03, session 86). The
+            // coordinator's probe loaded THIS test assembly
+            // (Ring.Simulation.Tests.dll) under `mono -O=-float32` — the
+            // editor's own float mode — called Scripted/ScenarioStart/
+            // RunScripted through reflection, reproduced all three pinned
+            // digests bit for bit first, and only then counted over this very
+            // scenario with both edits of Т34 in: the cap of 5 (app-gtj6) and
+            // the ninth draw. What it found, in the order of the list above:
+            // 7 PlayerDamaged with ImpactSpeed > 0 and 23 ProjectileHit on
+            // mobs; 295 ticks with a tilted mob and a peak of 0.7111 rad; 0
+            // entries into Downed; 202 ProjectileRicocheted; 0 pierced rounds;
+            // 7 mob↔mob pairs in exact contact and 1 collector↔mob contact tick
+            // (gap 0.0010), with 0 overlaps deeper than a millimeter in either
+            // pair; 825 inputs with RewindTicks > 0 (the depths 0..5 drawn
+            // 175/161/152/174/174/164 times), 76 births with BirthSteps > 1
+            // and 134 ticks with a round at RewindLeft > 0 (108 rounds); and
+            // for the originals SlidesUsed 2, DashesUsed 11, 4 DashRicocheted,
+            // an aimed shot, and a run that stays in the outer ring. Every
+            // threshold below is "at least one" or an equality at the measured
+            // zero — never a number tuned to the run.
+            //
             // The event buffer is not auto-cleared per tick (SimulationWorld.
             // Tick never calls ClearEvents() itself — only ClearEvents()
             // callers decide when), and it stops recording once it hits
@@ -1602,9 +1700,46 @@ namespace Ring.Simulation.Tests
             // that says so.
             Zone deepestZone = Zone.Outer;
 
+            // app-88jb Т34: the seven mechanics' counters. EVERYTHING THAT
+            // ALLOCATES IS BUILT HERE, before the first tick — the three sets
+            // and the radius scratch are the only heap objects, and the loop
+            // only reads, clears and swaps them.
+            int collectorImpacts = 0;      // PlayerDamaged with ImpactSpeed > 0
+            int mobImpacts = 0;            // ProjectileHit on a mob
+            float peakTilt = 0f;           // max |Tilt| over every mob and tick
+            int downedEntries = 0;         // transitions INTO MobAiState.Downed
+            int projectileRicochets = 0;   // ProjectileRicocheted
+            int rewindInputs = 0;          // inputs this test fed with RewindTicks > 0
+            int catchUpBirths = 0;         // ProjectileFired with BirthSteps > 1
+            int pictureTicks = 0;          // ticks with a live round at RewindLeft > 0
+            int exactMobContacts = 0;      // mob↔mob pairs at |gap| <= 1e-4 at a tick's end
+            float deepestMobOverlap = 0f;  // most negative mob↔mob gap seen (0 = none)
+            int collectorContactTicks = 0; // ticks with a collector↔mob gap <= Skin + 1e-4
+            float deepestCollectorOverlap = 0f;
+            // Which mob ids are Downed as of the previous tick (`downedBefore`)
+            // and as of this one (`downedNow`); the two swap roles every tick,
+            // so an ENTRY is "Downed now, not Downed before" and a mob that
+            // stays down for its DownedSeconds is counted once, not per tick.
+            var downedBefore = new System.Collections.Generic.HashSet<int>();
+            var downedNow = new System.Collections.Generic.HashSet<int>();
+            // Round ids ever seen carrying a Damage below their own base — the
+            // ONLY trace a pierce leaves: ProjectileFlight.TryPierce is the one
+            // writer of Damage after birth, it cuts the field and emits nothing
+            // (bd app-tbvg). A set, so a round that flies on for many ticks
+            // after its pierce is one pierce, not many.
+            var piercedRoundIds = new System.Collections.Generic.HashSet<int>();
+            // Body radius per live mob slot, refilled every tick from the
+            // world's own archetype lookup — the same MobConfigRefFor the
+            // separation pass reads, so the gaps below are measured with the
+            // radii the world actually resolved, not a restated table.
+            var mobRadius = new float[world.Mobs.Length];
+
             for (int i = 0; i < Ticks; i++)
             {
-                world.Tick(Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight));
+                SimInput input = Scripted(ref rng, ref aimHeld, cfg.Hero.MaxAimHeight,
+                    cfg.Arena.RewindCapTicks);
+                if (input.RewindTicks > 0) rewindInputs++;
+                world.Tick(input);
                 Zone here = Geometry.ZoneOf(world.Player.Pos, in cfg.Arena);
                 if (here > deepestZone) deepestZone = here;
 
@@ -1614,12 +1749,70 @@ namespace Ring.Simulation.Tests
                     if (ev.Kind == SimEventKind.DashRicocheted) dashRicochetCount++;
                     if (ev.Kind == SimEventKind.ProjectileHit && ev.Zone == HitZone.Head)
                         headshotProjectileHits++;
+                    if (ev.Kind == SimEventKind.ProjectileHit) mobImpacts++;
+                    if (ev.Kind == SimEventKind.PlayerDamaged && ev.ImpactSpeed > 0f) collectorImpacts++;
+                    if (ev.Kind == SimEventKind.ProjectileRicocheted) projectileRicochets++;
+                    if (ev.Kind == SimEventKind.ProjectileFired && ev.BirthSteps > 1) catchUpBirths++;
                 }
                 world.ClearEvents();
 
+                bool anyPictureRound = false;
                 for (int p = 0; p < world.ProjectileCount; p++)
                 {
-                    if (world.Projectiles[p].VelZ != 0f) { anyAimedProjectileFired = true; break; }
+                    ProjectileState round = world.Projectiles[p];
+                    if (round.VelZ != 0f) anyAimedProjectileFired = true;
+                    if (round.RewindLeft > 0) anyPictureRound = true;
+                    // A mob's round is born with its own archetype's
+                    // ProjectileDamage (MobAiSystem); the gunner's stands for
+                    // all three shooting archetypes here because the fixture
+                    // gives them one and the same number.
+                    float baseDamage = round.Owner == ProjectileOwner.Player
+                        ? cfg.Weapon.Damage : cfg.Gunner.ProjectileDamage;
+                    if (round.Damage < baseDamage) piercedRoundIds.Add(round.Id);
+                }
+                if (anyPictureRound) pictureTicks++;
+
+                // Bodies at the END of the tick — tilt, knockdown entries, and
+                // the gaps the separation pass is answerable for. The
+                // collector↔mob gap is measured ONLY WHILE HE IS ALIVE: a corpse
+                // is not a body (SeparationSystem.SnapshotBodies gives it no
+                // radius), so a mob walking over one would read here as an
+                // "overlap" the mechanic never promised to prevent. Measured on
+                // this run: he dies on tick 886, the one contact tick is 520,
+                // and the gate changes neither number — 1 contact tick and no
+                // overlap, gated or not.
+                downedNow.Clear();
+                int mobCount = world.MobCount;
+                PlayerState collector = world.Player;
+                float minCollectorGap = float.MaxValue;
+                for (int m = 0; m < mobCount; m++)
+                {
+                    MobState mob = world.Mobs[m];
+                    mobRadius[m] = world.MobConfigRefFor(mob.Type).Radius;
+                    peakTilt = math.max(peakTilt, math.abs(mob.Tilt));
+                    if (mob.Ai == MobAiState.Downed)
+                    {
+                        if (!downedBefore.Contains(mob.Id)) downedEntries++;
+                        downedNow.Add(mob.Id);
+                    }
+                    minCollectorGap = math.min(minCollectorGap,
+                        math.distance(collector.Pos, mob.Pos) - (cfg.Hero.Radius + mobRadius[m]));
+                }
+                var swap = downedBefore; downedBefore = downedNow; downedNow = swap;
+                if (mobCount > 0 && collector.Alive)
+                {
+                    if (minCollectorGap <= Geometry.Skin + 1e-4f) collectorContactTicks++;
+                    deepestCollectorOverlap = math.min(deepestCollectorOverlap, minCollectorGap);
+                }
+                for (int a = 0; a < mobCount; a++)
+                {
+                    for (int b = a + 1; b < mobCount; b++)
+                    {
+                        float gap = math.distance(world.Mobs[a].Pos, world.Mobs[b].Pos)
+                            - (mobRadius[a] + mobRadius[b]);
+                        if (math.abs(gap) <= 1e-4f) exactMobContacts++;
+                        deepestMobOverlap = math.min(deepestMobOverlap, gap);
+                    }
                 }
             }
 
@@ -1634,6 +1827,102 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
                 "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
                 "least one aimed (VelZ != 0) shot, proving the AimHeld branch actually fired");
+
+            // IMPACT (item 3). ImpactSpeed is the field a receiver sizes the
+            // shove by (Т8), and it is zero for a chaser's contact strike by
+            // decision — so "above zero" is precisely "a round hit him".
+            Assert.GreaterOrEqual(collectorImpacts, 1,
+                "импакт по сборщику не исполнился: ни одного PlayerDamaged с ImpactSpeed > 0 — " +
+                "раунд моба ни разу не толкнул сборщика");
+            Assert.GreaterOrEqual(mobImpacts, 1,
+                "импакт по мобу не исполнился: ни одного ProjectileHit — DamageMob ни разу не положил " +
+                "Impact.VelocityDelta в Vel");
+
+            // TILT (item 4). Any non-zero Tilt on any mob is the spring having
+            // been struck at all; the measured peak is 0.7111 rad.
+            Assert.Greater(peakTilt, 0f,
+                "крен не исполнился: ни один моб ни на одном тике не был наклонён — " +
+                "Impact.AngularImpulse не дошёл до TiltVel или TiltSystem его не проинтегрировал");
+
+            // KNOCKDOWN (item 5) — PINNED AT THE HONEST ZERO, form (a) of brief
+            // §2.3, on the precedent of ExtractionScenario_ReachesTheWholeLoop:
+            // the depth ACTUALLY reached is pinned by equality, so that the day
+            // it becomes reachable the test says so out loud and asks to be
+            // updated, instead of quietly passing under a doc that claims
+            // more than the run delivers. The entry is TiltSystem's
+            // `|Tilt| > TiltFallAngle`, strictly, and the measured peak of this
+            // run is 0.71 rad against the fixture's 0.9 on the chaser and the
+            // gunner alike: the blows that tilt a mob here land further apart
+            // than the spring's TiltSettleSeconds (0.9 s), so one shot's tilt
+            // has rung down before the next arrives and never accumulates
+            // toward the threshold. The witnesses of a knockdown that DOES
+            // happen are ImpactPhysicsTests' TiltAboveTheThreshold_PutsTheMobDown_
+            // AndItGetsUpOnItsOwn and TiltExactlyAtTheThreshold_DoesNotKnockDown
+            // (spec tests 8/10), with a fixture built to cross the line. THIS
+            // DIGEST DOES NOT GUARD THE KNOCKDOWN — said here, not implied.
+            Assert.AreEqual(0, downedEntries,
+                "опрокидывание в этом сценарии недостижимо (пик крена ниже TiltFallAngle), и дайджест " +
+                "его НЕ охраняет — свидетели живут в ImpactPhysicsTests; стало достижимо — обнови пин");
+
+            // RICOCHET (item 6). Т19's reflection, reported by Т30's kind.
+            Assert.GreaterOrEqual(projectileRicochets, 1,
+                "рикошет раунда не исполнился: ни одного ProjectileRicocheted за весь сценарий");
+
+            // PIERCE (item 7) — PINNED AT THE HONEST ZERO, form (a) of brief
+            // §2.3, same precedent, behind a premise that says WHY in numbers.
+            // The rule is Impact.Pierces: projectileMass / targetMass above
+            // PierceMassRatio AND strict overkill. At the fixture's numbers the
+            // mass clause fails against every body a collector's round can
+            // meet — the lightest mob is the GUNNER at 70, not the chaser at 90
+            // (checked against all four archetypes, which is why the premise
+            // takes the minimum of the four rather than naming one), and
+            // 2.6 / 70 = 0.037 sits below the 0.06 ratio; the mob's own round
+            // (3.0 against the 120 collector or a 70 gunner) fares no better.
+            // ProjectileFlightTests.ShippedNumbers_PierceNobody pins that
+            // arithmetic for both shooters and all five masses, and the
+            // witnesses of a pierce that DOES happen live in that file's other
+            // pierce tests. THIS DIGEST DOES NOT GUARD THE PIERCE — said, not
+            // implied.
+            float lightestMobMass = math.min(math.min(cfg.Chaser.Mass, cfg.Gunner.Mass),
+                math.min(cfg.Elite.Mass, cfg.Director.Mass));
+            Assert.Less(cfg.Weapon.ProjectileMass / lightestMobMass, cfg.Weapon.PierceMassRatio,
+                "премисса: при фикстурных числах выстрел сборщика не пробивает даже самое лёгкое тело — " +
+                "если это перестало быть так, пин ниже обязан обновиться, а не молча зеленеть");
+            Assert.AreEqual(0, piercedRoundIds.Count,
+                "пробитие в этом сценарии недостижимо при фикстурных числах, и дайджест его НЕ охраняет — " +
+                "свидетели пробития живут в ProjectileFlightTests; стало достижимо — обнови пин");
+
+            // SEPARATION (item 8). An EXACT contact at a tick's end is the
+            // fingerprint of Geometry.ResolveBodyPair — it kills the overlap to
+            // zero and adds no skin to a pair (ruling 107); SoftSeparateMobs, a
+            // force, never lands two bodies exactly on their radii. And no pair
+            // may end a tick more than a millimeter inside each other: that is
+            // what the hard pass guarantees, and the mutant that drops the
+            // collector's pass walks him through bodies and overlaps them.
+            Assert.GreaterOrEqual(exactMobContacts, 1,
+                "разведение моб↔моб не исполнилось: ни одна пара мобов ни на одном тике не кончила тик " +
+                "в точном контакте — отпечатка Geometry.ResolveBodyPair нет");
+            Assert.GreaterOrEqual(deepestMobOverlap, -1e-3f,
+                "разведение моб↔моб нарушено: пара мобов кончила тик с перекрытием глубже миллиметра");
+            Assert.GreaterOrEqual(collectorContactTicks, 1,
+                "премисса разведения сборщик↔моб пуста: сборщик ни на одном тике не был в контакте с мобом");
+            Assert.GreaterOrEqual(deepestCollectorOverlap, -1e-3f,
+                "разведение сборщик↔моб нарушено: сборщик кончил тик внутри тела моба глубже миллиметра — " +
+                "жёсткое разведение не сработало");
+
+            // REWIND (item 9), three witnesses because the depth has two
+            // halves and a premise: without inputs above zero the other two
+            // are vacuous; BirthSteps > 1 is the input half actually having
+            // stepped a fresh round (needs k above RewindPictureTicks); a live
+            // RewindLeft is the picture half actually asking PositionHistory.
+            Assert.GreaterOrEqual(rewindInputs, 1,
+                "премисса отмотки пуста: сценарий ни разу не подал ввод с RewindTicks > 0");
+            Assert.GreaterOrEqual(catchUpBirths, 1,
+                "половина ввода отмотки не исполнилась: ни одного ProjectileFired с BirthSteps > 1 — " +
+                "догоняющие шаги Т27 ни разу не сделаны");
+            Assert.GreaterOrEqual(pictureTicks, 1,
+                "половина картинки отмотки не исполнилась: ни на одном тике не было живого раунда " +
+                "с RewindLeft > 0 (Т28)");
         }
 
         /// Ф5-0: the two premises ScenarioStart leans on, checked rather than
