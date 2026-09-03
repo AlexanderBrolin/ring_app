@@ -62,16 +62,26 @@ namespace Ring.Simulation.Core
         /// hit itself, the damage and the death stay server business (CR 3) —
         /// this parameter carries no decision, only its consequence.
         ///
-        /// NO DEFAULT VALUE, DELIBERATELY. All three call sites are patched
+        /// NO DEFAULT VALUE, DELIBERATELY. Every call site is patched
         /// in the task that adds it, exactly as `DamageMob.ownerIndex` was:
         /// a defaulted `ImpactPulse.None` would silently mean "nothing hit
         /// this collector" on a live combat path, and the one caller that
         /// forgot to pass a real pulse would look identical to the callers
         /// that legitimately have none.
         ///
-        /// ⚠ Т22 grows this signature by one more parameter
-        /// (`ReadOnlySpan&lt;PushableBody&gt; visibleBodies`, finding Н20), so
-        /// the same three call sites get the same treatment a second time.
+        /// ⚠ Т22 grew this signature by one more parameter
+        /// (`ReadOnlySpan&lt;PushableBody&gt; visibleBodies`, finding Н20), and
+        /// every call site got the same treatment a second time.
+        /// ⚠ AN EARLIER WORDING COUNTED "THREE CALL SITES" AND NO ARRANGEMENT
+        /// OF THE TREE EVER MATCHED IT (review of bd `app-njmi`, finding 6):
+        /// there is exactly ONE production caller — `PlayerPredictionCore.
+        /// Predict` — and six in tests. The count is dropped rather than
+        /// corrected, because a number like this rots on the next task that
+        /// adds a fixture, and what the paragraph is really saying does not
+        /// need it. ⛔ AND THE ONE PRODUCTION CALLER IS WHY THE RULE MATTERS:
+        /// it passed `ReadOnlySpan&lt;PushableBody&gt;.Empty` for three sessions
+        /// while every fixture passed real bodies, so the client separated off
+        /// nothing in a live match and no test could see it (bd `app-njmi`).
         public static void Step(ref PlayerState p, in SimInput rawInput, in SimConfig cfg,
             in ImpactPulse pulse, System.ReadOnlySpan<PushableBody> visibleBodies)
         {

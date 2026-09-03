@@ -1181,6 +1181,18 @@ namespace Ring.Presentation.Net
         void TimeManager_OnPreTick()
         {
             if (_controller == null) return;
+
+            // ⛔ ABOVE THE INPUT GATE, AND THAT IS THE POINT (review of
+            // `app-njmi`, finding 3). The sampler hands out ONE frame per
+            // RENDER frame (Р35) and hands out nothing while the pause gate is
+            // shut, so a tick that gets no sample used to get no bodies either
+            // — on the SECOND tick of a frame that produced two, which is
+            // exactly the frame where the client is already behind, and for
+            // the whole of a pause. Building the list needs `_controller` and
+            // `_snapshots` and nothing else, so it has no business sharing a
+            // gate with the input.
+            FeedVisibleBodies();
+
             if (!_requestFrameInput(out SimInput frame)) return;
 
             // Measured ONCE, spent twice: it rides out in the input record the
@@ -1191,7 +1203,6 @@ namespace Ring.Presentation.Net
             _rewindDepth = MeasureRewindTicks();
             frame.RewindTicks = _rewindDepth;
             _controller.SetPendingInput(in frame);
-            FeedVisibleBodies();
         }
 
         /// bd `app-njmi`: the bodies the local collector may be pushed off,
@@ -1212,9 +1223,41 @@ namespace Ring.Presentation.Net
         /// finding D2-C11): these positions are one snapshot old — about
         /// 140 ms under the lag gate's 80 ms link — worth up to 0.73 m of
         /// disagreement per tick between what the client separates against and
-        /// what the server does. No arrangement of this method makes them
-        /// fresher; point 7 of the Ф4 gate is where that number gets measured
-        /// instead of computed.
+        /// what the server does. Point 7 of the Ф4 gate is where that number
+        /// gets measured instead of computed.
+        ///
+        /// ⚠ AND ONE TICK OF THAT AGE IS THIS CALL SITE'S OWN, NOT THE
+        /// SCHEME'S (review of `app-njmi`, finding 3). `OnPreTick` fires
+        /// BEFORE the frame's packets are read — FishNet's own loop says so in
+        /// as many words ("this has to be called inside the loop because
+        /// OnPreTick promises data hasn't been read yet. Therefor iterate must
+        /// occur after OnPreTick") — so a snapshot that arrives on this frame
+        /// lands in the queue after this method has already answered, and
+        /// prediction runs on a picture one tick older than the one available
+        /// to it. That is ~33 ms on top of the ~140, and unlike the rest of
+        /// them it is removable: the list would have to be built after
+        /// `TryIterateData`, which means pulling it from the controller's own
+        /// tick rather than pushing it from here. Left as it stands because
+        /// the size of the prize is exactly what the gate measures, and
+        /// rebuilding the wiring before that number exists would be a change
+        /// made on an argument.
+        ///
+        /// ⚠ A REPLAYED TICK GETS THE LIST OF THE TICK IT IS REPLAYED ON,
+        /// NOT ITS OWN (review of `app-njmi`, finding 4). FishNet replays the
+        /// `ReplicateData` queue from the correction tick
+        /// (`PredictionManager.ReconcileToStates`), and every replayed call
+        /// reads this one field. So a tick separated against list L when it
+        /// first ran, and against a NEWER list when it is replayed. The
+        /// project already met this exact shape once and answered it with a
+        /// table — `ImpactPulseLog`, finding D2-C5, "the client holds a
+        /// tick → impulse table for the whole correction window" — and the
+        /// same answer would cost a window's worth of body lists here
+        /// (`MaxMobs + MaxPlayers` entries per tick of the window). It is NOT
+        /// taken in this task: what it buys is reproducibility between the
+        /// forward run and the replay, which is measured by
+        /// `PlayerPredictionCore.LastCorrectionMeters` — point 7 of the Ф4 lag
+        /// gate — and that measurement does not exist yet. The gate is where
+        /// this gets a number instead of an argument.
         ///
         /// DEAD COLLECTORS ARE LEFT OUT rather than admitted with a zero
         /// radius. The server keeps the corpse's slot because its reciprocal
@@ -1234,20 +1277,11 @@ namespace Ring.Presentation.Net
                 return;
             }
 
-            int n = 0;
-            for (int i = 0; i < newest.MobCount && n < _visibleBodies.Length; i++)
-            {
-                ref readonly MobSimConfig mc = ref SimConfig.MobConfigFor(in _cfg, newest.Mobs[i].Type);
-                _visibleBodies[n++] = new PushableBody(newest.Mobs[i].Pos, mc.Radius, mc.Mass);
-            }
-            for (int i = 0; i < newest.PlayerCount && n < _visibleBodies.Length; i++)
-            {
-                if (i == newest.LocalPlayerIndex) continue;
-                if (!newest.Players[i].Alive) continue;
-                _visibleBodies[n++] = new PushableBody(newest.Players[i].Pos,
-                    _cfg.Hero.Radius, _cfg.Hero.Mass);
-            }
-
+            // THE LIST ITSELF IS BUILT IN `VisibleBodies.Collect`, where a
+            // fixture can reach it (review of `app-njmi`, finding 5): what
+            // stays here is the wiring — which frame to read and who to hand
+            // the result to.
+            int n = VisibleBodies.Collect(newest, in _cfg, _visibleBodies);
             _controller.SetVisibleBodies(new System.ReadOnlySpan<PushableBody>(_visibleBodies, 0, n));
         }
 
@@ -1308,9 +1342,17 @@ namespace Ring.Presentation.Net
         /// equality is the guarantee: whichever door the reconcile came
         /// through, the tick the core latches is `ClientStateTick`.
         ///
-        /// THE NULL CHECKS ARE THE ONES THAT CAN FIRE, AND NO OTHERS.
-        /// `_snapshots` and `_clock` are built by `Configure`, which this
-        /// handler can run before, so they are tested. `_controller` is
+        /// THE NULL CHECKS HERE ARE BELT AND BRACES, AND THE EARLIER WORDING
+        /// OF THIS PARAGRAPH GAVE THEM A REASON THAT DOES NOT EXIST (review of
+        /// `app-njmi`, finding 8): it said `_snapshots` and `_clock` "are built
+        /// by `Configure`, which this handler can run before" — this class has
+        /// no `Configure` at all, and the subscription that reaches this method
+        /// (`TimeManager.OnPreTick += TimeManager_OnPreTick`) is made inside
+        /// `Restart`, AFTER both fields are built and under the same
+        /// `_registered` flag as the broadcast registrations. So the handler
+        /// cannot run before them, the checks cannot fire, and code that omits
+        /// them — `FeedVisibleBodies` does — is right rather than forgetful.
+        /// `_controller` is
         /// already tested by the only caller (`TimeManager_OnPreTick`, first
         /// line) and `Core` is a `readonly` field initialized with the
         /// controller itself, so a second test here would be a test of
@@ -1840,8 +1882,14 @@ namespace Ring.Presentation.Net
             // bd `app-njmi`: every body a snapshot can hold, sized once from the
             // same two ceilings the server sizes its own list from
             // (`SimulationWorld._pushBodies`). Taken here rather than grown on
-            // demand because this one is filled on the TICK path, which
-            // `AllocationTests` walks — see `FeedVisibleBodies`.
+            // demand because this one is filled on the TICK path, and the
+            // project's rule is that a tick allocates nothing.
+            // ⚠ NO TEST WATCHES THIS PATH, and saying otherwise would be worse
+            // than saying nothing (review of `app-njmi`, finding 1):
+            // `AllocationTests` walks `SimulationWorld.Tick`, the saturated
+            // trio, `VisibilitySystem.Compute`, `EventRelevance.ShouldDeliver`
+            // and the tracer — it names neither this class nor the prediction
+            // core. The discipline here is the author's, not a fixture's.
             _visibleBodies = new PushableBody[math.max(1, cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers)];
             _eventScratch = new SnapshotBlocks.EventRecord[math.max(1, _net.SnapshotEventBudget)];
             _selfScratch = new byte[math.max(1, cfg.Hero.MaxInventoryItems)];

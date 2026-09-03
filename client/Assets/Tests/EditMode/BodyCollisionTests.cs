@@ -558,6 +558,90 @@ namespace Ring.Simulation.Tests
                 "премисса: сборщик прошёл сквозь тело — фикстура ничего не разводила");
         }
 
+        /// bd `app-njmi`, review finding 5: the LIST the combat path builds,
+        /// against the list the server builds from the same world.
+        ///
+        /// `CombatPath_SeparatesTheClientFromVisibleBodies` above proves the
+        /// core USES what it is handed, and builds its own list by hand to do
+        /// it. That leaves the piece most able to drift — the client's own
+        /// `VisibleBodies.Collect` against `SeparationSystem.SnapshotBodies` —
+        /// with no witness at all, which is how the empty span survived three
+        /// sessions in the first place.
+        ///
+        /// THE COMPARISON IS AGAINST THE SERVER'S OWN BUFFER, not against a
+        /// list this test writes out: a fixture that restates the rule cannot
+        /// catch the rule changing on one side. The two legitimate differences
+        /// are asserted as differences rather than papered over — the local
+        /// collector is absent from the client's list where the server keeps
+        /// its slot, and a corpse is absent where the server keeps it with a
+        /// zero radius.
+        [Test]
+        public void VisibleBodies_MatchTheServersOwnList_ExceptWhereTheyMustNot()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 3);
+            TestWorlds.RelocatePlayerForTest(w, 0, new float2(0f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(4f, 0f));
+            TestWorlds.RelocatePlayerForTest(w, 2, new float2(-4f, 0f));
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(2f, 0f)),
+                (MobType.Gunner, new float2(0f, 3f)));
+
+            // The third collector is dead: the server keeps its slot with a
+            // zero radius, the client's list must not carry it at all.
+            PlayerState corpse = w.PlayerAt(2);
+            corpse.Hp = 0f;
+            corpse.Alive = false;
+            w.SetPlayerForTest(2, corpse);
+
+            // The frame this client would have decoded from that world.
+            // Built through the frame's own constructor, so the arrays are the
+            // ones a real decode writes into and their sizes are the config's.
+            var frame = new RenderSnapshot(in cfg)
+            {
+                Tick = 100,
+                LocalPlayerIndex = 0,
+                MobCount = w.MobCount,
+                PlayerCount = 3,
+            };
+            for (int i = 0; i < w.MobCount; i++) frame.Mobs[i] = w.Mobs[i];
+            for (int i = 0; i < 3; i++) frame.Players[i] = w.PlayerAt(i);
+
+            var got = new PushableBody[cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers];
+            int n = Ring.Networking.Client.VisibleBodies.Collect(frame, in cfg, got);
+
+            Assert.AreEqual(w.MobCount + 1, n,
+                "клиентский список обязан нести всех мобов кадра и ЖИВЫХ чужих сборщиков: "
+                + "локального в нём нет по построению, мёртвого — потому что он не тело");
+
+            // Every mob, with the radius and mass the SERVER would use.
+            for (int i = 0; i < w.MobCount; i++)
+            {
+                MobSimConfig mc = w.MobConfigFor(w.Mobs[i].Type);
+                Assert.AreEqual(mc.Radius, got[i].Radius, 1e-6f,
+                    "радиус тела разъехался с серверным конфигом архетипа");
+                Assert.AreEqual(mc.Mass, got[i].Mass, 1e-6f,
+                    "масса тела разъехалась с серверным конфигом архетипа");
+                Assert.AreEqual(0f, math.distance(w.Mobs[i].Pos, got[i].Pos), 1e-6f,
+                    "позиция тела разъехалась с кадром");
+            }
+
+            // The one collector that is neither local nor dead.
+            Assert.AreEqual(0f, math.distance(new float2(4f, 0f), got[w.MobCount].Pos), 1e-4f,
+                "живой чужой сборщик обязан быть в списке — на своём месте");
+            Assert.AreEqual(cfg.Hero.Radius, got[w.MobCount].Radius, 1e-6f,
+                "чужой сборщик обязан нести героический радиус");
+
+            // And the two absences, stated as absences.
+            for (int i = 0; i < n; i++)
+            {
+                Assert.Greater(math.distance(new float2(0f, 0f), got[i].Pos), 1e-3f,
+                    "локальный сборщик попал в собственный список тел — он бы расталкивал сам себя");
+                Assert.Greater(math.distance(new float2(-4f, 0f), got[i].Pos), 1e-3f,
+                    "труп попал в список тел — сервер держит его слот с нулевым радиусом, "
+                    + "клиенту он не нужен вовсе");
+            }
+        }
+
         /// Victim of mutation M22a (apply displacements INSIDE the scan) and the
         /// reason the double buffer is a contract rather than a preference.
         ///

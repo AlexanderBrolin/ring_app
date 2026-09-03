@@ -279,4 +279,82 @@ namespace Ring.Networking.Client
             return true;
         }
     }
+
+    /// The bodies a client may be pushed off, read out of the newest snapshot
+    /// (bd `app-njmi`).
+    ///
+    /// IT LIVES HERE FOR THE REASON `ClientFrameDecoder` ABOVE DOES, and the
+    /// review of that task is what moved it (finding 5): written as a private
+    /// method of `NetworkSimBackend` this was the one piece of NEW logic in
+    /// the task that no fixture could reach — that class needs a live
+    /// `NetworkManager` — while being exactly the piece that can drift away
+    /// from its server counterpart. Nothing in it needs a `NetworkManager`, a
+    /// scene or a connection: it is a function of a decoded frame and the
+    /// match's config, writing into a buffer the caller owns.
+    ///
+    /// ITS COUNTERPART IS `SeparationSystem.SnapshotBodies`, and the pair is
+    /// what owner decision Н20 rests on: the server pushes a collector off the
+    /// bodies of the world, the client off the bodies it was sent, and under
+    /// LoS visibility those two sets agree for every pair close enough to
+    /// overlap. Where they legitimately differ is written down — the local
+    /// collector is absent here rather than skipped by index, and a corpse is
+    /// absent rather than present with a zero radius — and each difference is
+    /// argued at the line that makes it.
+    public static class VisibleBodies
+    {
+        /// Fills `destination` from `frame` and answers how many bodies were
+        /// written. Mobs first, then the other collectors — the order the
+        /// server's own snapshot uses, kept for readers rather than for
+        /// correctness: `BodySeparation.Accumulate` sums displacements into
+        /// one buffer and the sum does not depend on the order of its terms.
+        ///
+        /// A SHORT `destination` IS FILLED TO ITS OWN LENGTH and the rest is
+        /// dropped, exactly as `TracerProjectiles.WriteInto` does with the
+        /// render frame: writing past the caller's array would be the one
+        /// failure this method could not report as a value. The caller sizes
+        /// it from `MaxMobs + MaxPlayers`, which is what a snapshot can hold.
+        public static int Collect(RenderSnapshot frame, in SimConfig cfg,
+            PushableBody[] destination)
+        {
+            if (frame == null || destination == null) return 0;
+
+            int n = 0;
+            for (int i = 0; i < frame.MobCount && n < destination.Length; i++)
+            {
+                // Position off the wire, radius and mass off the config by
+                // archetype — the wire carries neither and does not need to
+                // (`app-njmi`'s own note). The seam is the one the server
+                // reads through as well (`SimulationWorld.MobConfigRefFor`
+                // delegates to it), so a retune of a mob's size reaches both
+                // sides from one `.asset`.
+                ref readonly MobSimConfig mc = ref SimConfig.MobConfigFor(in cfg, frame.Mobs[i].Type);
+                destination[n++] = new PushableBody(frame.Mobs[i].Pos, mc.Radius, mc.Mass);
+            }
+
+            for (int i = 0; i < frame.PlayerCount && n < destination.Length; i++)
+            {
+                // ⛔ THE LOCAL COLLECTOR IS NEVER A BODY IT PUSHES OFF. The
+                // server keeps its own slot in the list and skips it by index
+                // (`skipIndex`); the client's list simply never holds it,
+                // which is the `skipIndex = -1` case `BodySeparation.
+                // Accumulate` documents as the client's shape.
+                if (i == frame.LocalPlayerIndex) continue;
+
+                // ⛔ AND A CORPSE IS LEFT OUT rather than admitted with a zero
+                // radius. The server keeps the dead collector's slot because
+                // its reciprocal buffers are indexed by slot and a map would
+                // be a second answer, marking it unpushable with `Radius = 0`;
+                // this list feeds no reciprocals and is indexed by nobody, so
+                // leaving it out reaches the same outcome by the shorter road
+                // — `Accumulate` declines a body with `Radius <= 0` either way.
+                if (!frame.Players[i].Alive) continue;
+
+                destination[n++] = new PushableBody(frame.Players[i].Pos,
+                    cfg.Hero.Radius, cfg.Hero.Mass);
+            }
+
+            return n;
+        }
+    }
+
 }

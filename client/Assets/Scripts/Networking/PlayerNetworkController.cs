@@ -355,12 +355,17 @@ namespace Ring.Networking
         /// disagreement in the inputs each tick), and no arrangement of this
         /// class can make them fresher.
         ///
-        /// GROWS AND NEVER SHRINKS, which is what keeps it off the per-tick
-        /// allocation path `AllocationTests` guards: the array is replaced only
-        /// when a snapshot carries more bodies than any snapshot before it, so
-        /// a match allocates here a handful of times while the wave builds and
-        /// never again. Sizing it from `Arena.MaxMobs` up front would be the
-        /// other legal answer and a worse one — this core is constructed before
+        /// GROWS AND NEVER SHRINKS, so the per-tick path allocates nothing
+        /// once a match is warm: the array is replaced only when a snapshot
+        /// carries more bodies than any snapshot before it, so a match
+        /// allocates here a handful of times while the wave builds and never
+        /// again. ⚠ NO FIXTURE ENFORCES THAT, and an earlier wording of this
+        /// paragraph claimed `AllocationTests` did (review of `app-njmi`,
+        /// finding 1): that file walks `SimulationWorld.Tick`, the saturated
+        /// trio, `VisibilitySystem.Compute`, `EventRelevance.ShouldDeliver`
+        /// and the tracer, and names this class nowhere. Sizing it from
+        /// `Arena.MaxMobs` up front would be the other legal answer and a
+        /// worse one — this core is constructed before
         /// any config is resolved (`PlayerNetworkController`'s field
         /// initializer), and 1350 bodies is two orders of magnitude past what a
         /// visible frame ever holds.
@@ -508,10 +513,27 @@ namespace Ring.Networking
         /// ONLY WHAT THE CLIENT CAN SEE GOES IN, and that is a property of the
         /// wire rather than a filter written here: fog of war is served
         /// (`VisibilityConfig`, CR 4), so a snapshot holds exactly the bodies
-        /// this player is allowed to know about. That is what makes owner
-        /// decision Н20 — "the client separates only against bodies visible to
-        /// it, and the server resolves this collector's input by the same
-        /// rule" — reproducible on both sides rather than a promise.
+        /// this player is allowed to know about — the client's half of owner
+        /// decision Н20.
+        ///
+        /// ⛔ THE SERVER DOES NOT FILTER, AND THAT IS THE DESIGN RATHER THAN A
+        /// GAP — an earlier wording of this paragraph said the server "resolves
+        /// this collector's input by the same rule", which contradicted both
+        /// ADR-001 A13 and the section header of `BodyCollisionTests` (review
+        /// of `app-njmi`, finding 2 and its refinement). A13 states it outright:
+        /// visibility is computed by the NETWORKING layer and the simulation
+        /// may not read it (CRITICAL RULE 1), "so the server separates from
+        /// every body". The two sides still agree, and by arithmetic rather
+        /// than by hope: an overlap needs the bodies closer than 0.95 m, while
+        /// two bodies on opposite sides of any blocker stand at least 2.15 m
+        /// apart — a body in contact is always visible.
+        ///
+        /// ⚠ THE CASE A13 LEAVES OPEN IS THE ONE THAT IS NOT LINE OF SIGHT:
+        /// the frame's byte budget drops mobs when it runs out
+        /// (`SnapshotAssembler`), and a body missing for THAT reason is one
+        /// the client stops separating against while the server does not. A13
+        /// names it "the owner's decision" and this code does not pre-empt it;
+        /// bd `app-73xy` carries the measurement.
         ///
         /// The collector's OWN body is never in this list. The server passes
         /// one snapshot of every body to every collector and skips the caller's
@@ -572,6 +594,19 @@ namespace Ring.Networking
         /// quantity: how far the picture jumped. With prediction perfect the
         /// replay reproduces the same states bit for bit and it is EXACTLY
         /// zero.
+        ///
+        /// ⚠ "PERFECT" GAINED A SECOND CONDITION WITH bd `app-njmi`, and the
+        /// sentence above is now true only under it (review of that task,
+        /// finding 4). Prediction separates against the body list of the tick
+        /// it runs on, and a REPLAYED tick reads the list of the tick it is
+        /// replayed on — so a correction window in which some body touched
+        /// this collector reproduces a slightly different path than the
+        /// forward run did, and this number comes out nonzero against a server
+        /// that agreed perfectly. It is bounded by how far the bodies moved
+        /// across the window rather than by anything about the connection.
+        /// Whether that floor is worth a tick → bodies table (the shape
+        /// `ImpactPulseLog` exists for, finding D2-C5) is decided by what
+        /// point 7 of the Ф4 gate measures, not here.
         ///
         /// Idempotent and safe to call spuriously: `OnPostReconcile` fires once
         /// per state packet for the whole `PredictionManager`, including cycles
