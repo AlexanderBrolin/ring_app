@@ -36,6 +36,27 @@
 # it -- `buildx build --load`, two tags, the provenance labels, the repository
 # from RING_IMAGE_REPO -- and is the one that is actually used.
 #
+# TWO IMAGES, NOT TWO TAGS OF ONE (--dev, app-88jb Т35). The lag gate of
+# Critical Rule 7 needs a server that CARRIES the latency simulator, and the
+# release target does not: everything under DEVELOPMENT_BUILD is cut by the
+# preprocessor there, so neither the simulator, nor the -ring-latency switch,
+# nor the dev overlay exists in it (bd app-per9). --dev therefore swaps the
+# Unity entry point and the artifact directory for their Development twins and
+# builds into a repository of its OWN, '<repo>-dev'.
+#
+# IT IS A SEPARATE REPOSITORY BECAUSE THE TAG WAS ALREADY TAKEN. DEV_TAG below
+# is the moving tag of the RELEASE server -- the one the LAN host pulls -- so a
+# dev image published as ':dev' of the same repository would silently replace
+# the server the host runs. The flag is spelled --dev rather than --target for
+# the same class of reason: `docker build --target` owns that word.
+#
+# THE DOCKERFILE IS UNCHANGED BY IT. Its COPY list names root files one by one
+# and the entry point already appends "$@" to the player, so the extra player
+# arguments the gate needs (-ring-latency 80 5) reach the process at `docker
+# run` time without a second Dockerfile. What the Development player DOES add
+# to the artifact root is two files of separated debug symbols, and those are
+# handled by the inventory below, not by a COPY.
+#
 # NO TIMEOUT AROUND UNITY, ON PURPOSE. A build that also switches the active
 # build target takes far longer than a plain one, and a timeout tuned for the
 # plain case would kill exactly the run that needed the time. Sending the script
@@ -53,14 +74,38 @@ readonly DEFAULT_IMAGE_REPO='brolin/ring-server'
 
 # The moving tag the LAN host and the local smoke run pull. The other tag is the
 # commit sha and is computed below.
+#
+# ⚠ IT IS A TAG, NOT A BUILD KIND, AND THE TWO ARE NOT THE SAME THING. This tag
+# names the RELEASE server the LAN host pulls; a Development build of the server
+# is a different IMAGE (see --dev and image_repo below), and it carries its own
+# ':dev' inside its own repository. Nothing here ever rewrites
+# '<release repo>:dev'.
 readonly DEV_TAG='dev'
 
 # The Unity entry point and the directory it writes into. Both are properties of
 # `Ring.Editor.BuildCommands.BuildLinuxServer`, which builds to
 # "linux-server/RingServer" under RING_BUILD_ROOT -- lower case with a hyphen,
 # which is not what the plan's runbook says (errata E-1 of the phase).
-readonly UNITY_METHOD='Ring.Editor.BuildCommands.BuildLinuxServer'
-readonly ARTIFACT_SUBDIR='linux-server'
+#
+# NOT `readonly`, AND THAT IS THE ONE REASON THEY ARE NOT: --dev replaces BOTH
+# with the Development twins declared right below, and it can only do that after
+# the arguments have been read. They are frozen together, once, immediately
+# after the argument loop -- so everything downstream still reads a constant,
+# and the artifact directory and the build log, which are derived from
+# ARTIFACT_SUBDIR further down, follow the choice by themselves.
+UNITY_METHOD='Ring.Editor.BuildCommands.BuildLinuxServer'
+ARTIFACT_SUBDIR='linux-server'
+
+# The Development twins --dev swaps in. They are a PAIR and are written here as
+# one: `BuildLinuxServerDev` builds to "linux-server-dev/RingServer" (Editor/
+# BuildCommands.cs), and a flag that moved one without the other would pack the
+# release artifact into an image named for the dev one.
+readonly DEV_UNITY_METHOD='Ring.Editor.BuildCommands.BuildLinuxServerDev'
+readonly DEV_ARTIFACT_SUBDIR='linux-server-dev'
+
+# Suffix the dev image's repository name carries, so the release repository is
+# untouchable from this flag.
+readonly DEV_REPO_SUFFIX='-dev'
 
 # The artifact root as it is supposed to look, and the reason this inventory
 # exists: the Dockerfile copies root files BY NAME (`COPY --from=game
@@ -108,7 +153,31 @@ readonly ARTIFACT_ROOT_REQUIRED=(
 # IT IS LISTED RATHER THAN DROPPED, and that is the whole point of the second
 # class: a name nobody knows about is an alarm, so an entry deleted from the
 # inventory would start failing builds on the days it IS produced.
+#
+# THE TWO DEBUG-SYMBOL FILES BELOW ARE THE DEVELOPMENT PLAYER'S, and they are
+# OPTIONAL rather than REQUIRED for the same reason the folder above is: the
+# RELEASE artifact does not contain them, and requiring them would break the
+# production path on the first release build (app-88jb Т35).
+#
+# MEASURED, NOT ASSUMED, and the plan's own guess was wrong about the names.
+# Т35's finding A-I11 expected 'RingServer_BurstDebugInformation_DoNotShip' and
+# a wildcard; the two artifacts of commit 3a477f9 say otherwise. Release root
+# and dev root differ by EXACTLY these two entries -- the Burst folder is named
+# after the PRODUCT ('ring-client-new'), is present in both, and has been
+# inventoried since Stage 2. Both are unstripped ELF objects holding separated
+# debug info, they sit only in the root (nothing matching deeper), and they are
+# 5,888 B and 23,115,168 B; the dev CLIENT artifact shows the same shape with
+# 'Ring_s.debug', so the pattern is '<binary>_s.debug' and not a server quirk.
+#
+# THEY DO NOT SHIP, AND THE DOCKERFILE NEEDED NO EDIT TO KEEP THEM OUT: its
+# COPY list names root files one by one, so an entry it does not name is left
+# behind by construction. That is the decision this inventory's header asks to
+# be taken while looking at the diff -- 23 MB of native debug info is of no use
+# to a headless container that carries no debugger, and the image the lag gate
+# runs must differ from the release one by the PLAYER, not by its baggage.
 readonly ARTIFACT_ROOT_OPTIONAL=(
+    'RingServer_s.debug'
+    'UnityPlayer_s.debug'
     'ring-client-new_BurstDebugInformation_DoNotShip'
 )
 
@@ -163,13 +232,18 @@ die() {
 
 usage() {
     cat <<EOF
-Usage: client/docker/$PROG [--no-push]
+Usage: client/docker/$PROG [--dev] [--no-push]
 
 Builds the Linux headless server player with Unity, packs it into the image
 described by client/docker/Dockerfile under two tags -- <commit sha> and
 '$DEV_TAG' -- prints the image size and id, and pushes both tags.
 
 Options:
+  --dev       build the DEVELOPMENT server player ($DEV_UNITY_METHOD)
+              and pack it into a repository of its own, '<repo>$DEV_REPO_SUFFIX'.
+              That player is the one carrying the latency simulator and the
+              -ring-latency switch the lag gate of Critical Rule 7 needs; the
+              release repository and its '$DEV_TAG' tag are never touched.
   --no-push   do everything except the push (full local run)
   -h, --help  this text
 
@@ -193,14 +267,31 @@ EOF
 # ---------------------------------------------------------------------------
 
 push=1
+# EMPTY, NOT ZERO, and the difference is deliberate: this variable is read as
+# `${dev:+...}` when the image name is assembled, and it is never fed to
+# `(( ))` -- an arithmetic test that evaluates to zero is a failed command, and
+# under `set -e` that is a way to end a run over a cosmetic word (the same trap
+# the note above `commit_note` warns about).
+dev=''
 while (( $# > 0 )); do
     case "$1" in
+        --dev) dev=1 ;;
         --no-push) push=0 ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown argument: '$1'" "run with --help for usage" ;;
     esac
     shift
 done
+readonly push dev
+
+# The pair moves together or not at all, and it is frozen the moment it is
+# settled: from here down the script reads two constants, exactly as it did
+# before the flag existed.
+if [[ -n "$dev" ]]; then
+    UNITY_METHOD="$DEV_UNITY_METHOD"
+    ARTIFACT_SUBDIR="$DEV_ARTIFACT_SUBDIR"
+fi
+readonly UNITY_METHOD ARTIFACT_SUBDIR
 
 # ---------------------------------------------------------------------------
 # Repository, commit, tags
@@ -216,7 +307,11 @@ readonly script_dir repo_root
 readonly docker_dir="$repo_root/client/docker"
 readonly project_dir="$repo_root/client"
 
-image_repo="${RING_IMAGE_REPO:-$DEFAULT_IMAGE_REPO}"
+# The suffix is appended to whatever the base name turned out to be, RING_
+# IMAGE_REPO included: the point of the flag is that a Development player never
+# lands in the repository a release player lands in, and an operator who
+# redirected the base name did not thereby ask for the two to share one.
+image_repo="${RING_IMAGE_REPO:-$DEFAULT_IMAGE_REPO}${dev:+$DEV_REPO_SUFFIX}"
 readonly image_repo
 
 git_sha=$(git -C "$repo_root" rev-parse HEAD)
@@ -375,7 +470,10 @@ readonly docker_server
 # to end a run over a cosmetic word.
 if (( dirty )); then commit_note="$git_sha_short (dirty)"; else commit_note="$git_sha_short"; fi
 if (( push )); then push_note='yes'; else push_note='no (--no-push)'; fi
+if [[ -n "$dev" ]]; then build_note='DEVELOPMENT (--dev)'; else build_note='release'; fi
+readonly build_note
 
+info "build kind: $build_note"
 info "repository: $repo_root"
 info "commit:     $commit_note"
 info "build root: $build_root"
