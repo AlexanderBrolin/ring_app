@@ -72,8 +72,9 @@ namespace Ring.Simulation.Core
         ///
         /// A byte and not an int, deliberately: the wire budget for it is
         /// three bits (InputCodec's byte 7, bits 5-7), the cap it is clamped
-        /// to is six, and an unsigned type makes a negative depth
-        /// unrepresentable instead of merely wrong.
+        /// to is small (Arena.RewindCapTicks — 5 as shipped since app-gtj6,
+        /// under a validation ceiling of 6), and an unsigned type makes a
+        /// negative depth unrepresentable instead of merely wrong.
         ///
         /// CARRIED IN FULL AS OF Т26. Wire field — InputCodec's bits 5-7 of
         /// byte 7 (the writer saturates, and the eighth value reads back as

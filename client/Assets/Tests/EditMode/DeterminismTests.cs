@@ -47,8 +47,8 @@ namespace Ring.Simulation.Tests
         /// every tick now consumes nine draws of the one stream instead of
         /// eight — and that movement of all three digests is the ONE sanctioned
         /// re-pin of Т34 (owner decision Н1/Р352), taken in a commit of its
-        /// own that follows this change, not a side effect for anyone to hunt
-        /// down.
+        /// own — `3a477f9`, RE-PIN #5 on the three constants below — not a
+        /// side effect for anyone to hunt down.
         /// UNIFORM OVER THE WHOLE DOMAIN, 0..cap INCLUSIVE — NextInt(min, max)
         /// answers [min, max), hence the `+ 1` — because a depth has three
         /// different fates and the scenario has to reach all three: k = 0 is

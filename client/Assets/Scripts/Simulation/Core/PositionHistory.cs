@@ -370,9 +370,13 @@ namespace Ring.Simulation.Core
         /// | tick < 0                        | the CURRENT position (see above)| false       |
         /// | Record present, Alive           | the historical position/flags   | true        |
         /// | Row's Tick does not match       | the CURRENT position -- degrades| false       |
-        /// |   (body did not live that tick, |   into "no rewind at all"       |             |
-        /// |    first ticks of the match)    |                                 |             |
-        /// | Record present, Alive cleared   | MISS: the target was dead then  | true        |
+        /// |   (the ring holds no row for    |   into "no rewind at all"       |             |
+        /// |    that tick: first ticks of    |                                 |             |
+        /// |    the match, or a tick older   |                                 |             |
+        /// |    than the ring)               |                                 |             |
+        /// | Record present, Alive cleared   | MISS: the target was dead then, | true        |
+        /// |   (dead, OR not yet born -- a   |   or not there at all (ruling   |             |
+        /// |    slot the row never wrote)    |   214, no phantom at the origin)|             |
         /// | k == 0                          | live positions (the row for T is| false       |
         /// |                                 |   written at the END of TickAll)|             |
         ///
@@ -442,8 +446,9 @@ namespace Ring.Simulation.Core
         /// and the difference matters enough to spell out (coordinator ruling
         /// 152). It would be wrong to say two worlds on one tick carry the same
         /// stamps "because they are the last `capacity` tick numbers": on tick 3
-        /// the rows for 1, 2 and 3 carry their own numbers while the other four
-        /// still carry NoTick, and the ring only holds a full run of the last
+        /// the rows for 1, 2 and 3 carry their own numbers while the other three
+        /// (four at the ceiling's seven rows; the shipped ring has six since
+        /// app-gtj6) still carry NoTick, and the ring only holds a full run of the last
         /// `capacity` numbers from tick `capacity` onward. What is true is that
         /// a stamp is a function of exactly two things already in the digest --
         /// `_tick`, which StateHash folds as its FIRST step, and whether the row

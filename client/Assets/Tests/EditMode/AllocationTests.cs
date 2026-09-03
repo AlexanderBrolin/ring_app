@@ -53,7 +53,15 @@ namespace Ring.Simulation.Tests
             // idle mob crowd.
             Assert.Greater(w.ProjectileCount, 0);
 
-            var input = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f) };
+            // app-88jb Т34 (phase Ф3 gate, review finding F3): the input carries
+            // the FULL rewind depth, so every shot of the window takes the
+            // rewound gather (ProjectileSystem.RewoundBody -> PositionHistory.
+            // PosAt) and the birth-tick catch-up steps (WeaponSystem) UNDER
+            // this witness — spec §4.3 promised "the history does not
+            // allocate", and with RewindTicks at zero neither path was ever
+            // executed here. The depth is the fixture's own cap, not a literal.
+            var input = new SimInput { FireHeld = true, AimPoint = new float2(30f, 0f),
+                RewindTicks = (byte)w.Config.Arena.RewindCapTicks };
             Assert.That(() =>
             {
                 for (int i = 0; i < 1000; i++) w.Tick(input);
@@ -142,10 +150,15 @@ namespace Ring.Simulation.Tests
             int stepBefore = w.WaveRef(Zone.Outer).WaveIndex;
 
             float2 p0Pos = w.PlayerAt(0).Pos, p1Pos = w.PlayerAt(1).Pos;
+            // app-88jb Т34 (phase Ф3 gate, review finding F3): all three inputs
+            // carry the full rewind depth, same reason as Tick_DoesNotAllocateGC
+            // above — the multiplayer rewound gather and the catch-up steps run
+            // under the witness only when a depth is claimed.
+            byte depth = (byte)w.Config.Arena.RewindCapTicks;
             var inputs = new SimInput[3];
-            inputs[0] = new SimInput { FireHeld = true, AimPoint = p1Pos };
-            inputs[1] = new SimInput { FireHeld = true, AimPoint = p0Pos };
-            inputs[2] = new SimInput { FireHeld = true, AimPoint = float2.zero };
+            inputs[0] = new SimInput { FireHeld = true, AimPoint = p1Pos, RewindTicks = depth };
+            inputs[1] = new SimInput { FireHeld = true, AimPoint = p0Pos, RewindTicks = depth };
+            inputs[2] = new SimInput { FireHeld = true, AimPoint = float2.zero, RewindTicks = depth };
             Assert.That(() =>
             {
                 for (int i = 0; i < measuredTicks; i++) w.TickAll(inputs);

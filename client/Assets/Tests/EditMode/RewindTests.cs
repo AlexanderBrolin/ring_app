@@ -419,7 +419,12 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void SaveAndRestore_ReproduceTheSameRewoundOutcome()
+        // RENAMED at the Ф3 gate (phase review, finding MINOR-8): it was
+        // SaveAndRestore_ReproduceTheSameRewoundOutcome, a name its own doc
+        // below admits over-promised — the fixture fires no shot and asserts
+        // the digest before and after the restore, i.e. that the history rows
+        // come back (the M34 witness), nothing about a rewound outcome.
+        public void SaveAndRestore_BringBackTheHistoryRows()
         {
             // Test 39: the history is part of the save, and a restore brings
             // it back.
