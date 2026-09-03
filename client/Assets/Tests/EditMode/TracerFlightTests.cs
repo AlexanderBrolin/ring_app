@@ -506,21 +506,23 @@ namespace Ring.Simulation.Tests
                 + "клиент, решающий исход (CR 3)");
         }
 
-        /// bd `app-pj5t`: МЛАДШАЯ ПОЛОВИНА ПАРЫ ТОЖЕ СПРАШИВАЕТ ГЕОМЕТРИЮ.
+        /// bd `app-pj5t`: THE NEWER HALF OF THE PAIR ASKS THE GEOMETRY TOO.
         ///
-        /// Сосед сверху ловит контакт, который УЖЕ пройден: кэш доведён до
-        /// целевого тика, шаг остановлен, обе половины отдают точку касания.
-        /// Здесь контакт лежит в шаге, которого `StepTo` ещё не делал — между
-        /// целевым тиком и следующим, — а рендер-пара спрашивает именно эти
-        /// два тика (`NetworkSimBackend`: `WriteInto(_prev, predictedTick)` и
-        /// `WriteInto(_curr, predictedTick + 1)`). Замкнутая форма на верхнюю
-        /// половину отвечает чистой прямой, и снаряд рисуется ЗА стеной —
-        /// до одного шага (1.75 м при отгруженной скорости), а следующим
-        /// кадром прыгает назад в контакт, с хвостом трейла.
+        /// The test above catches a contact already REACHED: the cache is
+        /// walked to the target tick, the step is stopped, and both halves
+        /// answer with the point of contact. Here the contact lies in a step
+        /// `StepTo` has not taken — between the target tick and the next one —
+        /// and the render pair asks for exactly those two ticks
+        /// (`NetworkSimBackend`: `WriteInto(_prev, predictedTick)` and
+        /// `WriteInto(_curr, predictedTick + 1)`). The closed form answers the
+        /// newer half with a clean straight line, so the round was drawn
+        /// BEYOND the wall — up to a whole step, 1.75 m at the shipped speed —
+        /// and jumped back into the contact on the next frame, trail and all.
         ///
-        /// ⚠ Это ровно то, что критерий эпика запрещает (Р343, «уклонение
-        /// работает так, как выглядит»): игрок принимает решение по картинке,
-        /// а картинка на один кадр говорит, что пуля прошла сквозь стену.
+        /// ⚠ That is the one thing the epic's own criterion forbids (Р343,
+        /// "dodging works the way it looks"): the player decides on the
+        /// picture, and for one frame the picture says the bullet went through
+        /// the wall.
         [Test]
         public void TheNewerHalfOfThePair_IsClampedToTheContact_NotExtrapolatedThroughIt()
         {
@@ -541,8 +543,9 @@ namespace Ring.Simulation.Tests
             float contactX = 10f - (2f + cfg.Weapon.ProjectileRadius);
             float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
 
-            // Тик, на котором раунд ЕЩЁ не дошёл до контакта, а следующий —
-            // уже за ним: ровно тот кадр, где младшая половина пары врёт.
+            // The tick where the round has NOT reached the contact yet while
+            // the next one is already past it: precisely the frame on which
+            // the newer half of the pair lies.
             int ticksBefore = (int)math.floor(contactX / step);
             Assert.Less(ticksBefore * step, contactX,
                 "премисса: на целевом тике раунд обязан НЕ дойти до контакта");
@@ -553,12 +556,13 @@ namespace Ring.Simulation.Tests
             int target = 100 + ticksBefore;
             t.StepTo(target);
 
-            // Старшая половина пары — до контакта, и это уже верно сегодня.
+            // The older half stops short of the contact, and that half is
+            // already right today.
             Assert.AreEqual(1, t.WriteInto(buf, target), "раунд обязан рисоваться");
             Assert.AreEqual(ticksBefore * step, buf[0].Pos.x, 0.02f,
                 "старшая половина пары обязана стоять там, куда раунд долетел");
 
-            // Младшая половина — предмет задачи.
+            // The newer half is what this task is about.
             Assert.AreEqual(1, t.WriteInto(buf, target + 1), "раунд обязан рисоваться");
             Assert.LessOrEqual(buf[0].Pos.x, contactX + 0.02f,
                 "младшая половина рендер-пары нарисовала снаряд ЗА барьером: геометрия "
