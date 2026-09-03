@@ -209,6 +209,36 @@ namespace Ring.Networking.Client
             /// self-healing state: the next frame spends another budget on it,
             /// and a round that is behind catches up in about half a second.
             public bool NotCaughtUp;
+
+            /// WHERE THE NEXT STEP WOULD BE STOPPED, looked up but not taken
+            /// (bd `app-pj5t`).
+            ///
+            /// The caller writes BOTH halves of the render pair off ONE walk
+            /// of the integrator — `predictedTick` and `predictedTick + 1` —
+            /// and the closed form answers the newer half by extending the
+            /// cache along its velocity. That extension does not ask the
+            /// geometry, so on the frame whose contact lies INSIDE the step
+            /// the round was drawn up to a whole step past the wall (1.75 m at
+            /// the shipped speed) and jumped back into the contact on the next
+            /// frame, trail and all. `Waiting` could not cover it: it is
+            /// decided by a step that was TAKEN, and this contact belongs to a
+            /// step that has not been.
+            ///
+            /// So `StepTo` looks one step ahead WITHOUT committing it, and
+            /// what it finds lands here: the round still stands where it
+            /// really is on its own tick, and the newer half of the pair is
+            /// clamped to the contact instead of extrapolated through it.
+            /// Nothing here decides anything about the round's life — that
+            /// stays the server's (CR 3); it decides where a line is drawn on
+            /// one frame.
+            ///
+            /// Cleared everywhere `Waiting` is, and for the same reasons: the
+            /// look-ahead belongs to the cache's current tick, so a cache
+            /// thrown away (`SeatOnBirth`) or moved by an authoritative event
+            /// takes the look-ahead with it.
+            public bool HasClamp;
+            public float2 ClampPos;
+            public float ClampHeight;
         }
 
         /// `EndTick` while the server has not ended the round. `int.MaxValue`
@@ -510,10 +540,16 @@ namespace Ring.Networking.Client
                 t.Height = p.Height;
                 t.Ricochets = p.Ricochets;
                 t.Waiting = false;
+                // The round has been moved and turned by the authority, so the
+                // look-ahead taken before the reflection describes a flight
+                // that no longer exists (bd `app-pj5t`). It is retaken by the
+                // next `StepTo`, from where the server just put the round.
+                t.HasClamp = false;
             }
             else
             {
                 t.Waiting = true;
+                t.HasClamp = false;
             }
             return true;
         }
@@ -729,6 +765,43 @@ namespace Ring.Networking.Client
                 // round is never this: it reached everything there was to
                 // reach.
                 t.NotCaughtUp = !t.Waiting && t.CacheTick < targetTick;
+
+                // 5. THE STEP AFTER THE LAST ONE, LOOKED AT AND NOT TAKEN
+                // (bd `app-pj5t`). The caller asks this table for
+                // `targetTick + 1` as well — the newer half of the render
+                // pair — and the closed form would answer it by extending the
+                // cache through whatever is in the way. Asking the same two
+                // candidates the loop above asks, one step further, is what
+                // lets `StateAt` clamp that half to the contact instead.
+                //
+                // ⛔ NOTHING IS COMMITTED HERE: the cache still stands on its
+                // own tick, `Ttl` is untouched, `Ricochets` is untouched, and
+                // the round is NOT marked waiting — it has not reached the
+                // contact yet, and saying it had would stop it a step early,
+                // which is the mirror of the defect this fixes.
+                //
+                // A waiting round needs none of this (it is already standing
+                // in a contact and both halves read the same point), and a
+                // round that did not catch up is not drawn at all.
+                t.HasClamp = false;
+                if (!t.Waiting && !t.NotCaughtUp)
+                {
+                    ProjectileState ahead = StateAt(in t, t.CacheTick);
+                    ProjectileFlight.StepResult peek =
+                        ProjectileFlight.Step(in ahead, in _cfg, dt);
+                    bool peekBarrier = peek.HasBarrier
+                        && ProjectileFlight.BarrierStops(in ahead, in _cfg,
+                            ahead.Height + ahead.VelZ * dt * peek.BarrierT, dt);
+                    if (peekBarrier || peek.HasRingWall)
+                    {
+                        float peekT = peekBarrier && peek.HasRingWall
+                            ? math.min(peek.BarrierT, peek.RingWallT)
+                            : peekBarrier ? peek.BarrierT : peek.RingWallT;
+                        t.ClampPos = math.lerp(ahead.Pos, peek.Target, peekT);
+                        t.ClampHeight = ahead.Height + ahead.VelZ * dt * peekT;
+                        t.HasClamp = true;
+                    }
+                }
             }
         }
 
@@ -842,6 +915,9 @@ namespace Ring.Networking.Client
             t.Ricochets = 0;
             t.Waiting = false;
             t.NotCaughtUp = false;
+            // The look-ahead belongs to the tick the cache stood on, and that
+            // tick is what this method throws away (bd `app-pj5t`).
+            t.HasClamp = false;
         }
 
         /// The closed form, in the authority's own terms — measured from the
@@ -870,16 +946,25 @@ namespace Ring.Networking.Client
             int age = t.Waiting ? 0 : tick - t.CacheTick;
             int prevAge = t.Waiting ? 0 : prevTick - t.CacheTick;
 
+            // THE HALF THE INTEGRATOR HAS NOT WALKED IS CLAMPED TO WHAT IT
+            // WOULD HIT (bd `app-pj5t`, see `Track.HasClamp`). Only ages PAST
+            // the cache are affected — the round's own tick is where the
+            // integrator really stood and is left exactly as it was, which is
+            // what keeps the closed-form fixtures answering bit for bit.
+            bool clamped = t.HasClamp && age > 0;
+            bool prevClamped = t.HasClamp && prevAge > 0;
+
             return new ProjectileState
             {
                 Id = t.Id,
                 Owner = t.Owner,
                 OwnerIndex = t.OwnerIndex,
-                Pos = t.Pos + t.Vel * (dt * age),
-                PrevPos = t.Pos + t.Vel * (dt * prevAge),
+                Pos = clamped ? t.ClampPos : t.Pos + t.Vel * (dt * age),
+                PrevPos = prevClamped ? t.ClampPos : t.Pos + t.Vel * (dt * prevAge),
                 Vel = t.Vel,
-                Height = t.Height + t.VelZ * (dt * age),
-                PrevHeight = t.Height + t.VelZ * (dt * prevAge),
+                Height = clamped ? t.ClampHeight : t.Height + t.VelZ * (dt * age),
+                PrevHeight = prevClamped ? t.ClampHeight
+                    : t.Height + t.VelZ * (dt * prevAge),
                 VelZ = t.VelZ,
                 Radius = t.Radius,
                 Ttl = t.Ttl - dt * age,
