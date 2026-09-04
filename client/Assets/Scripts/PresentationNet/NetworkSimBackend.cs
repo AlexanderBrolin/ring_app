@@ -250,6 +250,13 @@ namespace Ring.Presentation.Net
         ClientEventQueue _events;
         GhostProjectiles _ghosts;
 
+        /// ADR-002 A28в: news of a blow to THIS client, held out of the
+        /// interpolation buffer so it reaches the screen on the next frame
+        /// instead of `InterpBufferTicks` later. Own body is the only thing in
+        /// the scene that lives AHEAD of the render clock, so the buffer
+        /// delays its news without protecting anything about it.
+        OwnDamageLane _ownDamage;
+
         /// The bd `app-03et` instrument: own position against the newest world
         /// tick, so a delivered blow can be asked how late it was and how far
         /// this body had carried its owner meanwhile. Diagnostic only —
@@ -1844,6 +1851,7 @@ namespace Ring.Presentation.Net
             _ghosts = new GhostProjectiles(cfg.Arena.MaxProjectiles, _net.GhostConfirmTicks,
                 GhostTrackTicks(in cfg), _stats);
             _hitTrail = new HitFeedbackTrail(HitTrailTicks);
+            _ownDamage = new OwnDamageLane(_net.SnapshotEventBudget);
             // Sized for the PLAYER SLOT space and nothing else. `StalePolicy`
             // is keyed by a DENSE index into the client's own view registry,
             // and the only dense index this client has today is the player
@@ -2764,7 +2772,12 @@ namespace Ring.Presentation.Net
                 // itself in `OverflowDroppedEvents` — which is the number
                 // `DroppedEvents` above reports. There is nothing this side
                 // could do with a second copy of it.
-                _events.Enqueue(in decoded);
+                    // ADR-002 A28в: this client's own damage skips the buffer.
+                // A refusal (not ours, or the lane is full) falls through to
+                // the queue below, so nothing is ever lost -- a refused blow is
+                // simply shown a buffer later, exactly as every blow is today.
+                if (!_ownDamage.TryTake(in decoded, LocalPlayerIndex))
+                    _events.Enqueue(in decoded);
             }
 
             if (refusedRecords > 0)
@@ -3071,6 +3084,20 @@ namespace Ring.Presentation.Net
         /// and the epoch-time slot release went with it.
         void DrainDueEvents(int renderTick)
         {
+            // ADR-002 A28в, and FIRST in the frame on purpose: the blow to this
+            // body is the news the player is waiting on, and the ordinary queue
+            // below can fill the frame's buffer on a busy tick.
+            for (int i = 0; i < _ownDamage.Count && _frameEventCount < _frameEvents.Length; i++)
+            {
+                SimEvent mine = _ownDamage.Get(i);
+                _frameEvents[_frameEventCount++] = mine;
+                // The instrument follows the news rather than the queue: this
+                // is now the frame the player is told on, so this is the frame
+                // whose lag is worth writing down.
+                LogOwnHitLag(in mine);
+            }
+            _ownDamage.Clear();
+
             while (_frameEventCount < _frameEvents.Length
                    && _events.TryDequeue(renderTick, out SimEvent due))
             {
@@ -3240,6 +3267,9 @@ namespace Ring.Presentation.Net
             // whatever body the new one happens to mint that id for — a wrong
             // answer rather than a missing one.
             _mobTilt.Reset();
+            // A28в's lane, for the reason its two neighbors above are cleared:
+            // a blow from the match before must never be shown in the next one.
+            _ownDamage?.Clear();
             if (restarted) _matchRestartedPending = true;
         }
 
