@@ -25,7 +25,7 @@ MonoBehaviour:
   StrafeSpeed: 3
   FireInterval: 1.6
   ProjectileSpeed: 14
-  ProjectileRadius: 0.15
+  ProjectileRadius: 0.0375
   ProjectileLifetime: 3
   ProjectileDamage: 8
   LeadFactor: 0.8
