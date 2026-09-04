@@ -122,6 +122,14 @@ namespace Ring.Presentation.Net
         /// SECOND, NOT PER FRAME") — not repeated here.
         const float DiagnosticsLogIntervalSeconds = 1f;
 
+        /// How many ticks of own position the bd `app-03et` trail keeps —
+        /// about four seconds at 30 Hz. A STRUCTURAL CONSTANT, not balance:
+        /// it sizes a diagnostic ring, and nothing the match is decided by
+        /// reads it. Wide enough that a blow delivered under any latency this
+        /// project measures still finds both of its ends in the ring, and
+        /// small enough to cost twelve bytes a tick.
+        const int HitTrailTicks = 128;
+
         /// The block kinds this receiver understands. A kind absent from this
         /// list is walked past and counted by `SnapshotReader.
         /// SkippedBlockCount` (Р29), which would misreport a
@@ -241,6 +249,13 @@ namespace Ring.Presentation.Net
         EventDedup _dedup;
         ClientEventQueue _events;
         GhostProjectiles _ghosts;
+
+        /// The bd `app-03et` instrument: own position against the newest world
+        /// tick, so a delivered blow can be asked how late it was and how far
+        /// this body had carried its owner meanwhile. Diagnostic only —
+        /// nothing reads it but the log line in `DrainDueEvents`.
+        HitFeedbackTrail _hitTrail;
+
         StalePolicy _stale;
         ClientMatchReset _reset;
         ClientMatchLink _link;
@@ -1557,6 +1572,17 @@ namespace Ring.Presentation.Net
             // even now that the tracer views exist (see `Curr`).
             _ghosts.Advance(_nm.TimeManager.LocalTick);
 
+            // bd `app-03et`: stamp this body's own position with the newest
+            // world tick BEFORE the drain, so a blow delivered on this very
+            // frame can already look its own moment up. Costs one array write.
+            if (_snapshots.HasNewestTick && _controller != null
+                && _controller.Core.IsPredicting)
+            {
+                _hitTrail.NotePosition(
+                    (int)math.min(_snapshots.NewestTick, (uint)int.MaxValue),
+                    _controller.Core.Predicted.Pos);
+            }
+
             DrainDueEvents(renderTick);
 
             int ticks = math.max(0, renderTick - _lastRenderTick);
@@ -1817,6 +1843,7 @@ namespace Ring.Presentation.Net
             _events = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
             _ghosts = new GhostProjectiles(cfg.Arena.MaxProjectiles, _net.GhostConfirmTicks,
                 GhostTrackTicks(in cfg), _stats);
+            _hitTrail = new HitFeedbackTrail(HitTrailTicks);
             // Sized for the PLAYER SLOT space and nothing else. `StalePolicy`
             // is keyed by a DENSE index into the client's own view registry,
             // and the only dense index this client has today is the player
@@ -3054,7 +3081,49 @@ namespace Ring.Presentation.Net
                 // and an impulse applied `InterpBufferTicks` early would tip
                 // the body before the round reached it on screen.
                 if (due.Kind == SimEventKind.ProjectileHit) ApplyMobHit(in due);
+                if (due.Kind == SimEventKind.PlayerDamaged) LogOwnHitLag(in due);
             }
+        }
+
+        /// The bd `app-03et` measurement, taken at the one moment that answers
+        /// the owner's report ("they hit me after I had already rounded the
+        /// corner"): the frame the blow is SHOWN on.
+        ///
+        /// IT MEASURES THE TELLING, NOT THE HIT. The В4 run of 2026-09-04 put
+        /// the reconciliation median at 0.000 m over ~1977 corrections, so this
+        /// body and the server's copy of it do not disagree about where it
+        /// stood; and the roster was solo, so no rewind of any kind took part
+        /// (RULING 177 denies mobs both rewind and catch-up). What was never
+        /// measured is the gap between the server resolving a blow and this
+        /// client showing it — `InterpBufferTicks` plus one-way latency, on
+        /// paper about 140 ms — and how much ground the body covers inside it.
+        ///
+        /// A LOG LINE AND NOT A COUNTER, because the question is about
+        /// INDIVIDUAL blows the owner can point at in a recording, not about a
+        /// distribution. One line per blow to this client is also a rate the
+        /// log can carry: a match's worth of damage events is tens of lines,
+        /// against the one-per-second `LogDiagnosticsTick` beside it.
+        ///
+        /// Silent when the trail cannot stand behind the answer — the blow's
+        /// own moment has aged out of the ring, or this client has not been
+        /// predicting long enough to have stamped it. A measurement nobody can
+        /// defend is worse than none (Р82: a refusal is a value).
+        void LogOwnHitLag(in SimEvent due)
+        {
+            if (due.PlayerIndex != LocalPlayerIndex) return;
+            if (_hitTrail == null || !_snapshots.HasNewestTick) return;
+
+            int newest = (int)math.min(_snapshots.NewestTick, (uint)int.MaxValue);
+            if (!_hitTrail.TryMeasure(due.Tick, newest, out int lagTicks,
+                    out float movedMeters))
+            {
+                return;
+            }
+
+            float lagMs = lagTicks * 1000f / math.max(1, _net.TickRate);
+            UnityEngine.Debug.Log($"HitLag eventTick={due.Tick} newestTick={newest} "
+                + $"lagTicks={lagTicks} lagMs={lagMs:F1} movedM={movedMeters:F3} "
+                + $"interpBufferTicks={_net.InterpBufferTicks}");
         }
 
         /// Turns one delivered `ProjectileHit` into an angular impulse on the
