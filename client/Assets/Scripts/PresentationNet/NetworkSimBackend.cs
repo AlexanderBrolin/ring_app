@@ -250,6 +250,14 @@ namespace Ring.Presentation.Net
         ClientEventQueue _events;
         GhostProjectiles _ghosts;
 
+        /// ADR-002 A28б: everything a ROUND causes -- the spark, the hit flash,
+        /// the sound, the ricochet, the body's tilt -- queued on the clock the
+        /// round itself is drawn on instead of the render clock. Same class as
+        /// `_events` beside it, a second instance rather than a second
+        /// mechanism, because the only thing that differs is the deadline it is
+        /// asked about.
+        ClientEventQueue _impactEvents;
+
         /// ADR-002 A28в: news of a blow to THIS client, held out of the
         /// interpolation buffer so it reaches the screen on the next frame
         /// instead of `InterpBufferTicks` later. Own body is the only thing in
@@ -1848,6 +1856,7 @@ namespace Ring.Presentation.Net
             _clock = new RenderClock();
             _dedup = new EventDedup(in cfg);
             _events = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
+            _impactEvents = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
             _ghosts = new GhostProjectiles(cfg.Arena.MaxProjectiles, _net.GhostConfirmTicks,
                 GhostTrackTicks(in cfg), _stats);
             _hitTrail = new HitFeedbackTrail(HitTrailTicks);
@@ -2777,7 +2786,11 @@ namespace Ring.Presentation.Net
                 // the queue below, so nothing is ever lost -- a refused blow is
                 // simply shown a buffer later, exactly as every blow is today.
                 if (!_ownDamage.TryTake(in decoded, LocalPlayerIndex))
-                    _events.Enqueue(in decoded);
+                {
+                    // ADR-002 A28б: what the ROUND caused follows the round.
+                    if (IsImpactCosmetic(decoded.Kind)) _impactEvents.Enqueue(in decoded);
+                    else _events.Enqueue(in decoded);
+                }
             }
 
             if (refusedRecords > 0)
@@ -3098,6 +3111,30 @@ namespace Ring.Presentation.Net
             }
             _ownDamage.Clear();
 
+            // ADR-002 A28б: the round's own consequences are due when the ROUND
+            // reaches them, and the round is drawn `_rewindDepth` ticks ahead of
+            // the render clock (`predictedTick` in the tracer block above). The
+            // expression is repeated rather than hoisted because the tracer's
+            // copy lives inside the render-pair branch, which a frame is free
+            // to skip -- and a frame that showed no new picture must still be
+            // able to hand over an impact that came due.
+            //
+            // WHY NOT THE RENDER CLOCK, WHICH IS WHERE THESE USED TO GO. The
+            // player's eye follows the round. Under 80 ms the round arrives at
+            // the contact point about five ticks before the render clock gets
+            // there, so the spark, the sound and the tilt landed ~170 ms after
+            // the bullet had visibly passed through the body -- long enough
+            // that in a burst they queued up and read as belonging to later
+            // shots, which is what the owner reported at В4 ("sparks are not
+            // visible at all, or visible at the end of the spray").
+            int impactTick = renderTick + _rewindDepth;
+            while (_frameEventCount < _frameEvents.Length
+                   && _impactEvents.TryDequeue(impactTick, out SimEvent impact))
+            {
+                _frameEvents[_frameEventCount++] = impact;
+                if (impact.Kind == SimEventKind.ProjectileHit) ApplyMobHit(in impact);
+            }
+
             while (_frameEventCount < _frameEvents.Length
                    && _events.TryDequeue(renderTick, out SimEvent due))
             {
@@ -3107,7 +3144,6 @@ namespace Ring.Presentation.Net
                 // record arrived. The three are one impact seen three ways,
                 // and an impulse applied `InterpBufferTicks` early would tip
                 // the body before the round reached it on screen.
-                if (due.Kind == SimEventKind.ProjectileHit) ApplyMobHit(in due);
                 if (due.Kind == SimEventKind.PlayerDamaged) LogOwnHitLag(in due);
             }
         }
@@ -3135,6 +3171,18 @@ namespace Ring.Presentation.Net
         /// own moment has aged out of the ring, or this client has not been
         /// predicting long enough to have stamped it. A measurement nobody can
         /// defend is worse than none (Р82: a refusal is a value).
+        /// The kinds ADR-002 A28б moves onto the round's own clock: everything
+        /// a projectile CAUSES when it lands. All four are cosmetic and have
+        /// only cosmetic consumers -- the sound director, the game-feel
+        /// director, the props director and the view registry's hit flash --
+        /// which is what makes the move legal under CRITICAL RULE 3. The
+        /// damage, the death and the knockback they accompany ride
+        /// `PlayerDamaged`/`PlayerDied` and are not in this list.
+        static bool IsImpactCosmetic(SimEventKind kind)
+            => kind == SimEventKind.ProjectileHit
+               || kind == SimEventKind.ProjectileHitPlayer
+               || kind == SimEventKind.ProjectileRicocheted;
+
         void LogOwnHitLag(in SimEvent due)
         {
             if (due.PlayerIndex != LocalPlayerIndex) return;
@@ -3270,6 +3318,7 @@ namespace Ring.Presentation.Net
             // A28в's lane, for the reason its two neighbors above are cleared:
             // a blow from the match before must never be shown in the next one.
             _ownDamage?.Clear();
+            _impactEvents?.Reset();
             if (restarted) _matchRestartedPending = true;
         }
 
