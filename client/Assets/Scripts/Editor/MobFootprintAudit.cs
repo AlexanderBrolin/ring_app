@@ -58,6 +58,12 @@ namespace Ring.Editor
         /// does not cry wolf.
         const float OverlapWarnRatio = 1.15f;
 
+        /// How many horizontal slabs the body is cut into before the trunk
+        /// radius is taken. Ten is enough that a humanoid's arms occupy two of
+        /// them and cannot reach the middle of the sorted order, and few enough
+        /// that each slab still holds thousands of vertices.
+        const int ProfileSlabs = 10;
+
         [MenuItem("Ring/Audit/Mob Footprints")]
         public static void Run()
         {
@@ -112,24 +118,41 @@ namespace Ring.Editor
                 }
             }
 
-            TryMeasureSpread(prefab, 0.90f, out float p90, out _);
-            TryMeasureSpread(prefab, 0.50f, out float p50, out _);
-            float coreRatio = cfg.Radius > 0f ? p90 / cfg.Radius : float.PositiveInfinity;
+            // WHOLE BODY, and then the TORSO BAND on its own. The band is what
+            // a body circle is actually about: separation and the broadphase
+            // care where the mass is, not where a hand reaches. `TorsoLow`..
+            // `TorsoHigh` of the crown brackets the trunk on every archetype
+            // here and leaves out both the feet and the shoulders-and-above,
+            // which is where a T-pose keeps its arms.
+            //
+            // BOTH ARE PRINTED BECAUSE THEIR DIFFERENCE IS THE INSTRUMENT'S OWN
+            // CHECK (lesson 680). On a body with no limbs to stick out -- the
+            // Director, the two mechs -- the two numbers must land close
+            // together, and if they do not, the band is wrong rather than the
+            // model. On a humanoid they are ALLOWED to differ, and by how much
+            // is the answer this audit exists to give.
+            TryMeasureSpread(prefab, 0.90f, 0f, 1f, height, out float p90);
+            TryMeasureSpread(prefab, 0.50f, 0f, 1f, height, out float p50);
+            float torso90 = TrunkRadius(prefab, height);
+            float coreRatio = cfg.Radius > 0f ? torso90 / cfg.Radius : float.PositiveInfinity;
 
             report.AppendLine(
                 $"{name}: drawn {width:F2} x {depth:F2} x {height:F2} | " +
                 $"box r {footprint:F2} | body r (p90) {p90:F2} | median r (p50) {p50:F2} | " +
+                $"TRUNK r {torso90:F2} | " +
                 $"sim Radius {cfg.Radius:F2} | box ratio {ratio:F2} | " +
                 $"body ratio {coreRatio:F2} | crown {height:F2} vs top part {topPart:F2} | " +
                 $"widest part {widestPart:F2}");
+            report.AppendLine($"  {name} profile (p90 by decile of crown): "
+                + HeightProfile(prefab, height));
 
             // The BODY ratio is what a circle is judged by; the box ratio only
             // says whether limbs will visibly cross, which they are allowed to.
             if (coreRatio > OverlapWarnRatio)
                 report.AppendLine(
-                    $"  ⚠ {name}: the drawn BODY is {coreRatio:F2}x its own circle — two of " +
+                    $"  ⚠ {name}: the drawn TRUNK is {coreRatio:F2}x its own circle — two of " +
                     "them separated exactly at contact still overlap ON SCREEN by " +
-                    $"{(p90 - cfg.Radius) * 2f:F2} m, and that is torso against torso rather " +
+                    $"{(torso90 - cfg.Radius) * 2f:F2} m, and that is torso against torso rather " +
                     "than limbs crossing. Either the circle is too small for the model or the " +
                     "model is drawn too large for the circle; both are balance numbers and " +
                     "the choice is the owner's.");
@@ -165,13 +188,24 @@ namespace Ring.Editor
                 return;
             }
             float footprint = Mathf.Max(b.size.x, b.size.z) * 0.5f;
-            TryMeasureSpread(prefab, 0.90f, out float p90, out _);
-            TryMeasureSpread(prefab, 0.50f, out float p50, out _);
+            float crown = b.max.y;
+            TryMeasureSpread(prefab, 0.90f, 0f, 1f, crown, out float p90);
+            TryMeasureSpread(prefab, 0.50f, 0f, 1f, crown, out float p50);
+            float torso90 = TrunkRadius(prefab, crown);
+            // THE COLLECTOR IS THE ONE THIS AUDIT WAS WRONG ABOUT, and it is
+            // the one archetype that is unmistakably humanoid: the gap between
+            // the whole-body number and the torso band IS the arms, and the
+            // owner's В4 report ("the hitbox is wider than the model, as if it
+            // were computed on a default T-pose") is the reading of it.
             report.AppendLine(
-                $"Hero: drawn {b.size.x:F2} x {b.size.z:F2} x {b.max.y:F2} | " +
+                $"Hero: drawn {b.size.x:F2} x {b.size.z:F2} x {crown:F2} | " +
                 $"box r {footprint:F2} | body r (p90) {p90:F2} | median r (p50) {p50:F2} | " +
+                $"TRUNK r {torso90:F2} | " +
                 $"sim Radius {hero.Radius:F2} | " +
-                $"body ratio {(hero.Radius > 0f ? p90 / hero.Radius : 0f):F2}");
+                $"trunk ratio {(hero.Radius > 0f ? torso90 / hero.Radius : 0f):F2}");
+            report.AppendLine($"  Hero profile (p90 by decile of crown): "
+                + HeightProfile(prefab, crown));
+            report.AppendLine($"  Hero bounds y: min {b.min.y:F2} max {b.max.y:F2}");
         }
 
         /// THE FOOTPRINT THE BODY CIRCLE IS REALLY ABOUT — a percentile of the
@@ -198,35 +232,101 @@ namespace Ring.Editor
         /// wide because its body is wide, so for them the two numbers converge
         /// — and that convergence is itself the signal that the box can be
         /// trusted for that archetype.
+        /// The p90 radius decile by decile of the crown -- the profile that
+        /// says WHERE a model's width lives, and therefore whether the torso
+        /// band is bracketing the trunk or something else.
+        ///
+        /// IT EXISTS BECAUSE THE BAND ALONE CANNOT BE CHECKED (lesson 680: an
+        /// instrument needs a quantity whose answer is already known). A single
+        /// number out of a band is unfalsifiable -- it is whatever it is. A
+        /// profile is not: on a humanoid standing in a bind pose the arms MUST
+        /// show up as a bulge at shoulder height and the trunk as a plateau
+        /// below it, and if the printed profile does not look like that, the
+        /// measurement is wrong rather than the model.
+        /// The body radius, taken as the MEDIAN OF THE SLAB RADII rather than
+        /// out of a fixed height band (bd `app-9szk`, second correction of the
+        /// day).
+        ///
+        /// A FIXED BAND WAS THE FIRST FIX AND IT WAS STILL WRONG. Bracketing
+        /// 0.35..0.75 of the crown was meant to skip the arms; the printed
+        /// profile showed it clipping the shoulders anyway, because where a
+        /// humanoid's arms sit depends on the model rather than on a fraction
+        /// anyone can pick in advance. The collector's trunk measures 0.14-0.20
+        /// through seven slabs and then jumps to 0.95 and 1.19 in the two the
+        /// arms occupy -- the band caught the edge of that jump and reported
+        /// 0.85.
+        ///
+        /// A MEDIAN CANNOT BE CAUGHT THAT WAY, and needs nothing known about
+        /// the rig. Limbs are a MINORITY of the slabs by construction -- arms
+        /// live at one height, legs at another, the trunk spans everything in
+        /// between -- so however far a limb slab sticks out, it sits in the
+        /// tail of the sorted order and the middle of that order is the body.
+        /// The instrument stops depending on a number chosen by eye, which is
+        /// what made the band unfalsifiable.
+        ///
+        /// ⚠ EMPTY SLABS ARE DROPPED, NOT COUNTED AS ZERO. The topmost slab of
+        /// a model whose crown is a single point has no vertices in it; keeping
+        /// it as a 0.00 would drag the median down by exactly one rank, which
+        /// on ten slabs is not a rounding difference.
+        static float TrunkRadius(GameObject prefab, float crownHeight)
+        {
+            var radii = new System.Collections.Generic.List<float>(ProfileSlabs);
+            for (int d = 0; d < ProfileSlabs; d++)
+            {
+                float lo = d / (float)ProfileSlabs;
+                float hi = (d + 1) / (float)ProfileSlabs;
+                if (TryMeasureSpread(prefab, 0.90f, lo, hi, crownHeight, out float r) && r > 0f)
+                    radii.Add(r);
+            }
+
+            if (radii.Count == 0) return 0f;
+            radii.Sort();
+            return radii[radii.Count / 2];
+        }
+
+        static string HeightProfile(GameObject prefab, float crownHeight)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int d = 0; d < 10; d++)
+            {
+                float lo = d * 0.1f, hi = (d + 1) * 0.1f;
+                TryMeasureSpread(prefab, 0.90f, lo, hi, crownHeight, out float r);
+                sb.Append($"{lo:F1}-{hi:F1}:{r:F2} ");
+            }
+            return sb.ToString();
+        }
+
         static bool TryMeasureSpread(GameObject prefab, float percentile,
-            out float radius, out float centerHeight)
+            float bandLowFrac, float bandHighFrac, float crownHeight,
+            out float radius)
         {
             radius = 0f;
-            centerHeight = 0f;
-            Transform visual = prefab.transform.Find("Visual");
-            Transform root = visual != null ? visual : prefab.transform;
 
-            var dists = new System.Collections.Generic.List<float>(4096);
-            Vector3 rootPos = prefab.transform.position;
+            GameObject instance = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+            if (instance == null) return false;
 
-            foreach (MeshFilter mf in root.GetComponentsInChildren<MeshFilter>(true))
+            try
             {
-                if (mf == null || mf.sharedMesh == null) continue;
-                AccumulateXz(mf.sharedMesh, mf.transform, rootPos, dists);
-            }
-            foreach (SkinnedMeshRenderer smr in root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
-            {
-                if (smr == null || smr.sharedMesh == null) continue;
-                AccumulateXz(smr.sharedMesh, smr.transform, rootPos, dists);
-            }
+                instance.transform.position = Vector3.zero;
+                Transform visual = instance.transform.Find("Visual");
+                GameObject root = visual != null ? visual.gameObject : instance;
 
-            if (dists.Count == 0) return false;
-            dists.Sort();
-            int idx = Mathf.Clamp(Mathf.RoundToInt((dists.Count - 1) * percentile), 0,
-                dists.Count - 1);
-            radius = dists[idx];
-            centerHeight = 0f;
-            return true;
+                var dists = new System.Collections.Generic.List<float>(4096);
+                float lowY = crownHeight * bandLowFrac;
+                float highY = crownHeight * bandHighFrac;
+                BakeInto(root, instance.transform.position, lowY, highY, dists);
+
+                if (dists.Count == 0) return false;
+                dists.Sort();
+                int idx = Mathf.Clamp(Mathf.RoundToInt((dists.Count - 1) * percentile), 0,
+                    dists.Count - 1);
+                radius = dists[idx];
+                return true;
+            }
+            finally
+            {
+                Object.DestroyImmediate(instance);
+            }
         }
 
         /// Distances of one mesh's vertices from the prefab's vertical axis,
@@ -239,13 +339,60 @@ namespace Ring.Editor
         /// bind pose's worst artifact — the arms — which is the part that made
         /// the box useless.
         static void AccumulateXz(Mesh mesh, Transform t, Vector3 rootPos,
+            float bandLowY, float bandHighY,
             System.Collections.Generic.List<float> dists)
         {
             Vector3[] verts = mesh.vertices;
             for (int i = 0; i < verts.Length; i++)
             {
                 Vector3 w = t.TransformPoint(verts[i]) - rootPos;
+                if (w.y < bandLowY || w.y > bandHighY) continue;
                 dists.Add(Mathf.Sqrt(w.x * w.x + w.z * w.z));
+            }
+        }
+
+        /// The prefab's meshes AS THE POSE LEAVES THEM, which for a skinned
+        /// renderer is not what `sharedMesh` holds (bd `app-9szk`, owner's
+        /// В4 report).
+        ///
+        /// `sharedMesh` IS THE BIND POSE, AND FOR A HUMANOID THAT IS A T-POSE
+        /// WITH THE ARMS OUT. Nothing ever draws it: the drawn shape comes from
+        /// the bones, and `renderer.bounds` -- which this file's own box
+        /// measurement uses -- already reflects them. So the two columns of
+        /// this report were taken by two different methods, one of them of a
+        /// shape that exists nowhere, and the collector's median came out at
+        /// 0.87 m: an arm span, not a torso.
+        ///
+        /// The earlier wording defended `sharedMesh` on the grounds that
+        /// "baking a pose would measure ONE frame of one animation". That is
+        /// true of an ANIMATED pose and irrelevant to this one: the instance
+        /// below is never driven by an `Animator`, so what it bakes is the
+        /// prefab's own rest pose -- the single, stable shape the model has
+        /// when nothing is playing, and the shape `renderer.bounds` was
+        /// already reporting all along.
+        static void BakeInto(GameObject instance, Vector3 rootPos,
+            float bandLowY, float bandHighY,
+            System.Collections.Generic.List<float> dists)
+        {
+            foreach (MeshFilter mf in instance.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf == null || mf.sharedMesh == null) continue;
+                AccumulateXz(mf.sharedMesh, mf.transform, rootPos, bandLowY, bandHighY, dists);
+            }
+
+            foreach (SkinnedMeshRenderer smr in
+                     instance.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                if (smr == null || smr.sharedMesh == null) continue;
+
+                var baked = new Mesh();
+                smr.BakeMesh(baked, true);
+                // `BakeMesh` writes vertices in the renderer's own local space
+                // with the scale already applied by the `true` argument, so the
+                // transform that maps them to the world is the renderer's --
+                // the same one `sharedMesh` would have been read through.
+                AccumulateXz(baked, smr.transform, rootPos, bandLowY, bandHighY, dists);
+                Object.DestroyImmediate(baked);
             }
         }
 
