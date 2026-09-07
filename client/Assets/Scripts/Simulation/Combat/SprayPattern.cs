@@ -13,9 +13,15 @@ namespace Ring.Simulation.Combat
     /// cannot see.
     ///
     /// ⚠ EXACTLY ONE MEMBER IS PUBLIC -- `Draw` -- and that is the neighbor's
-    /// rule word for word. `Spread`'s own doc earns its publicity by naming a
-    /// consumer ("public ahead of that need because CrosshairView will read the
-    /// very same formula"), and `Spread` has exactly one public member. The
+    /// rule word for word, NAMED CONSUMER INCLUDED. `Spread`'s own doc earns its
+    /// publicity by naming one ("public ahead of that need because CrosshairView
+    /// will read the very same formula"); `Draw`'s is the RETICLE under the shape
+    /// of the pattern (spec §3.9) -- a crosshair drawing a symmetric cone while
+    /// the rounds walk a signed curve inside it would be lying to the player
+    /// about where the next shot goes, and it has to read THIS formula rather
+    /// than a second copy of it. That named consumer is the whole reason the
+    /// pattern is a file of its own instead of a private helper inside
+    /// WeaponSystem. The
     /// salts and `Hash01` have no consumer outside this class, and this same
     /// plan demotes `TrySpawnFromPrediction` to `internal` on the very same
     /// argument (public, it would be a loaded gun). So they carry no modifier;
@@ -81,8 +87,11 @@ namespace Ring.Simulation.Combat
         /// exactly what this task walks away from). The top 24 bits are used
         /// because FNV-1a avalanches better in the high bits than in the low
         /// ones, and because 2^24 steps cut the widest cone of this task
-        /// (11 degrees in a slide) into 6.6e-7 of a degree -- six orders of
-        /// magnitude finer than anything visible.
+        /// (11 degrees in a slide) into 1.3e-6 of a degree -- six orders of
+        /// magnitude finer than anything visible. (The step spans 2 x 11
+        /// degrees, not 11: `u` reaches the angle as `2u - 1`, so the WHOLE
+        /// width of the cone is what gets divided. The first writing of this
+        /// doc halved it.)
         /// ⚠ THE PRICE OF THE COUPLING IS NAMED: from this task on, editing
         /// StateHash64 moves not only the golden constant but the TRAJECTORIES
         /// OF ROUNDS.

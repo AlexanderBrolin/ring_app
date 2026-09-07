@@ -25,6 +25,16 @@ namespace Ring.Simulation.Tests
             SprayVariance = variance,
         };
 
+        /// ⚠ A GUARD, NOT A WITNESS (rule 427), and saying so is the point of
+        /// this doc: the expectation is `f(x)` compared with `f(x)`, so the test
+        /// is green on a constant stub and cannot testify to anything about the
+        /// SHAPE of the pattern. What it does catch is the one thing no other
+        /// test here can — a `Draw` that stopped being a pure function of its
+        /// arguments (a static accumulator, a stream, a clock, a hash fed
+        /// something not in the parameter list). That failure would be
+        /// invisible to every arithmetic test in this file and fatal to the
+        /// whole task, since prediction rests on both sides computing the same
+        /// angle from the same inputs.
         [Test]
         public void SameArguments_GiveTheSameAngle()   // test 1
         {
@@ -52,6 +62,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0.442d, second / 6d, 0.005d, "премисса: средняя второй половины");
         }
 
+        /// ⚠ THE EQUALITY HALF IS A GUARD, NOT A WITNESS (rule 427): two calls
+        /// to the same function compared with each other are equal on a constant
+        /// stub as readily as on the real thing. The premise below is what makes
+        /// this test testify — at saturation `amp` is exactly 1, so `pitchBase`
+        /// is exactly `SprayPitchAmplitude`, and a pattern that kept growing
+        /// past its own length would fail on the NUMBER rather than on the
+        /// comparison.
         [Test]
         public void Amplitude_SaturatesAtThePatternLength()   // test 4a, M264
         {
@@ -62,6 +79,10 @@ namespace Ring.Simulation.Tests
             float beyond = Pitch(47, in w);
             Assert.AreEqual(atLength, beyond, Eps,
                 "амплитуда не насыщается — рисунок продолжает расти за своей длиной");
+            // amp = min(k, n) / n = 1 for every k >= n, so the saturated
+            // vertical IS the configured amplitude, cone 1 in this fixture.
+            Assert.AreEqual(0.35f, beyond, Eps,
+                "премисса: насыщенная вертикаль равна SprayPitchAmplitude");
         }
 
         [Test]
@@ -104,7 +125,18 @@ namespace Ring.Simulation.Tests
             var random = Pattern(1f);
             float2 a = SprayPattern.Draw(4, 4, new float2(3f, 1f), 1f, in pure);
             float2 b = SprayPattern.Draw(4, 4, new float2(3f, 1f), 1f, in random);
-            Assert.AreEqual(Yaw(4, in pure), a.x, Eps, "при variance 0 остаётся чистый рисунок");
+            // ⚠ THE NUMBER IS PINNED, NOT RE-DERIVED FROM THE SUBJECT (rule
+            // 428): this used to read `AreEqual(Yaw(4, in pure), a.x)`, which
+            // calls the function under test on both sides and is satisfied by
+            // any implementation that is merely self-consistent.
+            // yawBase(k=5) = sin(0.7 * 2pi * 5/12) * 5/12 = 0.4024691, and at
+            // cone 1 with variance 0 that IS the angle.
+            Assert.AreEqual(0.4024691d, a.x, Eps, "при variance 0 остаётся чистый рисунок");
+            // ...and the property that number carries: at variance 0 the result
+            // does not depend on the seed at all, so a DIFFERENT aim point and a
+            // DIFFERENT shot ordinal must land on the very same angle.
+            Assert.AreEqual(a.x, Yaw(4, in pure), Eps,
+                "при variance 0 угол обязан не зависеть от посева");
             Assert.AreNotEqual(a.x, b.x, "при variance 1 горизонталь обязана уехать в бросок");
             // ⭐ AND ONLY TOGETHER WITH SprayPitchAmplitude = 0 is this today's
             // behavior: at variance 1 the vertical REMAINS, while today there

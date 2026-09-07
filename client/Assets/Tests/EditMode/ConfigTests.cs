@@ -1369,6 +1369,27 @@ namespace Ring.Simulation.Tests
             w.SprayYawTurns = 0.7f;
             Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
                 "SprayPitchAmplitude = 0 — вторая половина отката владельца");
+
+            // ⛔ THE SECOND WAY THE HORIZONTAL SWITCHES OFF (coordinator Ruling
+            // 332). `yawBase` is a PRODUCT — SprayYawAmplitude * sin(phase) *
+            // amp — so a zero amplitude kills it just as dead as zero turns, and
+            // a rule watching only the turns let this pair through. At
+            // SprayVariance = 0 it is a perfect laser: Draw returns exactly
+            // (0, 0) for every shot and every seed.
+            var (h2, w2, c2, g2, wv2, a2, vis2) = MakeDefaults();
+            w2.SprayYawAmplitude = 0f;
+            w2.SprayPitchAmplitude = 0f;
+            var ex2 = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h2, w2, c2, g2, wv2, a2, vis2));
+            Assert.That(ex2.Message, Does.Contain("Weapon.SprayYawAmplitude"));
+            Assert.That(ex2.Message, Does.Contain("must not both be zero"));
+
+            // ...and that switch alone is legal too, for the same reason the
+            // vertical alone is: a weapon whose horizontal is pure seed-driven
+            // scatter around a live vertical is a balance choice.
+            w2.SprayPitchAmplitude = 0.35f;
+            Assert.DoesNotThrow(() => BuildShipped(h2, w2, c2, g2, wv2, a2, vis2),
+                "SprayYawAmplitude = 0 при живой вертикали — законная настройка");
         }
 
 

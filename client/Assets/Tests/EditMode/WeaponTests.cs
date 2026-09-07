@@ -385,10 +385,15 @@ namespace Ring.Simulation.Tests
         public void ReleasingFire_ResetsTheBurst_ButADashDoesNot()   // tests 5 and 6, M236/M237
         {
             // The reset belongs to the RELEASE of fire and stands BEFORE the
-            // early return on !CanFire. The opposite order (a reset inside the
-            // !CanFire branch) is an exploit: a dash, a slide or the backpack
-            // window would each put the pattern back onto its pinpoint first
-            // shot.
+            // early return on !CanFire.
+            // ⚠ WHAT THIS TEST KILLS IS THE UNCONDITIONAL RESET, NOT THE MOVE
+            // (lesson 696, and the same correction is written at the code):
+            // relocating the GUARDED `if (!input.FireHeld)` into the !CanFire
+            // branch changes no behavior, because CanFire opens with
+            // input.FireHeld. What the asserts below refuse is a reset with the
+            // guard dropped — then a dash, a slide or the backpack window each
+            // put the pattern back onto its pinpoint first shot with the
+            // trigger still held.
             //
             // ⛔⛔ WHAT IS PINNED IS THE DASH, NOT THE SLIDE, AND THAT DECIDES
             // THE FATE OF MUTATION M237 (review finding D, checked against the
@@ -478,26 +483,45 @@ namespace Ring.Simulation.Tests
             // SprayPitchAmplitude, so the climb equals
             // ProjectileSpeed * tan(cone * 0.35 * (1 - SprayVariance)) in the
             // pure part.
+            // ⚠ THE RUN IS LONG ENOUGH FOR RECOIL TO REACH ITS CEILING, AND THE
+            // PREMISE BELOW SAYS SO OUT LOUD. `expected` is computed from the
+            // FULL cone (SpreadRad + RecoilMaxRad), so a run that never gets
+            // there compares a measurement against a number the fixture cannot
+            // produce. The first version of this test ran 60 ticks: recoil
+            // accumulates at RecoilPerShotRad / FireInterval = 0.05 rad/s against
+            // a 0.03 rad/s recovery, i.e. 0.02 net, so the 0.07 ceiling needs 3.5
+            // seconds = 105 ticks and 60 ticks reached only 0.045. `expected` was
+            // then 1.48x too large and the 0.5 factor was silently absorbing the
+            // gap instead of leaving margin. 150 ticks clears the ceiling with
+            // room to spare (42 shots, well inside the fixture's 400-round
+            // magazine, so the emergency interval never cuts in).
             SimConfig cfg = TestConfigs.OpenField();
             cfg.Weapon.SprayVariance = 0f;                 // pure pattern: the expectation is computable
             var w = new SimulationWorld(1, cfg);
             SimInput fire = TestWorlds.HipFire();
-            float peak = 0f;
-            for (int i = 0; i < 60; i++)
+            float peak = 0f, peakRecoil = 0f;
+            for (int i = 0; i < 150; i++)
             {
                 w.Tick(fire);
+                peakRecoil = math.max(peakRecoil, w.Player.RecoilOffset);
                 for (int j = 0; j < w.ProjectileCount; j++)
                     peak = math.max(peak, math.abs(w.Projectiles[j].VelZ));
             }
+            Assert.AreEqual(cfg.Weapon.RecoilMaxRad, peakRecoil, 1e-6f,
+                "премисса: отдача обязана дойти до потолка, иначе ожидание считается не от того конуса");
             float cone = cfg.Weapon.SpreadRad + cfg.Weapon.RecoilMaxRad;
             float expected = cfg.Weapon.ProjectileSpeed
                 * math.tan(cone * cfg.Weapon.SprayPitchAmplitude);
+            // Still HALF the geometric figure, and now for the one honest
+            // reason left: the widest cone is reached just after a shot, while
+            // the next shot reads it about four ticks of recovery later, so the
+            // measurable peak sits a little under `expected` (0.5 leaves ~1.9x).
             Assert.Greater(peak, 0.5f * expected,
                 "вертикали в разбросе нет или она вдвое мельче рисунка");
         }
 
         [Test]
-        public void AimedFire_AlsoClimbs_ButTheShiftDecaysWithTheExistingTilt()   // test 12, M243
+        public void AimedFire_AlsoClimbs()   // test 12, M243
         {
             // ⛔ WITHOUT THIS TEST THE MUTATION "pitch only in the hip branch"
             // SURVIVES: the previous test fires from the hip alone and cannot
@@ -527,8 +551,14 @@ namespace Ring.Simulation.Tests
             float cone = cfg.Weapon.RecoilMaxRad
                 - cfg.Weapon.RecoilRecoveryRadPerSec * SimulationWorld.TickDt;
             float pitch = cone * cfg.Weapon.SprayPitchAmplitude / cfg.Weapon.SprayPatternShots;
+            // ⚠ THE TOLERANCE IS 1e-3 AND NOT 0.02, WHICH IS WHAT MAKES THE
+            // COMMENT ABOVE TRUE. At a figure of 0.0704 a tolerance of 0.02 is
+            // +-28%, i.e. the assert was really "VelZ > 0.05" while promising a
+            // NUMBER. The only modeling error here is the renormalize that
+            // follows the vertical shift (tan against sin), worth 1.4e-7, so
+            // 1e-3 is still ~7000x the real error and the number is now pinned.
             Assert.AreEqual(cfg.Weapon.ProjectileSpeed * math.tan(pitch),
-                w.GetProjectileForTest(0).VelZ, 0.02f,
+                w.GetProjectileForTest(0).VelZ, 1e-3f,
                 "в прицеле вертикали нет или она не та — рисунок применён только к бедровой ветке");
         }
 

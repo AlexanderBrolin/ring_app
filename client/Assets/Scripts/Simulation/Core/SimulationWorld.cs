@@ -1086,9 +1086,26 @@ namespace Ring.Simulation.Core
             }
         }
 
-        /// WeaponSystem's seam into the weapon-spread RNG stream (Task 3; consumer
-        /// lands in Task 15) — Critical Rule: no ad-hoc Unity.Mathematics.Random
-        /// instances in Simulation, every draw goes through one of these two seams.
+        /// The weapon-spread RNG stream's seam (Task 3) — Critical Rule: no
+        /// ad-hoc Unity.Mathematics.Random instances in Simulation, every draw
+        /// goes through one of these seams.
+        ///
+        /// ⚠ IT HAS NO COMBAT CONSUMER ANY MORE, and that is the state of the
+        /// code rather than an oversight (app-8dv). This doc used to promise one
+        /// ("consumer lands in Task 15"); WeaponSystem.SpawnShot was it, and the
+        /// spray PATTERN replaced the draw outright, because an angle taken from
+        /// a stream the world advances is unpredictable to a client by
+        /// construction. The stream itself STAYS (Р450): it is still seeded,
+        /// still saved and restored, and still hashed, so removing it would move
+        /// the golden digests for no gain.
+        ///
+        /// ⛔ AND A FUTURE CONSUMER MUST NOT SIT ON THE PATH OF A SHOT. Anything
+        /// else may draw from this stream; the moment a round's geometry does,
+        /// own-shot prediction silently stops working again — not with a failing
+        /// test but with a client whose tracer diverges from the server's round.
+        /// Until now that rule lived only in the doc of the test that guards it
+        /// (WeaponTests.NoShotEverTouchesTheSpreadStream), which is the wrong
+        /// place for a reader who arrives at the seam first.
         internal ref Random SpreadRng => ref _spreadRng;
 
         /// WaveSystem's seam into the wave-director RNG stream (Task 3) — split

@@ -563,25 +563,45 @@ namespace Ring.Data
             // setting, and the [Range] on the SO is an editor limit rather than
             // a rule.
             ReqNonNegative(errors, "Weapon.SprayYawTurns", cfg.Weapon.SprayYawTurns);
-            if (cfg.Weapon.SprayYawTurns == 0f && cfg.Weapon.SprayPitchAmplitude == 0f)
+            if ((cfg.Weapon.SprayYawTurns == 0f || cfg.Weapon.SprayYawAmplitude == 0f)
+                && cfg.Weapon.SprayPitchAmplitude == 0f)
             {
-                // Both axes off at once is a weapon with no pattern at all.
+                // The pattern off on BOTH axes at once is a weapon with no
+                // pattern at all.
                 //
-                // ⚠ THIS RULE IS STRICTER THAN THE MINIMUM, ON PURPOSE, AND
-                // THE NEXT READER IS TOLD SO HERE RATHER THAN LEFT TO "FIX" IT.
-                // Full degeneracy -- the shot's angle constant at dead center
-                // -- would additionally need SprayVariance == 0, since a
-                // non-zero variance still scatters the round. A third condition
-                // would make the rule impossible to check by eye, and it would
-                // leave "no pattern at all, only noise" reachable by hot-tweak,
-                // which is a weapon nobody chose. A validator is allowed to be
-                // stricter than the bare minimum; what it is not allowed to be
-                // is silent about it.
-                errors.Add("Weapon.SprayYawTurns and Weapon.SprayPitchAmplitude " +
-                    "must not both be zero — that is a weapon with no spray pattern on " +
-                    "either axis (got SprayYawTurns=" +
-                    $"{cfg.Weapon.SprayYawTurns:F3}, SprayPitchAmplitude=" +
-                    $"{cfg.Weapon.SprayPitchAmplitude:F3}). Either one alone is legal.");
+                // ⚠ THE HORIZONTAL HAS TWO OFF SWITCHES, NOT ONE (coordinator
+                // Ruling 332), because `yawBase` is a PRODUCT:
+                // SprayYawAmplitude * sin(phase) * amp. Zero turns freezes the
+                // phase; zero amplitude scales the whole term away. A rule that
+                // watched only the turns let SprayYawAmplitude = 0 with
+                // SprayPitchAmplitude = 0 through, and at SprayVariance = 0 that
+                // triple is a PERFECT LASER -- Draw returns exactly (0, 0) for
+                // every shot and every seed.
+                //
+                // ⚠ THIS RULE IS STRICTER THAN THE MINIMUM, ON PURPOSE, AND THE
+                // NEXT READER IS TOLD SO HERE RATHER THAN LEFT TO "FIX" IT BY
+                // ADDING THE MISSING TERM. Full degeneracy needs SprayVariance
+                // == 0 as well: with a non-zero variance the same settings leave
+                // a weapon whose horizontal is pure noise and whose vertical is
+                // gone, which is not a laser but is not a pattern either. That
+                // third condition is deliberately NOT in the test -- it would
+                // make the rule impossible to check by eye and would leave "no
+                // pattern at all, only noise" reachable by hot-tweak, which is a
+                // weapon nobody chose. A validator may be stricter than the bare
+                // minimum; what it may not be is silent about being so.
+                //
+                // ⭐ THE OWNER'S ROLLBACK STILL PASSES, and it is what bounds how
+                // strict this rule may become: SprayVariance = 1 with
+                // SprayPitchAmplitude = 0 keeps turns 0.7 and amplitude 1.0, so
+                // neither horizontal switch is off and the round still moves
+                // across the cone by seed. Checked by count, not by eye.
+                errors.Add("Weapon.SprayYawTurns/Weapon.SprayYawAmplitude and " +
+                    "Weapon.SprayPitchAmplitude must not both be zero — either " +
+                    "horizontal switch at zero together with a zero vertical is a " +
+                    "weapon with no spray pattern on either axis (got SprayYawTurns=" +
+                    $"{cfg.Weapon.SprayYawTurns:F3}, SprayYawAmplitude=" +
+                    $"{cfg.Weapon.SprayYawAmplitude:F3}, SprayPitchAmplitude=" +
+                    $"{cfg.Weapon.SprayPitchAmplitude:F3}). Either axis alone is legal.");
             }
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.

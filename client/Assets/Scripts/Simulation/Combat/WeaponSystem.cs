@@ -83,10 +83,19 @@ namespace Ring.Simulation.Combat
 
             // app-8dv (spec §3.2, owner decision Н28): the burst counter resets
             // on the RELEASE of fire, and this line stands AHEAD of the early
-            // return below on purpose. Putting the reset inside the !CanFire
-            // branch instead would hand out an exploit: a dash, a slide or the
-            // backpack window would each return the pattern to its pinpoint
-            // first shot without the trigger ever coming up.
+            // return below on purpose.
+            // ⚠ AND THE EXPLOIT IS THE UNCONDITIONAL FORM, NOT THE MOVE ITSELF
+            // — stated precisely because this is where the next reader will
+            // reopen the question. Moving THIS statement, guard and all, into
+            // the !CanFire branch would be behaviorally identical: `CanFire`
+            // opens with `input.FireHeld`, so !CanFire is true whenever the
+            // trigger is up, and the inner guard would still refuse every other
+            // case. What DOES hand out an exploit is dropping the guard and
+            // resetting unconditionally inside that branch — then a dash, a
+            // slide or the backpack window each return the pattern to its
+            // pinpoint first shot with the trigger still held. The line lives
+            // here because that is where it reads as what it is, a rule about
+            // the TRIGGER rather than about eligibility.
             // ⛔ THERE IS NO TIME-BASED SAFETY NET BESIDE IT, and its absence is
             // a decision rather than an omission (Р449): InputStarvation.Effective
             // repeats the last input INCLUDING FireHeld for InputStarveTicks, so a
@@ -143,9 +152,13 @@ namespace Ring.Simulation.Combat
                     //
                     // The null-sink gate is the same one ShotsFired lives
                     // behind, for the same reason: MatchStats is a STAT, and
-                    // stats are one of the three things a predicting client
+                    // stats are one of the TWO things a predicting client
                     // must never own (CR 3; PlayerPrediction's own doc names
-                    // them). AdvanceNoSpawn has no world to credit and no
+                    // them). ⚠ That list was three until app-8dv, and this
+                    // sentence moved with it: the spread DRAW was its middle
+                    // item and no longer exists, so citing a document that now
+                    // says two while saying three here would leave the reader
+                    // to discover the disagreement themselves. AdvanceNoSpawn has no world to credit and no
                     // MatchStats of its own, so "identical on both paths"
                     // resolves here to what it already means for ShotsFired —
                     // one body, one rule, one authoritative sink.
