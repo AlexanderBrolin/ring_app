@@ -430,8 +430,8 @@ namespace Ring.Simulation.Tests
             // have meant re-pinning it immediately. Т36 was moved behind that
             // work for exactly this reason, and this constant held its first
             // value until `app-ggvz` — see RE-PIN #4 below, the first of the
-            // two times it has moved (RE-PIN #5, the epic's one sanction, is
-            // the second).
+            // THREE times it has moved (RE-PIN #5, the epic's one sanction, is
+            // the second; RE-PIN #6, app-8dv's own, the third).
             //
             // ⚠ WHAT IT DOES NOT COVER, measured and named rather than left to
             // be assumed from the paragraph above: THE DIRECTOR'S DEATH, the
@@ -499,7 +499,15 @@ namespace Ring.Simulation.Tests
             // value with the budget — the measured control that (12) is the
             // budget and nothing else. Cap alone: 8663844641023811190. The
             // sanction is spent with this movement.
-            const ulong ExtractionGoldenHash = 0xB79F165FA4BC0C60UL; // = 13231318830279298144
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #6 (bd `app-8dv`, task T2, session 93) — the solo golden
+            // carries the full account: the owner's sanction of 2026-09-07, the
+            // six causes and the four runs behind the number. All six act here
+            // as they do there. This constant's value with five of them in and
+            // T8's three counters not yet: 18271896633053888887. THE SANCTION
+            // IS SPENT WITH THIS MOVEMENT, the third this constant has made.
+            const ulong ExtractionGoldenHash = 0x5278A02A5C095067UL; // = 5942675812108554343
             Assert.AreEqual(ExtractionGoldenHash,
                 RunExtractionScripted(123, ExtractionTicks, 3));
         }
@@ -1511,7 +1519,68 @@ namespace Ring.Simulation.Tests
             // put out of this scenario's reach (that test's own notes carry
             // the arithmetic). The sanction is spent; the stop-and-ask rule
             // stands.
-            const ulong GoldenHash = 0xDD4B31CB3E3C8CD4UL; // = 15945893654627650772
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #6 (bd `app-8dv`, "the collector's own shot is predicted
+            // whole", task T2, session 93, 2026-09-08) — A SANCTION OF ITS OWN,
+            // granted by the owner on 2026-09-07 for this one movement and
+            // SPENT here. All three constants move together, in a commit of
+            // their own; after this there is no sanction again, and any further
+            // movement of any of them is a stop and a question for the owner.
+            //
+            // THE CONSTANTS WERE RED FROM T1 TO T2 ON PURPOSE (spec §4.2). Both
+            // preceding tasks of phase Ф-A move the digest, and the re-pin was
+            // held until after T8 so it is taken ONCE. That ordering is the
+            // owner's own decision of 2026-09-07 (variant "a" of the plan's one
+            // open question) and it paid off
+            // literally: T8's three counters moved these values AGAIN on top of
+            // T1's, so a re-pin taken between the two tasks would have closed
+            // five of the six causes with the sanction already spent, and the
+            // sixth would have reddened the constants the very next day.
+            //
+            // THE SIX CAUSES, BY NAME:
+            //   (1) THE TRAJECTORIES THEMSELVES (T1). A shot's angle inside the
+            //       cone is no longer a draw from the world RNG but
+            //       `SprayPattern.Draw` — a pure function of the shot's number
+            //       in the burst, its number in the match and the aim point.
+            //       Every round of this scenario flies somewhere else.
+            //   (2) `_spreadRng` NO LONGER ADVANCES (T1). Its `state` is hashed
+            //       as the first of the three RNG streams (SimulationWorld's
+            //       StateHash), and with its one consumer gone the stream now
+            //       stands still for the whole run instead of stepping once per
+            //       shot — a movement of the digest in its own right, separate
+            //       from where the rounds go.
+            //   (3) TWO NEW `PlayerState` FIELDS (T1) — BurstShots and
+            //       ShotOrdinal, folded by HashPlayer.
+            //   (4) THREE NEW `MatchStats` COUNTERS (T8) — HeadHits, BodyHits
+            //       and LegHits, folded by HashStats.
+            //   (5) THE BIRTH HEIGHT OF HIP FIRE (T1). The pattern's vertical
+            //       half reaches BOTH branches through one expression, so a hip
+            //       round is born with a nonzero VelZ, and K9's fractional
+            //       pre-advance lifts its spawn height along its own line —
+            //       up to 6 cm standing and up to 12 cm mid-slide.
+            //   (6) `math.sin` AND `math.tan` ON THE PATH TO HASHED STATE (T1,
+            //       inside `SprayPattern.Draw` and the pitch shift of
+            //       WeaponSystem.SpawnShot). This breaks no rule of this
+            //       simulation, and the reason stands one line away in the same
+            //       method: `Geometry.Rotate` already calls sin/cos on the very
+            //       same shot.
+            //
+            // MEASURED, NOT ASSUMED. The value below came out of FOUR
+            // independent full runs — three during T8 (after the instrument,
+            // after its review round and after the owner's screen line Н35) and
+            // a fourth at the head of this task, on a clean tree — and all four
+            // returned it bit for bit. The other two constants were read off
+            // those same four runs.
+            //   THE TWO HALVES ARE SEPARATED BY MEASUREMENT rather than
+            // asserted. With causes (1), (2), (3), (5) and (6) in and T8's
+            // counters not yet, this constant read 4216705462604572006 (the
+            // multiplayer one 18382246664756088439, the extraction one
+            // 18271896633053888887); adding (4) alone produced the three values
+            // pinned now. That is the control that (4) is T8's three counters
+            // and nothing else — and it is also the measurement that made the
+            // owner's ordering the right one.
+            const ulong GoldenHash = 0x4AB22CBB04361713UL; // = 5382413686402324243
             Assert.AreEqual(GoldenHash, RunScripted(123, Ticks));
         }
 
@@ -1698,7 +1767,18 @@ namespace Ring.Simulation.Tests
             // step, all confirmed by the editor's own run: cap alone
             // 14357526718779430336, cap and the ninth draw 13121105491736080597,
             // and the number below with the budget.
-            const ulong MultiGoldenHash = 0x4266DA7DB29960DCUL; // = 4784751887529894108
+            //
+            // ------------------------------------------------------------------
+            // RE-PIN #6 (bd `app-8dv`, task T2, session 93) — the solo golden
+            // above carries the full account: the owner's sanction of
+            // 2026-09-07, the six causes and the four runs behind the number.
+            // All six act here as they do there, over three players instead of
+            // one — which is what this constant exists to pin, since causes (3)
+            // and (4) enter the array halves of the canonical hash order once
+            // per player and once per stats slot. Its value with five causes in
+            // and T8's three counters not yet: 18382246664756088439. The
+            // sanction is spent.
+            const ulong MultiGoldenHash = 0x28E5ADF5CB02D7C4UL; // = 2946952802368411588
             Assert.AreEqual(MultiGoldenHash, RunMultiScripted(123, Ticks, 3));
         }
 
@@ -1791,6 +1871,19 @@ namespace Ring.Simulation.Tests
             // threshold below is "at least one" or an equality at the measured
             // zero — never a number tuned to the run.
             //
+            // RE-MEASURED FOR THE COVERAGE FLAG (2026-09-08, app-8dv T2, this
+            // test run under the editor with the counters temporarily printed).
+            // Two numbers, and the second is why the flag was rewritten at all:
+            // 98 rounds left the AimHeld branch over the run, and ZERO Head-zone
+            // hits landed. The disjunction below therefore stands ENTIRELY on
+            // its aimed-shot half — `headshotProjectileHits >= 1` is false on
+            // this scenario and has been carrying nothing — so a tautological
+            // aimed-shot flag would have left the whole assertion guarding
+            // nothing at all. That is the shape of the defect T1 introduced and
+            // this task removes, and it is written down rather than quietly
+            // fixed, because the day the run does land a headshot, the number
+            // above is what tells the next reader that it did not use to.
+            //
             // The event buffer is not auto-cleared per tick (SimulationWorld.
             // Tick never calls ClearEvents() itself — only ClearEvents()
             // callers decide when), and it stops recording once it hits
@@ -1814,15 +1907,30 @@ namespace Ring.Simulation.Tests
 
             int dashRicochetCount = 0;
             int headshotProjectileHits = 0;
-            bool anyAimedProjectileFired = false; // VelZ != 0 -> the AimHeld branch actually spawned a shot
+            // A ProjectileFired of the collector's OWN in a tick whose input held
+            // Aim — i.e. the AimHeld branch of WeaponSystem.SpawnShot really
+            // spawned a round.
+            //   ⚠ IT USED TO READ `round.VelZ != 0f`, AND app-8dv T1 MADE THAT A
+            // TAUTOLOGY. The spray pattern gives every shot a vertical component
+            // of its own (`SprayPattern.Draw`'s pitch half, applied in both
+            // branches by one expression), so a HIP round now carries a nonzero
+            // VelZ too — WeaponTests.HipFire_NoLongerFlies_PerfectlyFlat is the
+            // witness that says so out loud. Measured on this very scenario
+            // before the re-pin: one tick had a VelZ-carrying round in the air
+            // while not a single aimed shot had been fired yet, so the old flag
+            // went true off hip fire. The input's own AimHeld cannot drift that
+            // way: SimInputSanitizer touches AimHeight and never AimHeld, and a
+            // mob's round is born with a literal 0f for VelZ (MobAiSystem), so
+            // this counts the collector's aimed fire and nothing else.
+            bool anyAimedProjectileFired = false;
             // Ф5-0: the scenario's own proof that it never sets foot in the
             // core. ScenarioStart checks the START; this checks all 1000 ticks
             // of wandering that follow it, which is the half a start position
             // cannot promise. From Т21 on a live collector inside the core
             // activates the Director (Р299) — that would move the digest this
-            // file pins, and both re-pin sanctions are spent (see the golden's
-            // own account), so the day the run drifts in, THIS is the test
-            // that says so.
+            // file pins, and every re-pin sanction granted so far is spent (see
+            // the golden's own account), so the day the run drifts in, THIS is
+            // the test that says so.
             Zone deepestZone = Zone.Outer;
 
             // app-88jb Т34: the seven mechanics' counters. EVERYTHING THAT
@@ -1880,6 +1988,9 @@ namespace Ring.Simulation.Tests
                     if (ev.Kind == SimEventKind.PlayerDamaged && ev.ImpactSpeed > 0f) collectorImpacts++;
                     if (ev.Kind == SimEventKind.ProjectileRicocheted) projectileRicochets++;
                     if (ev.Kind == SimEventKind.ProjectileFired && ev.BirthSteps > 1) catchUpBirths++;
+                    if (ev.Kind == SimEventKind.ProjectileFired
+                        && ev.Owner == ProjectileOwner.Player && input.AimHeld)
+                        anyAimedProjectileFired = true;
                 }
                 world.ClearEvents();
 
@@ -1887,7 +1998,6 @@ namespace Ring.Simulation.Tests
                 for (int p = 0; p < world.ProjectileCount; p++)
                 {
                     ProjectileState round = world.Projectiles[p];
-                    if (round.VelZ != 0f) anyAimedProjectileFired = true;
                     if (round.RewindLeft > 0) anyPictureRound = true;
                     // A mob's round is born with its own archetype's
                     // ProjectileDamage (MobAiSystem); the gunner's stands for
@@ -1956,7 +2066,7 @@ namespace Ring.Simulation.Tests
                 "the golden scenario must ricochet a dash off an obstacle at least once");
             Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
                 "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
-                "least one aimed (VelZ != 0) shot, proving the AimHeld branch actually fired");
+                "least one shot out of the AimHeld branch, proving that branch actually fired");
 
             // IMPACT (item 3). ImpactSpeed is the field a receiver sizes the
             // shove by (Т8), and it is zero for a chaser's contact strike by
