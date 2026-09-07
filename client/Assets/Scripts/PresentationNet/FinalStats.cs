@@ -71,8 +71,15 @@ namespace Ring.Presentation.Net
             AmmoSpent = ended.AmmoSpent,
             CellsPicked = ended.CellsPicked,
             // app-8dv / app-dw0z: hits by zone, carried back for the same
-            // reason as every line above -- the results screen prints
-            // MatchStats, not the wire message.
+            // reason as every line above -- whatever reads a finished match
+            // reads MatchStats, not the wire message.
+            // ⚠ AND NOTHING READS THESE THREE YET. The results screen
+            // (DeathOverlayController.BuildMetricsText) prints six of this
+            // struct's thirteen fields, and no zone is among them; at the
+            // milestone the owner reads them from the server log instead. They
+            // are mapped here so the receiving side is COMPLETE -- a field the
+            // wire carries and this method drops would be a silent hole the
+            // day a screen does ask for it.
             HeadHits = ended.HeadHits,
             BodyHits = ended.BodyHits,
             LegHits = ended.LegHits,

@@ -420,6 +420,11 @@ namespace Ring.Simulation.Tests
         /// helper causes incidentally credits ShotsHit/Kills to player 0's
         /// personal MatchStats, so a caller asserting on player 0's own personal
         /// stats after calling this must account for that side effect.
+        /// ⚠ AND SINCE app-8dv THAT SIDE EFFECT INCLUDES A ZONE BUCKET: the
+        /// seam is called with `HitZone.Body`, so every kill here also raises
+        /// `BodyHits` (SimulationWorld.IncrementShotsHit counts the zone under
+        /// the same Alive guard as ShotsHit). A caller checking the zone
+        /// breakdown after this helper is reading its kills too.
         public static int ClearFirstWave(SimulationWorld world, int maxTicks = 300)
         {
             var inputs = new SimInput[world.PlayerCount];

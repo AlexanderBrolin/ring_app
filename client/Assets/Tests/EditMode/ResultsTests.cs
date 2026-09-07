@@ -632,7 +632,11 @@ namespace Ring.Simulation.Tests
 
         /// Фикс-раунд гейта Ф7, находка ревью A-2.
         ///
-        /// FOURTEEN SAME-TYPED ASSIGNMENTS ARE WHERE A SWAPPED PAIR HIDES, and
+        /// SIXTEEN SAME-TYPED ASSIGNMENTS ARE WHERE A SWAPPED PAIR HIDES, and
+        /// the number counts every counter the two builders copy — thirteen in
+        /// `PersonalFrom`, three in `WorldFrom`. It read "fourteen" until
+        /// app-8dv and was already off by one then; recounted here rather than
+        /// incremented, so the next reader can check it in one pass.
         /// this one runs in the direction nothing else checks: the sending side
         /// is pinned by `EndedNetFor_CopiesEveryStat`, the RECEIVING side had
         /// nothing at all, because until this fix round nobody read
@@ -646,6 +650,9 @@ namespace Ring.Simulation.Tests
                 DashesUsed = 15, SlidesUsed = 16, DeathTick = 17, DamageTaken = 18.5f,
                 AmmoSpent = 19, CellsPicked = 20,
                 WavesCleared = 21, MobSpawnsSkipped = 22, ProjectileSpawnsSkipped = 23,
+                // app-8dv / app-dw0z: hits by zone, continuing the distinct
+                // run rather than reusing a number already on the fixture.
+                HeadHits = 24, BodyHits = 25, LegHits = 26,
             };
 
             MatchStats stats = FinalStats.PersonalFrom(in ended);
@@ -659,6 +666,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(18.5f, stats.DamageTaken, 1e-6f, "DamageTaken");
             Assert.AreEqual(19, stats.AmmoSpent, "AmmoSpent");
             Assert.AreEqual(20, stats.CellsPicked, "CellsPicked");
+            Assert.AreEqual(24, stats.HeadHits, "HeadHits");
+            Assert.AreEqual(25, stats.BodyHits, "BodyHits");
+            Assert.AreEqual(26, stats.LegHits, "LegHits");
 
             WorldStats world = FinalStats.WorldFrom(in ended);
             Assert.AreEqual(21, world.WavesCleared, "WavesCleared");

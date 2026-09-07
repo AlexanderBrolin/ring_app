@@ -1291,9 +1291,15 @@ namespace Ring.Server
     ///
     /// WHAT SPEC §3.10 PROMISES IS WHAT THIS ROW CARRIES, because this row IS
     /// the future `match_players` record: playerId, result, loot,
-    /// creditsTotal, kills, headshotKills, shotsFired, shotsHit, damageTaken,
-    /// ammoSpent, cellsPicked, survivedSeconds. Stage 5 does not invent a
-    /// format, it starts POSTing this one.
+    /// creditsTotal, kills, headshotKills, shotsFired, shotsHit, headHits,
+    /// bodyHits, legHits, damageTaken, ammoSpent, cellsPicked,
+    /// survivedSeconds. Stage 5 does not invent a format, it starts POSTing
+    /// this one.
+    ///
+    /// app-8dv / app-dw0z added the three zone columns, and this row is where
+    /// they LAND rather than merely pass through: the results screen prints no
+    /// zone, so at the milestone an operator's grep of this line is the only
+    /// reading of them there is.
     public static class MatchSummaryLog
     {
         /// The OUTCOME PRINTS ITS OWN ENUM MEMBER, never a hand-written

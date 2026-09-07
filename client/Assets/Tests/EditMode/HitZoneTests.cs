@@ -60,11 +60,13 @@ namespace Ring.Simulation.Tests
         /// be asking for a headshot while shooting the chest. Read off the part,
         /// the aim is 2.41 m for a chaser and 3.72 m for a gunner -- inside the
         /// head belts [2.12, 2.70] and [3.24, 4.20] the bodies actually carry.
-        static float HeadBandOf(HitPart[] parts)
-        {
-            HitPart head = parts[parts.Length - 1];
-            return 0.5f * (head.Bottom + head.Top);
-        }
+        static float HeadBandOf(HitPart[] parts) => MidOf(parts[parts.Length - 1]);
+
+        /// The middle of ANY part's belt. `HeadBandOf` above is this expression
+        /// applied to the crown; app-8dv gave the torso a second call site, and
+        /// two copies of one expression is the shape rule 2 removes -- the same
+        /// reason the head version was lifted here in the first place.
+        static float MidOf(HitPart part) => 0.5f * (part.Bottom + part.Top);
 
         [Test]
         public void Overlaps_AcceptsInsideTheRadiusPaddedColumn_RejectsOutside()
@@ -78,7 +80,7 @@ namespace Ring.Simulation.Tests
             // to 2.70 moves nothing the test claims.
             float top = HitZones.StackTop(c.Parts);
             HitPart torso = c.Parts[c.Parts.Length - 2];
-            float bodyHeight = 0.5f * (torso.Bottom + torso.Top);
+            float bodyHeight = MidOf(torso);
             // a flat pass at body height
             Assert.IsTrue(HitZones.Overlaps(bodyHeight, bodyHeight, r, top));
             // grazing the crown / scraping the ground: the projectile's own
@@ -516,7 +518,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(FlightX, 0f)));
             HitPart chaserTorso = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 2];
-            float bodyBand = 0.5f * (chaserTorso.Bottom + chaserTorso.Top);
+            float bodyBand = MidOf(chaserTorso);
             // Premise: the mob has to outlive BOTH rounds, or the second one has
             // no target left to land on.
             Assert.Less(2f * cfg.Weapon.Damage * chaserTorso.DamageMult, cfg.Chaser.MaxHp,
@@ -550,11 +552,18 @@ namespace Ring.Simulation.Tests
         [Test]
         public void TheZoneCountersRideTheEndOfMatchMessage()   // test 33, M268
         {
-            // The end-of-match results and the server log are the only places
-            // the owner will ever see these numbers: on the networked backend
-            // HasMatchStats is false, and the milestone runs on the networked
-            // stand. So the counters have to survive the wire, not merely exist
-            // in the simulation.
+            // The counters have to survive the WIRE, not merely exist in the
+            // simulation: on the networked backend HasMatchStats is false, so
+            // nothing a client shows comes off the live world.
+            // ⚠ THIS PINS THE TRANSPORT, NOT A SCREEN, and the difference is
+            // worth stating because the two are easy to conflate. The numbers
+            // do reach MatchStats through FinalStats.PersonalFrom -- which is
+            // exactly what this test measures -- but the results screen
+            // (DeathOverlayController.BuildMetricsText) prints six of that
+            // struct's thirteen fields and no zone is among them. At the
+            // milestone these counters are read from the SERVER LOG
+            // (MatchSummaryLog.PlayerLine); whether the screen should grow
+            // three more rows is the owner's call, not this task's.
             var ended = new MatchEndedNet { HeadHits = 5, BodyHits = 7, LegHits = 3 };
             MatchStats personal = FinalStats.PersonalFrom(in ended);
             Assert.AreEqual(5, personal.HeadHits, "попадания в голову не доехали до итогов матча");

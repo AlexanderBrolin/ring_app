@@ -173,7 +173,9 @@ namespace Ring.Presentation
         /// room — and two of those are counters the dev overlay colors red
         /// above zero, i.e. a permanent all-clear on a diagnostic nobody is
         /// feeding. The real numbers do exist on the wire, once, at the end of
-        /// the match (`MatchEndedNet` carries eleven of them); routing those to
+        /// the match (`MatchEndedNet` carries sixteen of them — ten personal
+        /// counters, three per-zone hit counters and the three world-scoped
+        /// ones; the count read "eleven" from Stage 2 until app-8dv); routing those to
         /// the end-of-match screen is a consumer that does not exist yet.
         bool HasMatchStats { get; }
 

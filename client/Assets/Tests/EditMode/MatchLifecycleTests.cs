@@ -884,11 +884,13 @@ namespace Ring.Simulation.Tests
         public void EndedNetFor_CopiesEveryStat()
         {
             // `MatchServer.EndedNetFor` is a pure function of a summary and a
-            // slot — no FishNet, no world, no clock — and eleven same-typed
+            // slot — no FishNet, no world, no clock — and FOURTEEN same-typed
             // assignments in a row are exactly the shape where a swapped pair
             // compiles, runs, and misreports a number for the rest of the
             // project's life. Every value below is DISTINCT for that reason: a
             // fixture with repeated numbers cannot tell a swap from a copy.
+            // (The count is this player's own `int` assignments, the rule
+            // EndedNetFor's own doc states; it said "eleven" until app-8dv.)
             var mine = new MatchStats
             {
                 Kills = 11,
@@ -899,6 +901,12 @@ namespace Ring.Simulation.Tests
                 SlidesUsed = 16,
                 DeathTick = 17,
                 DamageTaken = 18.5f,
+                // app-8dv / app-dw0z: hits by zone. 19..23 are taken by the
+                // other slot and by the world counters below, so these start
+                // at 24 -- distinct, like every value above.
+                HeadHits = 24,
+                BodyHits = 25,
+                LegHits = 26,
             };
             // The other slot carries different numbers again, so a message
             // built for the wrong player is as visible as a swapped field.
@@ -932,6 +940,9 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(16, net.SlidesUsed, "SlidesUsed");
             Assert.AreEqual(17, net.DeathTick, "DeathTick");
             Assert.AreEqual(18.5f, net.DamageTaken, "DamageTaken");
+            Assert.AreEqual(24, net.HeadHits, "HeadHits");
+            Assert.AreEqual(25, net.BodyHits, "BodyHits");
+            Assert.AreEqual(26, net.LegHits, "LegHits");
 
             Assert.AreEqual(21, net.WavesCleared, "WavesCleared");
             Assert.AreEqual(22, net.MobSpawnsSkipped, "MobSpawnsSkipped");

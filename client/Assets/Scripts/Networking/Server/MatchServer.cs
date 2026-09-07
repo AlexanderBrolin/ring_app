@@ -1829,14 +1829,27 @@ namespace Ring.Networking.Server
         ///
         /// `internal` FOR THE TESTS, DELIBERATELY (fix-round 1, I-5). This is
         /// a pure function of a summary and a slot — no FishNet, no world, no
-        /// clock — and eleven same-typed assignments in a row are exactly the
-        /// shape where a swapped pair compiles, runs and reports the wrong
-        /// number for the rest of the project's life. The class doc's
+        /// clock — and FOURTEEN same-typed assignments in a row are exactly
+        /// the shape where a swapped pair compiles, runs and reports the wrong
+        /// number for the rest of the project's life. ⚠ The number counts THIS
+        /// PLAYER'S OWN `int` assignments (the three world-scoped ones are
+        /// identical in every copy, and `DamageTaken`/`Outcome`/`Loot` cannot
+        /// be swapped with an int at all); it read "eleven" until app-8dv,
+        /// which was two generations stale — Т24's four result numbers were
+        /// never counted in. Stated with its rule so the next reader recounts
+        /// instead of inheriting. The class doc's
         /// "not unit-tested, on purpose" covers the FishNet WIRING around it,
         /// not arithmetic like this; `EffectiveInputBatch` in this same file
         /// sets the precedent for lifting the decidable part out where a test
-        /// can reach it. `MatchLifecycleTests.EndedNetFor_CopiesEveryStat`
-        /// pins every field.
+        /// can reach it. Every field is pinned, by TWO tests rather than one,
+        /// and naming both is the point: `MatchLifecycleTests
+        /// .EndedNetFor_CopiesEveryStat` owns the STATS half (the counters,
+        /// the zone breakdown app-8dv added, and the three world-scoped
+        /// numbers), while `ResultsTests.EndedNetFor_CopiesEveryResultField`
+        /// owns Т24's RESULT half — Outcome, CreditsTotal, Loot, AmmoSpent,
+        /// CellsPicked, SurvivedSeconds. Until app-8dv this line said one test
+        /// "pins every field", which had not been true since Т24 split the
+        /// coverage in two.
         internal static MatchEndedNet EndedNetFor(in MatchSummary summary, int slot)
         {
             MatchStats stats = summary.PlayerStats[slot];

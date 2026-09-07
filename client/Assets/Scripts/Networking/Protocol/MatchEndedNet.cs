@@ -74,10 +74,17 @@ namespace Ring.Networking.Protocol
         public int SurvivedSeconds;
 
         // app-8dv / app-dw0z: this player's own hits BY ZONE. Flat fields for
-        // the reason the type's own doc gives, and carried for the reason the
-        // task exists: the results screen and the server log are the only
-        // places the owner ever sees these numbers, and on the networked
-        // backend HasMatchStats is false.
+        // the reason the type's own doc gives, and carried because nothing a
+        // networked client shows comes off the live world -- HasMatchStats is
+        // false there, so the end-of-match message is the only transport these
+        // numbers have.
+        // ⚠ CARRIED IS NOT DISPLAYED. They arrive in MatchStats through
+        // FinalStats.PersonalFrom, but the results screen
+        // (DeathOverlayController.BuildMetricsText) prints six of that struct's
+        // thirteen fields and no zone is among them. At the milestone the owner
+        // reads these from the SERVER LOG (MatchSummaryLog.PlayerLine), which
+        // is why that row carries them too; growing the screen is the owner's
+        // decision and is deliberately not taken here.
         public int HeadHits;
         public int BodyHits;
         public int LegHits;
