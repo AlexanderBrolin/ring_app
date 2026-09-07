@@ -1296,10 +1296,13 @@ namespace Ring.Server
     /// survivedSeconds. Stage 5 does not invent a format, it starts POSTing
     /// this one.
     ///
-    /// app-8dv / app-dw0z added the three zone columns, and this row is where
-    /// they LAND rather than merely pass through: the results screen prints no
-    /// zone, so at the milestone an operator's grep of this line is the only
-    /// reading of them there is.
+    /// app-8dv / app-dw0z added the three zone columns. They are read in TWO
+    /// places at the milestone — an operator's grep of this row, and the
+    /// results screen, which prints them as one line under Accuracy since owner
+    /// decision Н35. The two routes are independent: this row comes off the
+    /// simulation's own MatchStats on the server, the screen off the
+    /// end-of-match message. Neither makes the other redundant — a headless
+    /// run has no screen, and an operator reading a log has no overlay.
     public static class MatchSummaryLog
     {
         /// The OUTCOME PRINTS ITS OWN ENUM MEMBER, never a hand-written
@@ -1325,9 +1328,9 @@ namespace Ring.Server
                 // app-8dv / app-dw0z: the zone breakdown rides immediately
                 // after shotsHit, which is the number it decomposes -- an
                 // operator reading the row sees the whole and its parts
-                // together. On the networked backend HasMatchStats is false,
-                // so this row is the ONLY place these counters are ever read
-                // at the milestone.
+                // together. The results screen orders them the same way and for
+                // the same reason (owner decision Н35), so the two renderings
+                // of one idea do not disagree about which number explains which.
                 "shotsHit={6} headHits={7} bodyHits={8} legHits={9} " +
                 "dashesUsed={10} slidesUsed={11} deathTick={12} damageTaken={13:F1} " +
                 "ammoSpent={14} cellsPicked={15} survivedSeconds={16} creditsTotal={17} loot=[",

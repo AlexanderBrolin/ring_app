@@ -436,6 +436,30 @@ namespace Ring.Presentation
             sb.AppendLine($"Волн отражено: {worldStats.WavesCleared}");
             sb.AppendLine($"Время на объекте: {FormatTime(timeSeconds)}");
             sb.AppendLine($"Точность: {accuracy:P0}");
+            // app-8dv / app-dw0z, OWNER DECISION Н35 ("show it if it is cheap;
+            // if it turns out to be clutter we take it out").
+            //
+            // WHY IT STANDS HERE: the zone breakdown REFINES the line above it.
+            // Accuracy says how much of what was fired landed; this says where.
+            // Read together they are one thought, and separated by the dash
+            // count or the damage total they would be two.
+            //
+            // WHY ONE LINE AND NOT THREE: the price of the rollback is what the
+            // owner reserved, so it is kept at one line to delete. The screen
+            // already carries six counters plus the seed, and three more rows
+            // for one idea would be the clutter the decision anticipates.
+            //
+            // ⚠ NO EDITMODE TEST PINS THIS TEXT, and that is stated rather than
+            // left to be discovered: nothing in the suite reads this builder --
+            // ResultsTests reaches only the class's static helpers (TitleFor,
+            // LocalCollectorWalkedOut, RaidSecondsFor), which is why THOSE are
+            // static and this is not. The acceptance criterion is a clean build
+            // plus the milestone playtest. What IS pinned is everything behind
+            // the numbers: the counters themselves (HitZoneTests), the wire
+            // (MatchLifecycleTests/ResultsTests) and the operator's row
+            // (ResultsTests.LogLine_ContainsEveryContractField).
+            sb.AppendLine($"Попадания (голова/корпус/ноги): "
+                + $"{stats.HeadHits} / {stats.BodyHits} / {stats.LegHits}");
             sb.AppendLine($"Дэшей: {stats.DashesUsed}");
             sb.AppendLine($"Урона получено: {stats.DamageTaken:F0}");
             sb.Append($"seed: {_runner.Seed}");
@@ -443,9 +467,11 @@ namespace Ring.Presentation
             return sb.ToString();
         }
 
-        /// The same six lines with a dash in place of every number the world
+        /// The same SEVEN lines with a dash in place of every number the world
         /// counted, and the two facade facts intact — see `BuildMetricsText`'s
         /// own doc for why a dash rather than the zero the render pair holds.
+        /// (Six until app-8dv added the zone breakdown; the count is stated
+        /// here because the two builders have to be read against each other.)
         /// The LABELS are repeated rather than shared with a formatter: the two
         /// texts differ in every value and in nothing else, and a shared
         /// builder taking six nullable numbers would be longer than both.
@@ -457,6 +483,12 @@ namespace Ring.Presentation
             sb.AppendLine($"Волн отражено: {NoNumber}");
             sb.AppendLine($"Время на объекте: {NoNumber}");
             sb.AppendLine($"Точность: {NoNumber}");
+            // app-8dv: the zone breakdown dashes out VALUE BY VALUE rather than
+            // as a single dash, because this builder's own rule above is that
+            // the two texts differ in every value and in nothing else -- one
+            // dash where three numbers stand would change the shape too.
+            sb.AppendLine($"Попадания (голова/корпус/ноги): "
+                + $"{NoNumber} / {NoNumber} / {NoNumber}");
             sb.AppendLine($"Дэшей: {NoNumber}");
             sb.AppendLine($"Урона получено: {NoNumber}");
             sb.Append($"seed: {_runner.Seed}");

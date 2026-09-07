@@ -73,13 +73,14 @@ namespace Ring.Presentation.Net
             // app-8dv / app-dw0z: hits by zone, carried back for the same
             // reason as every line above -- whatever reads a finished match
             // reads MatchStats, not the wire message.
-            // ⚠ AND NOTHING READS THESE THREE YET. The results screen
-            // (DeathOverlayController.BuildMetricsText) prints six of this
-            // struct's thirteen fields, and no zone is among them; at the
-            // milestone the owner reads them from the server log instead. They
-            // are mapped here so the receiving side is COMPLETE -- a field the
-            // wire carries and this method drops would be a silent hole the
-            // day a screen does ask for it.
+            // ⭐ AND THIS IS THE PATH THE SCREEN READS THEM BY. Since owner
+            // decision Н35 the results screen
+            // (DeathOverlayController.BuildMetricsText) prints the three as one
+            // line under Accuracy, and it gets them from exactly here -- the
+            // overlay reads MatchStats, so a field this method dropped would
+            // show as a permanent zero rather than as a missing row. The server
+            // log carries them independently, off the simulation's own
+            // MatchStats, which is the second reading at the milestone.
             HeadHits = ended.HeadHits,
             BodyHits = ended.BodyHits,
             LegHits = ended.LegHits,

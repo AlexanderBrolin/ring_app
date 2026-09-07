@@ -555,15 +555,16 @@ namespace Ring.Simulation.Tests
             // The counters have to survive the WIRE, not merely exist in the
             // simulation: on the networked backend HasMatchStats is false, so
             // nothing a client shows comes off the live world.
-            // ⚠ THIS PINS THE TRANSPORT, NOT A SCREEN, and the difference is
-            // worth stating because the two are easy to conflate. The numbers
-            // do reach MatchStats through FinalStats.PersonalFrom -- which is
-            // exactly what this test measures -- but the results screen
-            // (DeathOverlayController.BuildMetricsText) prints six of that
-            // struct's thirteen fields and no zone is among them. At the
-            // milestone these counters are read from the SERVER LOG
-            // (MatchSummaryLog.PlayerLine); whether the screen should grow
-            // three more rows is the owner's call, not this task's.
+            // ⚠ THIS PINS THE TRANSPORT, AND SINCE OWNER DECISION Н35 THE
+            // TRANSPORT HAS A DISPLAY BEHIND IT. The numbers reach MatchStats
+            // through FinalStats.PersonalFrom -- which is exactly what this
+            // test measures -- and the results screen
+            // (DeathOverlayController.BuildMetricsText) then prints them as one
+            // line under Accuracy. That line has no EditMode test of its own
+            // (nothing in the suite reads the builder), so this test is the
+            // closest thing it has to a guard: break the mapping below and the
+            // screen shows three permanent zeroes. The server log carries the
+            // same numbers by its own route.
             var ended = new MatchEndedNet { HeadHits = 5, BodyHits = 7, LegHits = 3 };
             MatchStats personal = FinalStats.PersonalFrom(in ended);
             Assert.AreEqual(5, personal.HeadHits, "попадания в голову не доехали до итогов матча");

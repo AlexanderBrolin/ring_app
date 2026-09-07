@@ -78,13 +78,16 @@ namespace Ring.Networking.Protocol
         // networked client shows comes off the live world -- HasMatchStats is
         // false there, so the end-of-match message is the only transport these
         // numbers have.
-        // ⚠ CARRIED IS NOT DISPLAYED. They arrive in MatchStats through
-        // FinalStats.PersonalFrom, but the results screen
-        // (DeathOverlayController.BuildMetricsText) prints six of that struct's
-        // thirteen fields and no zone is among them. At the milestone the owner
-        // reads these from the SERVER LOG (MatchSummaryLog.PlayerLine), which
-        // is why that row carries them too; growing the screen is the owner's
-        // decision and is deliberately not taken here.
+        // ⭐ AND THIS MESSAGE IS WHAT FEEDS THE SCREEN. They arrive in
+        // MatchStats through FinalStats.PersonalFrom, and since owner decision
+        // Н35 the results screen prints them
+        // (DeathOverlayController.BuildMetricsText, one line under Accuracy).
+        // The SERVER LOG carries them as well (MatchSummaryLog.PlayerLine), so
+        // there are two readings at the milestone rather than one.
+        // ⚠ The DEV OVERLAY is not one of them and cannot be: it shows the
+        // live per-frame picture, and on a networked backend HasMatchStats is
+        // false there. That is precisely why these numbers need a message of
+        // their own rather than a frame.
         public int HeadHits;
         public int BodyHits;
         public int LegHits;
