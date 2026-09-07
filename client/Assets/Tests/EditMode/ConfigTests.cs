@@ -1390,6 +1390,26 @@ namespace Ring.Simulation.Tests
             w2.SprayPitchAmplitude = 0.35f;
             Assert.DoesNotThrow(() => BuildShipped(h2, w2, c2, g2, wv2, a2, vis2),
                 "SprayYawAmplitude = 0 при живой вертикали — законная настройка");
+
+            // ⭐⭐ AND THE OWNER'S ROLLBACK AS ONE CONFIGURATION, NOT AS TWO
+            // HALVES. `SprayVariance = 1` is pinned legal by
+            // Validate_SprayVarianceAboveOne_Throws and `SprayPitchAmplitude =
+            // 0` by Validate_SprayPitchAmplitudeAboveOne_Throws, but Р-A is the
+            // pair SET TOGETHER, and rule 6's own comment in SimConfigBuilder
+            // claims exactly that combination still passes. A claim a rule makes
+            // about itself deserves its own assert rather than an inference from
+            // two other tests: this is the owner's way back to the pre-app-8dv
+            // weapon, and a validation rule that quietly closed it would be
+            // found by nobody until he asked for it.
+            //
+            // It passes because the two HORIZONTAL switches stay open at the
+            // shipped numbers (SprayYawTurns 0.7, SprayYawAmplitude 1.0), so
+            // rule 6's first half is false whatever the vertical does.
+            var (h3, w3, c3, g3, wv3, a3, vis3) = MakeDefaults();
+            w3.SprayVariance = 1f;
+            w3.SprayPitchAmplitude = 0f;
+            Assert.DoesNotThrow(() => BuildShipped(h3, w3, c3, g3, wv3, a3, vis3),
+                "откат владельца целиком (variance 1 + вертикаль 0) обязан проходить валидацию");
         }
 
 

@@ -15,14 +15,16 @@ namespace Ring.Simulation.Combat
     /// ⚠ EXACTLY ONE MEMBER IS PUBLIC -- `Draw` -- and that is the neighbor's
     /// rule word for word, NAMED CONSUMER INCLUDED. `Spread`'s own doc earns its
     /// publicity by naming one ("public ahead of that need because CrosshairView
-    /// will read the very same formula"); `Draw`'s is the RETICLE under the shape
-    /// of the pattern (spec §3.9) -- a crosshair drawing a symmetric cone while
-    /// the rounds walk a signed curve inside it would be lying to the player
-    /// about where the next shot goes, and it has to read THIS formula rather
-    /// than a second copy of it. That named consumer is the whole reason the
-    /// pattern is a file of its own instead of a private helper inside
-    /// WeaponSystem. The
-    /// salts and `Hash01` have no consumer outside this class, and this same
+    /// will read the very same formula"); `Draw`'s is
+    /// `Ring.Presentation.CrosshairView` again -- the same consumer, this time
+    /// for the SHAPE of the pattern rather than the width of the cone (spec
+    /// §3.9). A reticle drawing a symmetric cone while the rounds walk a signed
+    /// curve inside it would be lying to the player about where the next shot
+    /// goes, so it has to read THIS formula rather than a second copy of it.
+    /// That named consumer is the whole reason the pattern is a file of its own
+    /// instead of a private helper inside WeaponSystem.
+    ///
+    /// The salts and `Hash01` have no consumer outside this class, and this same
     /// plan demotes `TrySpawnFromPrediction` to `internal` on the very same
     /// argument (public, it would be a loaded gun). So they carry no modifier;
     /// a test, should it ever need them, is served by `internal` --

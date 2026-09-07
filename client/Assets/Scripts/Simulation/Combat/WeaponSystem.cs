@@ -158,7 +158,8 @@ namespace Ring.Simulation.Combat
                     // sentence moved with it: the spread DRAW was its middle
                     // item and no longer exists, so citing a document that now
                     // says two while saying three here would leave the reader
-                    // to discover the disagreement themselves. AdvanceNoSpawn has no world to credit and no
+                    // to discover the disagreement themselves.
+                    // AdvanceNoSpawn has no world to credit and no
                     // MatchStats of its own, so "identical on both paths"
                     // resolves here to what it already means for ShotsFired —
                     // one body, one rule, one authoritative sink.

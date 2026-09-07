@@ -92,11 +92,22 @@ namespace Ring.Data
         /// its rule (rule 5 asks non-negative): the attribute's 8 is an EDITOR
         /// limit, since past a few turns per burst the horizontal simply reads
         /// as noise and nothing above it is a different setting.
-        /// ⚠ `SprayYawTurns` and `SprayPitchAmplitude` MAY NOT BOTH BE ZERO
-        /// (rule 6) — together that is a weapon with no pattern at all. Either
-        /// one alone is legal, and deliberately so: `SprayPitchAmplitude = 0`
-        /// is half of the owner-facing rollback, `SprayVariance = 1` the other
-        /// half, and a rule that refused either would break the rollback.
+        /// ⚠ THE PATTERN MAY NOT BE OFF ON BOTH AXES AT ONCE (rule 6) —
+        /// together that is a weapon with no pattern at all. The vertical has
+        /// ONE off switch, `SprayPitchAmplitude = 0`; the horizontal has TWO,
+        /// because `yawBase` is a product of both of its numbers — EITHER
+        /// `SprayYawTurns = 0` (the phase freezes) OR `SprayYawAmplitude = 0`
+        /// (the whole term scales away). So the refused settings are
+        /// `SprayPitchAmplitude = 0` together with either of those two, and
+        /// naming only the first pair here would promise a freedom the builder
+        /// does not grant: authoring `SprayYawAmplitude = 0` beside a zero
+        /// vertical fails the build with an ArgumentException.
+        ///
+        /// EITHER AXIS ALONE IS LEGAL, and deliberately so:
+        /// `SprayPitchAmplitude = 0` is half of the owner-facing rollback,
+        /// `SprayVariance = 1` the other half, and a rule that refused either
+        /// would break the rollback. A zero horizontal beside a LIVE vertical
+        /// is legal for the same reason.
         [Range(1, 60)] public int SprayPatternShots = 12;
         [Range(0f, 1f)] public float SprayYawAmplitude = 1.0f;
         [Range(0f, 8f)] public float SprayYawTurns = 0.7f;
