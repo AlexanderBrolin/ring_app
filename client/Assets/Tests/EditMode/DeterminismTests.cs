@@ -453,8 +453,14 @@ namespace Ring.Simulation.Tests
             // into a solid wall for 480 s.
             //
             // ------------------------------------------------------------------
-            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring"), THE FIRST AND
-            // ONLY MOVEMENT OF THIS CONSTANT. The solo golden carries the full
+            // RE-PIN #4 (bd `app-ggvz`, "wave cadence per ring"), THE FIRST
+            // MOVEMENT OF THIS CONSTANT. ⚠ THIS HEADING READ "THE FIRST AND ONLY
+            // MOVEMENT" UNTIL app-8dv T2, and it had been untrue since RE-PIN #5
+            // took the constant a second time. The words are corrected rather
+            // than the sentence deleted, by this file's own tombstone rule: a
+            // live-sounding claim is how the next reader is misled, and the
+            // paragraph above now counts three movements twenty lines from
+            // here. The solo golden carries the full
             // account — the owner's sanction К9, the six causes, and the
             // attribution, including the value this constant held after Т1
             // alone (16270681601866834963). All six act here as they do there.
@@ -1273,8 +1279,13 @@ namespace Ring.Simulation.Tests
             // alone took this constant to 0xFFFEE5C6C159FA89, and anchoring the
             // scenario took it from there to the value below. THE CONTROL is
             // the multiplayer golden, which sat at 0x03FD1C06FC2921DD through
-            // both runs and still does — nothing structural leaked into the
-            // hash, or it would have moved that constant too. The 76 fixture
+            // both runs — nothing structural leaked into the hash, or it would
+            // have moved that constant too. ⚠ THAT WAS THE VALUE THEN, NOT NOW:
+            // the sentence read "and still does" until app-8dv T2, by which
+            // time the constant had moved three more times (RE-PIN #4, #5, #6)
+            // and stood at 0x28E5ADF5CB02D7C4. The control it describes is
+            // still sound — it is a statement about those two runs — but its
+            // tense was not. The 76 fixture
             // repairs of the same commit are digest-inert by construction:
             // every one of them touches TestConfigs.OpenField(), a fixture this
             // scenario does not use.
@@ -1523,8 +1534,9 @@ namespace Ring.Simulation.Tests
             // ------------------------------------------------------------------
             // RE-PIN #6 (bd `app-8dv`, "the collector's own shot is predicted
             // whole", task T2, session 93, 2026-09-08) — A SANCTION OF ITS OWN,
-            // granted by the owner on 2026-09-07 for this one movement and
-            // SPENT here. All three constants move together, in a commit of
+            // granted by the owner on 2026-09-04 for this one movement,
+            // confirmed by him again on 2026-09-07 when the plan was approved,
+            // and SPENT here. All three constants move together, in a commit of
             // their own; after this there is no sanction again, and any further
             // movement of any of them is a stop and a question for the owner.
             //
@@ -1532,7 +1544,7 @@ namespace Ring.Simulation.Tests
             // preceding tasks of phase Ф-A move the digest, and the re-pin was
             // held until after T8 so it is taken ONCE. That ordering is the
             // owner's own decision of 2026-09-07 (variant "a" of the plan's one
-            // open question) and it paid off
+            // open question), and it paid off
             // literally: T8's three counters moved these values AGAIN on top of
             // T1's, so a re-pin taken between the two tasks would have closed
             // five of the six causes with the sanction already spent, and the
@@ -1558,13 +1570,25 @@ namespace Ring.Simulation.Tests
             //       half reaches BOTH branches through one expression, so a hip
             //       round is born with a nonzero VelZ, and K9's fractional
             //       pre-advance lifts its spawn height along its own line —
-            //       up to 6 cm standing and up to 12 cm mid-slide.
+            //       up to 6 cm standing and up to 12 cm mid-slide. ⚠ THOSE TWO
+            //       FIGURES ARE THE SHIPPED NUMBERS, NOT THIS FILE'S FIXTURE:
+            //       they carry ProjectileSpeed 52.5 off WeaponConfig.asset,
+            //       where TestConfigs ships 35, and the same arithmetic on the
+            //       fixture reads 3.9 cm and 7.8 cm. Stated because a reader of
+            //       a TEST file has every reason to assume the fixture, and a
+            //       reviewer of this very re-pin did.
             //   (6) `math.sin` AND `math.tan` ON THE PATH TO HASHED STATE (T1,
             //       inside `SprayPattern.Draw` and the pitch shift of
             //       WeaponSystem.SpawnShot). This breaks no rule of this
-            //       simulation, and the reason stands one line away in the same
-            //       method: `Geometry.Rotate` already calls sin/cos on the very
-            //       same shot.
+            //       simulation, and the reason stands a few lines away in the
+            //       same method: `Geometry.Rotate` already calls sin/cos on the
+            //       very same shot. ⚠ THIS CAUSE DOES NOT MOVE THE CONSTANTS ON
+            //       ITS OWN — the calls live INSIDE cause (1), and "drop (6),
+            //       keep (1)" is not a thing one can do. It is listed because
+            //       the spec lists it: a transcendental on the path to hashed
+            //       state is a portability question that has to be answered
+            //       out loud even when it moves nothing by itself. Same shape
+            //       as RE-PIN #4's own cause 6, and named for the same reason.
             //
             // MEASURED, NOT ASSUMED. The value below came out of FOUR
             // independent full runs — three during T8 (after the instrument,
@@ -1801,8 +1825,11 @@ namespace Ring.Simulation.Tests
             // same fixed world seed (42) / input seed (123) / tick count as
             // the golden — so this can never flake, it just asserts the
             // scenario the golden pins actually DRIVES the mechanics it
-            // claims to (slide, dash, ricochet, both fire modes), not merely
-            // that its hash is stable.
+            // claims to (slide, dash, ricochet, and the AIMED fire mode), not
+            // merely that its hash is stable. ⚠ THE HIP MODE IS NOT AMONG THEM
+            // and never was: no assertion of this test witnesses hip fire, and
+            // the line said "both fire modes" until app-8dv T2 looked. Naming
+            // one mode is what the assertions actually buy.
             //
             // app-88jb Т34 STEP 2 (plan Т34, finding D-I12): SEVEN MORE
             // MECHANICS, AND THEY COME BEFORE THE RE-PIN ON PURPOSE. The epic
@@ -1815,8 +1842,11 @@ namespace Ring.Simulation.Tests
             // order they stand below:
             //   1. ZONE — the run never enters the core (Р299);
             //   2. SlidesUsed > 0, DashesUsed > 0, at least one DashRicocheted,
-            //      and a Head-zone hit or an aimed shot (I4's originals, kept
-            //      word for word);
+            //      and a Head-zone hit or a shot from the AimHeld branch (I4's
+            //      originals; the first three are kept word for word, and the
+            //      FOURTH was rewritten by app-8dv T2 — its old reading of
+            //      "aimed" became a tautology when the spray pattern gave hip
+            //      fire a vertical of its own, see that flag's own note below);
             //   3. IMPACT, on both kinds of body — as "the blow REACHED the
             //      impact seam", not as "the impulse landed": a PlayerDamaged
             //      with ImpactSpeed > 0 (a mob's round struck the collector;
@@ -1867,7 +1897,10 @@ namespace Ring.Simulation.Tests
             // 175/161/152/174/174/164 times), 85 births with BirthSteps > 1
             // and 155 ticks with a round at RewindLeft > 0 (124 rounds); and
             // for the originals SlidesUsed 2, DashesUsed 13, 5 DashRicocheted,
-            // an aimed shot, and a run that stays in the outer ring. Every
+            // an aimed shot (⚠ by the OLD definition — a round carrying a
+            // nonzero VelZ; the paragraph below re-measures under the new one
+            // and the two numbers are not comparable), and a run that stays in
+            // the outer ring. Every
             // threshold below is "at least one" or an equality at the measured
             // zero — never a number tuned to the run.
             //
@@ -1911,17 +1944,42 @@ namespace Ring.Simulation.Tests
             // Aim — i.e. the AimHeld branch of WeaponSystem.SpawnShot really
             // spawned a round.
             //   ⚠ IT USED TO READ `round.VelZ != 0f`, AND app-8dv T1 MADE THAT A
-            // TAUTOLOGY. The spray pattern gives every shot a vertical component
-            // of its own (`SprayPattern.Draw`'s pitch half, applied in both
-            // branches by one expression), so a HIP round now carries a nonzero
-            // VelZ too — WeaponTests.HipFire_NoLongerFlies_PerfectlyFlat is the
+            // TAUTOLOGY. The spray pattern gives essentially every shot a
+            // vertical component of its own (`SprayPattern.Draw`'s pitch half,
+            // applied in both branches by one expression), so a HIP round now
+            // carries a nonzero VelZ too. "Essentially" is the honest word and
+            // it is measurable: once the burst saturates the pattern length the
+            // pitch term is bounded BELOW by 0.105 of the cone and a zero is
+            // unreachable, while for the first six shots of a burst a zero
+            // needs one exact hash out of 2^24. A flag cannot lean on odds like
+            // that — WeaponTests.HipFire_NoLongerFlies_PerfectlyFlat is the
             // witness that says so out loud. Measured on this very scenario
             // before the re-pin: one tick had a VelZ-carrying round in the air
             // while not a single aimed shot had been fired yet, so the old flag
-            // went true off hip fire. The input's own AimHeld cannot drift that
-            // way: SimInputSanitizer touches AimHeight and never AimHeld, and a
-            // mob's round is born with a literal 0f for VelZ (MobAiSystem), so
-            // this counts the collector's aimed fire and nothing else.
+            // went true off hip fire. Neither half of the new reading can drift
+            // that way, and each half has its own reason: `SimInputSanitizer`
+            // touches AimHeight and never AimHeld, so the input the world fires
+            // from is the input this test handed it; and a mob's gunfire is kept
+            // out by `ev.Owner`, not by any height — WeaponSystem's own spawn is
+            // the single ProjectileOwner.Player site in the simulation. (A mob's
+            // round is additionally born with a literal 0f for VelZ,
+            // MobAiSystem, which is why the OLD reading was honest until T1: it
+            // could only ever have gone true off the collector's own fire.)
+            //   ⚠ WHAT THIS DOES NOT WITNESS, said out loud rather than left to
+            // be discovered: that the AimHeld branch was WALKED, not that its
+            // geometry is right. A mutant aiming every round at the muzzle's own
+            // height keeps this flag true. That mutant dies in the two places
+            // that own the question — ProjectileHeightTests.
+            // AimedShot_HitsExactPoint_IncludingFloor (a flat aimed round never
+            // reaches the floor, so its ProjectileBlocked count goes to zero)
+            // and WeaponTests.AimedShot_FullSpeed3D — which is why this
+            // scenario-coverage flag is not the place to re-derive it.
+            //   ⚠ AND THE READING MOVED FROM THE WORLD'S BODIES TO ITS EVENTS,
+            // which is a change of dependency worth naming: the event buffer
+            // stops recording at Arena.MaxEventsPerFrame (256 in
+            // TestConfigs.Default()) and the surplus is dropped. This loop
+            // clears events every tick, so the cap is far away — but the old
+            // reading was immune to it by construction and this one is not.
             bool anyAimedProjectileFired = false;
             // Ф5-0: the scenario's own proof that it never sets foot in the
             // core. ScenarioStart checks the START; this checks all 1000 ticks
@@ -2065,8 +2123,8 @@ namespace Ring.Simulation.Tests
             Assert.GreaterOrEqual(dashRicochetCount, 1,
                 "the golden scenario must ricochet a dash off an obstacle at least once");
             Assert.IsTrue(headshotProjectileHits >= 1 || anyAimedProjectileFired,
-                "the golden scenario must either land a Head-zone hit, or at minimum fire at " +
-                "least one shot out of the AimHeld branch, proving that branch actually fired");
+                "the golden scenario must either land a Head-zone hit, or at minimum fire a " +
+                "shot with the aim held, so the AimHeld branch is walked at all");
 
             // IMPACT (item 3). ImpactSpeed is the field a receiver sizes the
             // shove by (Т8), and it is zero for a chaser's contact strike by
