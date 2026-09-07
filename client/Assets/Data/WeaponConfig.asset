@@ -37,3 +37,8 @@ MonoBehaviour:
   RicochetMinSpeed: 6
   PierceMassRatio: 0.06
   PierceDamageLoss: 0.5
+  SprayPatternShots: 12
+  SprayYawAmplitude: 1
+  SprayYawTurns: 0.7
+  SprayPitchAmplitude: 0.35
+  SprayVariance: 0.35

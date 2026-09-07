@@ -7,13 +7,13 @@ namespace Ring.Simulation.Tests
 {
     public class WeaponTests
     {
-        static readonly SimInput Fire = new SimInput
-            { AimPoint = new float2(10f, 0f), FireHeld = true };
-
-        /// Aimed counterpart of `Fire` (Task 15): same +X aim line, held aim, and
-        /// an aim height equal to the standing muzzle height so the shot stays
-        /// flat — the vertical axis is ProjectileHeightTests' subject, these
-        /// fixtures measure the horizontal cone.
+        /// Aimed counterpart of `TestWorlds.HipFire` (Task 15): same +X aim
+        /// line, held aim, and an aim height equal to the standing muzzle
+        /// height so the shot stays flat — the vertical axis is
+        /// ProjectileHeightTests' subject, these fixtures measure the
+        /// horizontal cone. app-8dv T1: the hip fixture this one is the
+        /// counterpart OF moved to TestWorlds, because a second class needed
+        /// it (rule 2); this aimed one has no second consumer and stays here.
         static SimInput AimedFire(in SimConfig cfg) => new SimInput
             { AimPoint = new float2(10f, 0f), AimHeight = cfg.Hero.MuzzleHeight,
               AimHeld = true, FireHeld = true };
@@ -24,13 +24,19 @@ namespace Ring.Simulation.Tests
         /// Holds aimed fire until `SpreadSamples` rounds have left the barrel and
         /// returns the horizontal angle of each. The aim line is +X from a player
         /// who never moves, so ProjectileFired's Amount (atan2 of the shot's
-        /// sim-plane velocity) IS the deviation from that line — the spread draw,
-        /// isolated. The settle/recoil pair under test is re-pinned through the QA1
-        /// seam before every tick, so all samples describe the same weapon state
-        /// while the shots themselves keep walking the one spread RNG stream (one
-        /// stream, not one draw per fresh world: `Random(seed)` states that differ
-        /// only in their low bits produce correlated FIRST draws, which would make
-        /// a cross-seed sample far narrower than the cone it is measuring).
+        /// sim-plane velocity) IS the deviation from that line — the spray
+        /// PATTERN, isolated. The settle/recoil pair under test is re-pinned
+        /// through the QA1 seam before every tick, so all samples describe the
+        /// same weapon state while the shots themselves keep walking the pattern.
+        /// app-8dv: that last clause used to read "keep walking the one spread
+        /// RNG stream", and the reason ONE world is held across all samples
+        /// survived the change of mechanism intact — only its argument moved.
+        /// It used to be that fresh `Random(seed)` states differing in their low
+        /// bits produce correlated FIRST draws, which would make a cross-seed
+        /// sample far narrower than the cone it measures. It is now that
+        /// `BurstShots` is the pattern's own input: a fresh world per sample
+        /// would ask for shot number one sixty-four times and measure a single
+        /// point instead of a cone.
         static float[] AimedShotAngles(SimConfig cfg, float aimSettleTimer, float recoilOffset)
         {
             var w = new SimulationWorld(1, cfg);
@@ -73,7 +79,7 @@ namespace Ring.Simulation.Tests
         public void HoldFire_AverageRpmMatchesInterval()
         {
             var w = new SimulationWorld(1, TestConfigs.Open());
-            for (int i = 0; i < 300; i++) w.Tick(Fire); // 10 s
+            for (int i = 0; i < 300; i++) w.Tick(TestWorlds.HipFire()); // 10 s
             // 10 s / 0.12 s = 83.3 -> 83+-1 (fractional remainder carry, not 80 or 90)
             Assert.That(w.Stats.ShotsFired, Is.InRange(82, 84));
         }
@@ -86,7 +92,7 @@ namespace Ring.Simulation.Tests
             float peak = 0f;
             for (int i = 0; i < 60; i++)
             {
-                w.Tick(Fire);
+                w.Tick(TestWorlds.HipFire());
                 peak = math.max(peak, w.Player.RecoilOffset);
             }
             // recoil genuinely accumulates (recovery < accumulation rate), not a phase lottery
@@ -113,7 +119,7 @@ namespace Ring.Simulation.Tests
             // window's price is unconditional (spec: "стрельба ... недоступны",
             // no exception offered).
             var w = new SimulationWorld(1, TestConfigs.Open());
-            SimInput input = Fire; input.InventoryOpen = true;
+            SimInput input = TestWorlds.HipFire(); input.InventoryOpen = true;
             w.Tick(input);
             Assert.AreEqual(0, w.Stats.ShotsFired);
         }
@@ -149,7 +155,7 @@ namespace Ring.Simulation.Tests
             ulong Run(SimConfig c2)
             {
                 var w2 = new SimulationWorld(1, c2);
-                for (int i = 0; i < ticks; i++) w2.Tick(Fire);
+                for (int i = 0; i < ticks; i++) w2.Tick(TestWorlds.HipFire());
                 Assert.Greater(w2.WorldStats.ProjectileSpawnsSkipped, 0);
                 return w2.StateHash();
             }
@@ -160,7 +166,7 @@ namespace Ring.Simulation.Tests
         public void FiredEvent_EmittedPerShot()
         {
             var w = new SimulationWorld(1, TestConfigs.Open());
-            w.Tick(Fire); // first shot is instant
+            w.Tick(TestWorlds.HipFire()); // first shot is instant
             int fired = 0;
             for (int i = 0; i < w.EventCount; i++)
                 if (w.GetEvent(i).Kind == SimEventKind.ProjectileFired) fired++;
@@ -175,8 +181,8 @@ namespace Ring.Simulation.Tests
             // muzzle burst tick-accurately from the event alone, instead of the
             // render-frame's Curr snapshot (wrong during a multi-tick catch-up flush).
             // Zero spread/recoil removes every other source of angle variance, so this
-            // isolates exactly the field under test. Diagonal aim (not the shared `Fire`
-            // fixture's straight +X, fix-round 3 round 2): a straight +X shot has
+            // isolates exactly the field under test. Diagonal aim (not the shared
+            // hip fixture's straight +X, fix-round 3 round 2): a straight +X shot has
             // atan2 == 0, which is indistinguishable from the OLD hardcoded Amount=0f —
             // that scenario can't actually catch a regression back to the hardcoded
             // value. A 45-degree aim gives a non-zero expected angle the old code would
@@ -211,7 +217,7 @@ namespace Ring.Simulation.Tests
             p.SlideTimer = cfg.Hero.SlideDuration; // QA1 seam
             p.SlideDir = new float2(1f, 0f);
             w.SetPlayerForTest(p);
-            w.Tick(Fire);
+            w.Tick(TestWorlds.HipFire());
             Assert.AreEqual(0, w.Stats.ShotsFired);
 
             // ...and the very same slide fires normally once the weapon allows it,
@@ -222,7 +228,7 @@ namespace Ring.Simulation.Tests
             q.SlideTimer = cfg.Hero.SlideDuration;
             q.SlideDir = new float2(1f, 0f);
             allowed.SetPlayerForTest(q);
-            allowed.Tick(Fire);
+            allowed.Tick(TestWorlds.HipFire());
             Assert.AreEqual(1, allowed.Stats.ShotsFired);
         }
 
@@ -232,9 +238,12 @@ namespace Ring.Simulation.Tests
             // The aimed round is a genuine 3D vector: it climbs towards an aim
             // point above the muzzle, and its speed is the config's
             // ProjectileSpeed in THREE dimensions — the climb is not free extra
-            // velocity on top of a full-speed horizontal shot. The spread draw
-            // (aim is one tick old here, so the cone is wide open) rotates it
-            // around the vertical axis only and must not rescale it either.
+            // velocity on top of a full-speed horizontal shot. The spray pattern
+            // (aim is one tick old here, so the cone is wide open) turns it about
+            // the vertical axis and nudges its climb, and must not rescale it
+            // either — the renormalize is what holds the speed budget. app-8dv:
+            // "rotates it around the vertical axis ONLY" was true of the draw and
+            // is not true of the pattern, which owns a vertical half as well.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
             w.Tick(new SimInput { AimPoint = new float2(6f, 4f), AimHeight = cfg.Hero.MaxAimHeight,
@@ -314,13 +323,23 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void SettledAimWithoutRecoil_DrawsNoSpread() // Task 15
+        public void NoShotEverTouchesTheSpreadStream() // Task 15; app-8dv T1 (test 2, M231)
         {
-            // The cone guard is exact, not "narrow enough": fully settled aim with
-            // no recoil left has NO cone, so that shot must not touch the weapon
-            // RNG stream at all. Invisible in the shot itself (a zero-wide draw
-            // would rotate it by zero anyway) but not in the stream, which every
-            // later draw inherits — so the stream state is what this asserts.
+            // app-8dv (spec §3.2): this used to assert that a CONE-LESS shot
+            // spends no randomness. It now asserts the whole claim -- NO shot
+            // takes the spread stream, whatever its cone -- because the draw is
+            // gone and SprayPattern answers the angle from state both sides
+            // already hold. The stream itself STAYS in the world (Р450): it is
+            // still seeded, still saved and still there for whatever may want it.
+            // What it has lost is the right to sit on the path of a shot.
+            //
+            // ⛔⛔ THE SECOND-SHOT LOOP AND THE RecoilOffset PREMISE BELOW ARE
+            // LOAD-BEARING AND STAY. On the FIRST shot the cone is zero (settled
+            // aim, recoil still 0), so the `if (a > 0f)` branch does not execute
+            // even on a mutant that puts the draw back — the first half alone
+            // would pass against M231. The only place a restored draw can move
+            // the stream is the SECOND shot, whose own recoil has opened a cone
+            // by then, which is what makes this a witness and not a tautology.
             var cfg = TestConfigs.Open();
             var w = new SimulationWorld(1, cfg);
             var p = w.Player;
@@ -333,12 +352,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(before, w.SaveState().SpreadRng.state,
                 "a cone-less shot must not consume a spread draw");
 
-            // ...and once that shot's own recoil has opened a cone again, the next
-            // one does draw: the guard is about the cone, not about aiming.
+            // ...and once that shot's own recoil HAS opened a cone, the next one
+            // still leaves the stream alone: the pattern is not a draw.
             for (int i = 0; i < 8 && w.Stats.ShotsFired < 2; i++) w.Tick(AimedFire(in cfg));
             Assert.AreEqual(2, w.Stats.ShotsFired, "fixture: a second shot must fit the budget");
             Assert.Greater(w.Player.RecoilOffset, 0f, "fixture: recoil must have opened a cone");
-            Assert.AreNotEqual(before, w.SaveState().SpreadRng.state);
+            Assert.AreEqual(before, w.SaveState().SpreadRng.state,
+                "a shot with an OPEN cone consumed a spread draw — the stream is back on the shot path");
         }
 
         [Test]
@@ -360,5 +380,168 @@ namespace Ring.Simulation.Tests
             for (int i = 0; i < 120; i++) w.Tick(default);
             Assert.AreEqual(0f, w.Player.RecoilOffset, 1e-4f);
         }
+
+        [Test]
+        public void ReleasingFire_ResetsTheBurst_ButADashDoesNot()   // tests 5 and 6, M236/M237
+        {
+            // The reset belongs to the RELEASE of fire and stands BEFORE the
+            // early return on !CanFire. The opposite order (a reset inside the
+            // !CanFire branch) is an exploit: a dash, a slide or the backpack
+            // window would each put the pattern back onto its pinpoint first
+            // shot.
+            //
+            // ⛔⛔ WHAT IS PINNED IS THE DASH, NOT THE SLIDE, AND THAT DECIDES
+            // THE FATE OF MUTATION M237 (review finding D, checked against the
+            // code). A slide does NOT close fire: CanFire reads
+            // (weapon.CanFireWhileSlide || p.SlideTimer <= 0f), and
+            // CanFireWhileSlide is true both in this fixture and in the shipped
+            // default -- on the mutant the !CanFire branch would simply never
+            // execute, BurstShots would go on growing, and the assert would be
+            // green. A dash does execute it: CanFireWhileDash is false in both
+            // of those sources.
+            //
+            // The hip fixture is TestWorlds.HipFire, whose own doc carries why
+            // it takes no parameter and why it leaves AimHeight unset.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            SimInput fire = TestWorlds.HipFire();
+            for (int i = 0; i < 30; i++) w.Tick(fire);
+            Assert.Greater(w.Player.BurstShots, 2, "премисса: очередь должна набрать длину");
+
+            int held = w.Player.BurstShots;
+            var p = w.Player; p.DashTimer = cfg.Hero.DashDuration; w.SetPlayerForTest(p);
+            w.Tick(fire);                       // fire is still HELD, but the dash closed CanFire
+            Assert.AreEqual(held, w.Player.BurstShots,
+                "дэш сбросил рисунок — сброс стоит в ветке !CanFire вместо !FireHeld");
+
+            // The other half of the same rule, through the same mechanism: the
+            // backpack window.
+            var p2 = w.Player; p2.DashTimer = 0f; w.SetPlayerForTest(p2);
+            SimInput fireWithBackpack = fire; fireWithBackpack.InventoryOpen = true;
+            w.Tick(fireWithBackpack);
+            Assert.AreEqual(held, w.Player.BurstShots, "окно рюкзака сбросило рисунок");
+
+            w.Tick(default);   // fire released
+            Assert.AreEqual(0, w.Player.BurstShots, "отпускание огня не сбросило очередь");
+        }
+
+        [Test]
+        public void TheClientAndTheServerAgreeOnTheShotCounters()   // ⭐⭐ test 10, M241
+        {
+            // ⛔⛔ THIS TEST IS ABOUT THE COUNTERS, NOT ABOUT THE ANGLE, AND
+            // THAT IS A FACT OF THE CODE RATHER THAN A SIMPLIFICATION (found
+            // while checking round 1's own repair). There is nothing here to
+            // compare an angle against: the cone the world fires from is taken
+            // AFTER recoil decays -- `Advance` lowers RecoilOffset by
+            // RecoilRecoveryRadPerSec * dt on its very first line, ahead of the
+            // loop -- while the predicted copy has not lived through that decay
+            // until `Step` runs. A test computing the client's angle from the
+            // pre-tick state would differ from the event by one tick of decay
+            // and would be RED ON CORRECT CODE. Reproducing the decay in the
+            // test body instead means rewriting the code under test into the
+            // test -- the tautology rule 428 refuses.
+            // ⇒ The witness for "client and server give ONE angle" is test 14
+            // of task T4: there the journal record is born INSIDE the same
+            // tick and therefore carries exactly the cone the world fired
+            // from. The spec's DoD item travels there with it.
+            //
+            // What is checked here is what is observable before the journal
+            // exists and what mutation M241 touches directly: both counters
+            // grow in the SHARED body of Advance, not in its server half.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            var predicted = w.Player;                       // the client's copy
+            SimInput fire = TestWorlds.HipFire();
+
+            for (int tick = 0; tick < 40; tick++)
+            {
+                w.Tick(fire);
+                PlayerPrediction.Step(ref predicted, in fire, in cfg, in ImpactPulse.None,
+                    System.ReadOnlySpan<PushableBody>.Empty);   // the journal arrives only in T4
+                Assert.AreEqual(w.Player.ShotOrdinal, predicted.ShotOrdinal,
+                    "счётчик выстрелов разошёлся — он растёт не в общем теле Advance");
+                Assert.AreEqual(w.Player.BurstShots, predicted.BurstShots,
+                    "номер в очереди разошёлся — сброс или инкремент стоят не в общем теле");
+            }
+            Assert.Greater(w.Player.ShotOrdinal, 3, "премисса: очередь должна была отстреляться");
+            Assert.Greater(w.Player.BurstShots, 3, "премисса: очередь должна была набрать длину");
+        }
+
+        [Test]
+        public void HipFire_NoLongerFlies_PerfectlyFlat()   // test 11, M242
+        {
+            // The vertical is what walks a round between zones -- Н32 and the
+            // whole gameplay argument of spec §3.3 stand on it. Today VelZ from
+            // the hip is a hard zero in WeaponSystem's hip branch.
+            // ⚠ THE EXPECTATION IS A NUMBER OUT OF THE GEOMETRY, NOT "greater
+            // than zero": by the end of the burst pitchBase reaches
+            // SprayPitchAmplitude, so the climb equals
+            // ProjectileSpeed * tan(cone * 0.35 * (1 - SprayVariance)) in the
+            // pure part.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Weapon.SprayVariance = 0f;                 // pure pattern: the expectation is computable
+            var w = new SimulationWorld(1, cfg);
+            SimInput fire = TestWorlds.HipFire();
+            float peak = 0f;
+            for (int i = 0; i < 60; i++)
+            {
+                w.Tick(fire);
+                for (int j = 0; j < w.ProjectileCount; j++)
+                    peak = math.max(peak, math.abs(w.Projectiles[j].VelZ));
+            }
+            float cone = cfg.Weapon.SpreadRad + cfg.Weapon.RecoilMaxRad;
+            float expected = cfg.Weapon.ProjectileSpeed
+                * math.tan(cone * cfg.Weapon.SprayPitchAmplitude);
+            Assert.Greater(peak, 0.5f * expected,
+                "вертикали в разбросе нет или она вдвое мельче рисунка");
+        }
+
+        [Test]
+        public void AimedFire_AlsoClimbs_ButTheShiftDecaysWithTheExistingTilt()   // test 12, M243
+        {
+            // ⛔ WITHOUT THIS TEST THE MUTATION "pitch only in the hip branch"
+            // SURVIVES: the previous test fires from the hip alone and cannot
+            // see that mutant.
+            // ⚠ THE EXPECTATION IS DERIVED FROM THE GEOMETRY, NOT FROM A CALL
+            // TO THE FUNCTION: the addend goes onto vel3.z, i.e. it is a SHIFT
+            // and not a rotation, and the gain in elevation angle equals
+            // atan(tan(theta) + tan(p)) - theta, which is about p * cos^2(theta).
+            // In aimed fire theta is set by AimHeight, so the expectation is
+            // computed from it.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Weapon.SprayVariance = 0f;
+            var w = new SimulationWorld(1, cfg);
+            var p = w.Player;
+            p.RecoilOffset = cfg.Weapon.RecoilMaxRad;      // the aimed cone is recoil alone
+            p.AimSettleTimer = cfg.Hero.AimSettleSeconds;
+            w.SetPlayerForTest(p);
+            SimInput aimed = AimedFire(in cfg);            // the existing fixture above
+
+            for (int i = 0; i < 30 && w.ProjectileCount == 0; i++) w.Tick(aimed);
+            Assert.AreEqual(1, w.ProjectileCount, "премисса: прицельный выстрел обязан состояться");
+            // ⚠ THE EXPECTATION IS A NUMBER, NOT "greater than zero" (round 2's
+            // correction): at SprayVariance 0 and a settled aim the cone equals
+            // RecoilMaxRad minus one tick of decay, the first shot's amplitude
+            // is 1/SprayPatternShots, and theta is about 0 (a flat shot), so
+            // cos^2(theta) is about 1 and the climb is computed directly.
+            float cone = cfg.Weapon.RecoilMaxRad
+                - cfg.Weapon.RecoilRecoveryRadPerSec * SimulationWorld.TickDt;
+            float pitch = cone * cfg.Weapon.SprayPitchAmplitude / cfg.Weapon.SprayPatternShots;
+            Assert.AreEqual(cfg.Weapon.ProjectileSpeed * math.tan(pitch),
+                w.GetProjectileForTest(0).VelZ, 0.02f,
+                "в прицеле вертикали нет или она не та — рисунок применён только к бедровой ветке");
+        }
+
+        // ⛔⛔ THERE IS NO DEGENERATE-CASE TEST BECAUSE THERE IS NO DEGENERATE
+        // CASE -- this cancels the spec §3.2 caveat rather than skipping it
+        // (round 2's finding, two reviewers independently, checked against the
+        // package source). `math.normalizesafe` returns NOT zero but a
+        // fallback: it selects the default value unless the length clears
+        // FLT_MIN_NORMAL, and both branches of `SpawnShot` hand it a non-zero
+        // fallback (`new float2(1f, 0f)`). ⇒ `vel3.xy` is NEVER zeroed,
+        // and firing "at one's own feet" leaves along +X and goes through the
+        // pattern in full. A test written to the letter of the spec would be
+        // RED ON CORRECT CODE -- the same class as the two red
+        // ProjectileHeightTests, only in a new test.
     }
 }

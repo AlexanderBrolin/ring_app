@@ -200,6 +200,24 @@ namespace Ring.Simulation.Core
         /// beside the two forks already there.
         public float PierceMassRatio;
         public float PierceDamageLoss;
+
+        /// app-8dv (spec §3.2/§3.8, owner decisions Н27/Н29/Н32/Н33): the
+        /// spray PATTERN that replaced the world RNG draw. The angle of a shot
+        /// is now a function of state both sides already have -- the shot's
+        /// number in the burst, the shot's number in the match, and the
+        /// quantized aim point -- so a predicting client reaches the SAME angle
+        /// the server does, which the draw made impossible by construction
+        /// (SpreadRng lives in the world and is advanced by shooters this
+        /// client cannot see).
+        ///
+        /// TODAY'S BEHAVIOR IS TWO NUMBERS, NOT ONE (owner-facing rollback,
+        /// Р-A): SprayVariance = 1 returns the horizontal to the uniform draw,
+        /// and SprayPitchAmplitude = 0 removes the vertical -- which does not
+        /// exist at all before this task. Either one alone leaves half the
+        /// change standing.
+        public int SprayPatternShots;
+        public float SprayYawAmplitude, SprayYawTurns, SprayPitchAmplitude,
+            SprayVariance;
     }
 
     /// Balance numbers shared by all mob archetypes (chaser/gunner use the same shape).

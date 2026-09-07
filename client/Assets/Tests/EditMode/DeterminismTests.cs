@@ -2088,6 +2088,22 @@ namespace Ring.Simulation.Tests
                 "the start must be inside the arena rim, body included");
         }
 
+        /// ⚠ STILL GREEN, AND SINCE app-8dv IT WITNESSES NOTHING — said here
+        /// rather than left to be rediscovered. The property under test used to
+        /// be that the weapon's own RNG stream is SPLIT from the wave stream, so
+        /// firing could not shift a spawn. That split still exists, but no shot
+        /// walks the spread stream any more: SprayPattern answers the angle
+        /// from state both sides hold, and `SpreadRng` has left the shot path
+        /// entirely (WeaponTests.NoShotEverTouchesTheSpreadStream is what pins
+        /// that). So world A now agrees with world B for a STRONGER reason than
+        /// the one this test was written for, and a regression that re-crossed
+        /// the two streams would have to reintroduce the draw first — which its
+        /// own witness would catch before this one did.
+        ///
+        /// Kept rather than deleted: the claim "firing does not move the wave"
+        /// is still true, still worth a guard, and costs one cheap scenario.
+        /// ⛔ Its NUMBERS are untouched by app-8dv T1 — the golden digests in
+        /// this file are re-pinned by T2 alone, under its own sanction.
         [Test]
         public void SpreadDrawDoesNotShiftWaves()
         {

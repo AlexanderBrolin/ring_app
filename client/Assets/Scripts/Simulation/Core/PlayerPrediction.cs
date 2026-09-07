@@ -15,8 +15,15 @@ namespace Ring.Simulation.Core
     {
         /// Exactly what the world does to a LIVE player in one tick (compare
         /// SimulationWorld.TickAll's own movement/weapon phases), minus what the
-        /// client must never own: the projectile spawn, the spread RNG draw and
-        /// the stats — see WeaponSystem.AdvanceNoSpawn.
+        /// client must never own: the projectile spawn and the stats — see
+        /// WeaponSystem.AdvanceNoSpawn.
+        /// ⚠ THAT LIST WAS THREE UNTIL app-8dv (coordinator Ruling 330): the
+        /// spread RNG DRAW used to be its middle item, and it is gone because
+        /// there is no draw left to deny anybody. A shot's angle is now a pure
+        /// function of state both sides hold (Combat.SprayPattern), computed by
+        /// the same code from the same numbers wherever the geometry runs —
+        /// which is the whole point of the change, since a draw out of the
+        /// world's own stream was unpredictable by construction.
         ///
         /// `rawInput` is RAW, exactly like SimulationWorld.Tick's own argument:
         /// sanitizing is part of the step, not a precondition on the caller, so

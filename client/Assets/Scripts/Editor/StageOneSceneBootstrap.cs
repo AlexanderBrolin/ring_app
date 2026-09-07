@@ -1058,10 +1058,12 @@ namespace Ring.Editor
             // edge-request rate limiting) before THAT, `LinkRefund` (В1
             // fix-wave 3, owner economy rework) before THAT,
             // `AimSettleSeconds` (Task 17) before THAT;
-            // WeaponConfig's marker is `PierceDamageLoss` as of app-88jb Т20
-            // (spec §3.4's piercing pair, the class's new last field — see that
-            // field's own sync-marker comment) — was `RicochetMinSpeed`
-            // (app-88jb Т19, the ricochet three) before that, `ProjectileMass`
+            // WeaponConfig's marker is `SprayVariance` as of app-8dv (spec
+            // §3.2/§3.8's five spray-pattern numbers, the class's new last
+            // field — see that field's own sync-marker comment) — was
+            // `PierceDamageLoss` (app-88jb Т20, the piercing pair) before that,
+            // `RicochetMinSpeed`
+            // (app-88jb Т19, the ricochet three) before THAT, `ProjectileMass`
             // (app-88jb Т11a, the impact-physics block) before THAT,
             // `EmergencyFireInterval` (Stage 3 Task 2, spec Р261's ammo
             // economy) before THAT, `RunSpreadSpeedFrac` (Task 17) before
@@ -1107,7 +1109,7 @@ namespace Ring.Editor
             // that lies about the code is the same class of defect as an
             // asset that lags its class).
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "SlideThrustRecovery"); // app-88jb Т22 (was Parts, app-88jb Т16)
-            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "PierceDamageLoss"); // app-88jb Т20 (was RicochetMinSpeed, app-88jb Т19)
+            EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "SprayVariance"); // app-8dv (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)

@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 36; nothing is skipped (there is no
+        /// The sweep still visits all 38; nothing is skipped (there is no
         /// skip-list anywhere in this suite, and this is not the place to
         /// start one).
         /// ⚠ THE NUMBER IS RE-READ FROM `typeof(PlayerState).GetFields()`,
@@ -169,7 +169,9 @@ namespace Ring.Simulation.Tests
         /// 34 and had been wrong since Т22, which declared `SlideSpeedPenalty`
         /// and left every count in this file untouched. Т24 then added
         /// `HistorySlot`. 32 -> 34 (Т7's `Tilt`/`TiltVel`) -> 35 (Т22) -> 36
-        /// (Т24). The same miss, on the same field, is what RULING 125 had to
+        /// (Т24) -> 38 (app-8dv's `BurstShots`/`ShotOrdinal`), each reading
+        /// taken fresh rather than incremented.
+        /// The same miss, on the same field, is what RULING 125 had to
         /// correct in `WorldLifecycleTests`' receipt; naming it here is how the
         /// next reader stops inheriting it.
         ///
@@ -862,7 +864,7 @@ namespace Ring.Simulation.Tests
         /// Т10/Т13. A skip-list here would be the first one in the project and
         /// would say "we do not look at these eleven fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 36 (see
+        /// not have touched them. So the sweep still visits all 38 (see
         /// `AssertPlayerStateBitEqual`'s own note on where both numbers come
         /// from and why neither is ever incremented from memory).
         ///
@@ -1028,13 +1030,32 @@ namespace Ring.Simulation.Tests
                 // none: leaving it unclassified would let a future Step start
                 // writing it with nothing to object.
                 ["HistorySlot"] = PredictionRole.Server,
+                // app-8dv (spec §3.2/§3.4): the two shot counters, and both are
+                // PREDICTED on the strongest reading of that role -- the world
+                // and the prediction write them through ONE shared body,
+                // `WeaponSystem`'s `Advance`, which `Update` and
+                // `AdvanceNoSpawn` both run. There is no second writer on either
+                // side: `SpawnShot` cannot touch them (it takes `p` by `in`),
+                // and nothing outside the weapon phase mentions them.
+                // ⚠ Predicted, NOT Mixed, and the difference is checkable rather
+                // than a matter of taste: Mixed would mean a server-only path
+                // also writes the field, and here the server-only path is
+                // exactly `SpawnShot`, the one body the compiler forbids from
+                // writing to `p` at all.
+                //
+                // `WeaponTests.TheClientAndTheServerAgreeOnTheShotCounters` is
+                // the behavioral witness of the same claim, tick by tick; this
+                // entry is what makes the bit-for-bit sweep below enforce it on
+                // every scenario in this file rather than on that one fixture.
+                ["BurstShots"] = PredictionRole.Predicted,
+                ["ShotOrdinal"] = PredictionRole.Predicted,
             };
 
         [Test]
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 36 fields, which is a claim about ELEVEN of them that
+            // of ALL 38 fields, which is a claim about ELEVEN of them that
             // PlayerPrediction.Step could never satisfy — it does not write
             // them, and the world does. (Nine when R-209 landed; app-88jb Т7's
             // PlayerState.Tilt was the tenth, stepped every tick by

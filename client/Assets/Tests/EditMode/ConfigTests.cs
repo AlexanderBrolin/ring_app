@@ -1266,6 +1266,112 @@ namespace Ring.Simulation.Tests
                 "a dry weapon must never fire FASTER than a loaded one");
         }
 
+        [Test]
+        public void Validate_SprayPatternShotsZero_Throws()   // rule 1
+        {
+            // Same ReqPositive convention as ShotsPerCell above, and for a
+            // sharper reason: this one is the pattern's DIVISOR. The floor
+            // inside SprayPattern.Draw exists for a partially initialized test
+            // fixture, not for a shipped config — the validator is what keeps
+            // zero out of the asset (spec §3.2/§3.8).
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayPatternShots = 0;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayPatternShots"));
+        }
+
+        [Test]
+        public void Validate_SprayYawAmplitudeAboveOne_Throws()   // rule 2
+        {
+            // The amplitude is a FRACTION of the cone, so one is the whole cone
+            // and the boundary is legal; above it the pattern would place a shot
+            // outside the cone the reticle draws.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayYawAmplitude = 1.01f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayYawAmplitude"));
+
+            w.SprayYawAmplitude = 1f;
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+                "an amplitude of exactly 1 spends the whole cone, which is the shipped setting");
+        }
+
+        [Test]
+        public void Validate_SprayPitchAmplitudeAboveOne_Throws()   // rule 3
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayPitchAmplitude = 1.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayPitchAmplitude"));
+
+            // ⭐ ZERO IS THE HALF OF THE OWNER'S ROLLBACK THAT REMOVES THE
+            // VERTICAL, and pinning it here says WHICH end of the range is the
+            // excluded one — the same shape AmmoStart == AmmoMax is pinned in
+            // its own rule above.
+            w.SprayPitchAmplitude = 0f;
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+                "SprayPitchAmplitude = 0 removes the vertical — half of the owner's rollback, "
+                + "not a misconfiguration");
+        }
+
+        [Test]
+        public void Validate_SprayVarianceAboveOne_Throws()   // rule 4
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayVariance = 1.2f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayVariance"));
+
+            // ⭐ AND ONE IS THE OTHER HALF OF THAT ROLLBACK: at variance 1 the
+            // horizontal returns to a uniform draw inside the cone, which is
+            // precisely the behavior the owner reserved the right to go back to.
+            // A rule that refused it would break the rollback.
+            w.SprayVariance = 1f;
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+                "SprayVariance = 1 — половина отката владельца, а не ошибка конфигурации");
+        }
+
+        [Test]
+        public void Validate_NegativeSprayYawTurns_Throws()   // rule 5
+        {
+            // A count of turns, not a fraction: it has a floor and no ceiling,
+            // so what is refused is the negative side alone.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayYawTurns = -0.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayYawTurns"));
+        }
+
+        [Test]
+        public void Validate_BothSprayAxesOff_Throws()   // rule 6
+        {
+            // ⚠ WITHOUT THE `ConfigTests.` QUALIFIER — these tests live IN THIS
+            // CLASS, and all thirty of its call sites reach MakeDefaults and
+            // BuildShipped directly.
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            w.SprayYawTurns = 0f;
+            w.SprayPitchAmplitude = 0f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Weapon.SprayYawTurns"));
+            Assert.That(ex.Message, Does.Contain("must not both be zero"));
+
+            // ⭐ ONE AXIS ALONE IS LEGAL, and this is where that has to be
+            // pinned: the rule refuses the PAIR, and the vertical at zero is
+            // the owner's rollback. Restoring only the yaw leaves the pattern
+            // real on one axis, which is a balance choice and not a broken
+            // weapon.
+            w.SprayYawTurns = 0.7f;
+            Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+                "SprayPitchAmplitude = 0 — вторая половина отката владельца");
+        }
+
+
         // ------------------------------------------------------------------
         // Stage 2 Task 22 (spec §3.15/Р72; carryover-t22 §1): visibility
         // filter invariants. Each [Range]-bounded field gets two tests, one
@@ -1699,6 +1805,18 @@ namespace Ring.Simulation.Tests
             // exactly the condition a shared equality helper requires.
             Assert.AreEqual(e.PierceMassRatio, a.PierceMassRatio, Eps);
             Assert.AreEqual(e.PierceDamageLoss, a.PierceDamageLoss, Eps);
+            // app-8dv (spec §3.2/§3.8): the spray pattern's five numbers, added
+            // in the step that ships them for the reason the two blocks above
+            // state — this list is HAND-WRITTEN, so a field absent from it is a
+            // field whose mirror between WeaponConfig's C# defaults and the
+            // fixture is pinned by nothing. ALL FIVE belong here: this task
+            // introduces no deliberate deviation, so the two sources agree field
+            // for field, which is the condition a shared equality helper needs.
+            Assert.AreEqual(e.SprayPatternShots, a.SprayPatternShots);
+            Assert.AreEqual(e.SprayYawAmplitude, a.SprayYawAmplitude, Eps);
+            Assert.AreEqual(e.SprayYawTurns, a.SprayYawTurns, Eps);
+            Assert.AreEqual(e.SprayPitchAmplitude, a.SprayPitchAmplitude, Eps);
+            Assert.AreEqual(e.SprayVariance, a.SprayVariance, Eps);
         }
 
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)

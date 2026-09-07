@@ -323,6 +323,13 @@ namespace Ring.Simulation.Tests
             // standing muzzle horizontally whatever height the (unheld) aim
             // carries — AimHeight is the aimed branch's input alone.
             var cfg = TestConfigs.OpenField();
+            // app-8dv T1: the spray pattern's VERTICAL is switched off for this
+            // fixture, and the premise is that this test is not about it — it is
+            // about the geometry of the BARREL, which is why the tolerances below
+            // are as tight as they are. The pattern has its own examiners,
+            // SprayPatternTests and WeaponTests; widening 1e-4 here to let a
+            // vertical through would spend the very thing this test measures.
+            cfg.Weapon.SprayPitchAmplitude = 0f;
             var w = new SimulationWorld(1, cfg);
             w.Tick(new SimInput { AimPoint = new float2(10f, 0f),
                                   AimHeight = cfg.Hero.MaxAimHeight, FireHeld = true });
@@ -341,6 +348,12 @@ namespace Ring.Simulation.Tests
             // Mid-slide the hero is low to the ground, so the shot leaves the
             // slide muzzle height instead of the standing one.
             var cfg = TestConfigs.OpenField();
+            // app-8dv T1: same premise as HipShot_HorizontalAtMuzzleHeight above,
+            // and it bites harder here — the slide doubles the cone
+            // (SpreadSlideMult), so the pattern's vertical would walk the birth
+            // height about twice as far. This test is about the MUZZLE HEIGHT;
+            // the pattern is examined by SprayPatternTests and WeaponTests.
+            cfg.Weapon.SprayPitchAmplitude = 0f;
             Assert.IsTrue(cfg.Weapon.CanFireWhileSlide,
                 "fixture: this weapon must be allowed to fire mid-slide");
             var w = new SimulationWorld(1, cfg);

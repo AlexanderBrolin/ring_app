@@ -152,7 +152,13 @@ namespace Ring.Data
                     RicochetMinSpeed = weapon.RicochetMinSpeed,
                     // app-88jb Т20 (spec §3.4): piercing mapping.
                     PierceMassRatio = weapon.PierceMassRatio,
-                    PierceDamageLoss = weapon.PierceDamageLoss
+                    PierceDamageLoss = weapon.PierceDamageLoss,
+                    // app-8dv (spec §3.2/§3.8): the spray pattern's five numbers.
+                    SprayPatternShots = weapon.SprayPatternShots,
+                    SprayYawAmplitude = weapon.SprayYawAmplitude,
+                    SprayYawTurns = weapon.SprayYawTurns,
+                    SprayPitchAmplitude = weapon.SprayPitchAmplitude,
+                    SprayVariance = weapon.SprayVariance
                 },
                 Chaser = ToMobSimConfig(chaser),
                 Gunner = ToMobSimConfig(gunner),
@@ -536,6 +542,47 @@ namespace Ring.Data
             ReqPositive(errors, "Weapon.PierceMassRatio", cfg.Weapon.PierceMassRatio);
             ReqInRange(errors, "Weapon.PierceDamageLoss", cfg.Weapon.PierceDamageLoss,
                 0f, 1f, maxExclusive: true);
+
+            // app-8dv (spec §3.2/§3.8): the spray pattern's five numbers.
+            // SprayPatternShots is STRICTLY positive because it is the pattern's
+            // divisor -- at zero the burst has no length to be drawn over. The
+            // floor inside SprayPattern.Draw does not make this rule redundant
+            // and is not meant to: the validator catches a config, that floor
+            // catches a test's partial initializer, exactly the division of
+            // labor WeaponSystem.IntervalFor's own 1e-3f describes.
+            ReqPositive(errors, "Weapon.SprayPatternShots", cfg.Weapon.SprayPatternShots);
+            // The three amplitudes are FRACTIONS of the cone Spread sizes, so
+            // [0, 1] both ends included: zero switches that half of the pattern
+            // off (a legal authoring choice, and half of the owner-facing
+            // rollback), one spends the whole cone.
+            ReqInRange(errors, "Weapon.SprayYawAmplitude", cfg.Weapon.SprayYawAmplitude, 0f, 1f);
+            ReqInRange(errors, "Weapon.SprayPitchAmplitude", cfg.Weapon.SprayPitchAmplitude, 0f, 1f);
+            ReqInRange(errors, "Weapon.SprayVariance", cfg.Weapon.SprayVariance, 0f, 1f);
+            // SprayYawTurns is a COUNT of turns, not a fraction, so it has a
+            // floor and no ceiling: more turns per burst is a real (if noisy)
+            // setting, and the [Range] on the SO is an editor limit rather than
+            // a rule.
+            ReqNonNegative(errors, "Weapon.SprayYawTurns", cfg.Weapon.SprayYawTurns);
+            if (cfg.Weapon.SprayYawTurns == 0f && cfg.Weapon.SprayPitchAmplitude == 0f)
+            {
+                // Both axes off at once is a weapon with no pattern at all.
+                //
+                // ⚠ THIS RULE IS STRICTER THAN THE MINIMUM, ON PURPOSE, AND
+                // THE NEXT READER IS TOLD SO HERE RATHER THAN LEFT TO "FIX" IT.
+                // Full degeneracy -- the shot's angle constant at dead center
+                // -- would additionally need SprayVariance == 0, since a
+                // non-zero variance still scatters the round. A third condition
+                // would make the rule impossible to check by eye, and it would
+                // leave "no pattern at all, only noise" reachable by hot-tweak,
+                // which is a weapon nobody chose. A validator is allowed to be
+                // stricter than the bare minimum; what it is not allowed to be
+                // is silent about it.
+                errors.Add("Weapon.SprayYawTurns and Weapon.SprayPitchAmplitude " +
+                    "must not both be zero — that is a weapon with no spray pattern on " +
+                    "either axis (got SprayYawTurns=" +
+                    $"{cfg.Weapon.SprayYawTurns:F3}, SprayPitchAmplitude=" +
+                    $"{cfg.Weapon.SprayPitchAmplitude:F3}). Either one alone is legal.");
+            }
 
             // Task 2 (spec stamina/slide/aim): stamina pool + action costs/regen.
             ReqPositive(errors, "Hero.StaminaMax", cfg.Hero.StaminaMax);

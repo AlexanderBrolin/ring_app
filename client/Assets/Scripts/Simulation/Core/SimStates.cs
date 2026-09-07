@@ -204,6 +204,27 @@ namespace Ring.Simulation.Core
         ///
         /// Part of StateHash from step 3a, for MobState.HistorySlot's reasons.
         public int HistorySlot;
+
+        /// The shot's number IN THE BURST (app-8dv, owner decision Н28): the
+        /// input of the pattern, zeroed on the first tick the trigger is not
+        /// held. It is NOT an identity -- two different shots can carry the
+        /// same value, which is exactly why ShotOrdinal below exists beside
+        /// it.
+        public int BurstShots;
+
+        /// The shot's number IN THE MATCH -- the shot's IDENTITY (spec
+        /// §3.2/§3.4). Monotone WITHIN A FORWARD RUN and not
+        /// unconditionally: BeginReconcile assigns the authoritative
+        /// PlayerState WHOLE, so a correction can step this back exactly the
+        /// way it steps Ammo back, and the client's ring of already-born keys
+        /// has a seam for that (spec §3.4).
+        ///
+        /// int AND NOT uint, AND THE TYPE IS LOAD-BEARING FOR TWO TESTS:
+        /// WorldLifecycleTests.Bump knows float/int/bool/float2/byte/Enum and
+        /// throws NotSupportedException on uint (an exception is not a RED),
+        /// and HotTweakTests would fail on a different assert than the one
+        /// whose remedy is documented.
+        public int ShotOrdinal;
     }
 
     /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third

@@ -331,6 +331,19 @@ namespace Ring.Simulation.Tests
                 // HotTweak_RewindCapChange_Throws.
                 // Same form and same reasoning as the two entries above.
                 ["HistorySlot"] = float.PositiveInfinity,
+                // app-8dv (spec §3.2/§3.4): the two shot counters. Neither is a
+                // magnitude with a config ceiling to clamp towards -- BurstShots
+                // is a position inside a burst, reset by the trigger coming up
+                // and by nothing else, and ShotOrdinal is an IDENTITY, the
+                // shot's number in the match. ApplyConfig leaves both alone on
+                // purpose: a hot-tweak changes numbers, and clamping an identity
+                // would hand a later shot a key the journal has already seen.
+                // Same form and same reasoning as Tilt/TiltVel/HistorySlot
+                // above, and PositiveInfinity for the same reason -- the assert
+                // below measures float/int fields against a ceiling, so "no
+                // ceiling" has to be spelled as a value it can compare with.
+                ["BurstShots"] = float.PositiveInfinity,
+                ["ShotOrdinal"] = float.PositiveInfinity,
             };
 
             var w = new SimulationWorld(5, cfg);

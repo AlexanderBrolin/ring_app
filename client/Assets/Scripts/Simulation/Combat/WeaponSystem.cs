@@ -43,11 +43,16 @@ namespace Ring.Simulation.Combat
         /// ONE CORE, TWO SINKS (Stage 2 Task 30, C-1/I5). `worldOrNull` is the
         /// shot's sink: the authoritative world for `Update` below, and `null`
         /// for `AdvanceNoSpawn`, the seam a predicting client drives its own copy
-        /// of PlayerState through. A null sink skips EXACTLY the three things a
-        /// client must never own — the projectile itself, the spread draw that
-        /// shapes it (together with the whole shot geometry, none of which writes
-        /// to `p`), and the shooter's ShotsFired tally — and executes every other
-        /// line, in the same order, on the same values. This is one body rather
+        /// of PlayerState through. A null sink skips EXACTLY the two things a
+        /// client must never own — the projectile itself (together with the whole
+        /// shot geometry, none of which writes to `p`) and the shooter's
+        /// ShotsFired tally — and executes every other line, in the same order,
+        /// on the same values. ⚠ THAT LIST WAS THREE UNTIL app-8dv: the spread
+        /// DRAW used to be the middle item, and it is gone because there is no
+        /// draw any more. The angle is now a pure function of state both sides
+        /// hold (SprayPattern), so it is no longer something one side owns and
+        /// the other must be denied — it is computed by the same code from the
+        /// same numbers wherever the geometry runs. This is one body rather
         /// than two on purpose: the overshoot comes off FireCooldown BEFORE the
         /// increment, the cone comes off RecoilOffset BEFORE this shot
         /// accumulates into it, and the loop admits more than one shot per tick,
@@ -61,10 +66,12 @@ namespace Ring.Simulation.Combat
         /// shot's geometry and its cone: aimed fire (input.AimHeld) sends a genuine
         /// 3D round at (AimPoint, AimHeight) through a cone the aim-settle shrinks,
         /// hip fire keeps the flat horizontal shot through the movement-widened
-        /// Spread.HipRadians cone. Both draw from the weapon RNG stream only when
-        /// their cone is actually open, so perfectly settled recoil-free aim spends
-        /// no randomness at all. That whole split lives in SpawnShot below, since
-        /// it is the sink's business and not the bookkeeping's.
+        /// Spread.HipRadians cone. Both place the spray PATTERN inside that cone,
+        /// and only when the cone is actually open, so perfectly settled
+        /// recoil-free aim is still a pinpoint shot — now because the cone it
+        /// would be placed in has zero width, not because a random draw was
+        /// skipped. That whole split lives in SpawnShot below, since it is the
+        /// sink's business and not the bookkeeping's.
         static void Advance(ref PlayerState p, in SimInput input, in SimConfig cfg,
             SimulationWorld worldOrNull, byte ownerIndex)
         {
@@ -73,6 +80,18 @@ namespace Ring.Simulation.Combat
 
             p.FireCooldown -= dt;
             p.RecoilOffset = math.max(0f, p.RecoilOffset - weapon.RecoilRecoveryRadPerSec * dt);
+
+            // app-8dv (spec §3.2, owner decision Н28): the burst counter resets
+            // on the RELEASE of fire, and this line stands AHEAD of the early
+            // return below on purpose. Putting the reset inside the !CanFire
+            // branch instead would hand out an exploit: a dash, a slide or the
+            // backpack window would each return the pattern to its pinpoint
+            // first shot without the trigger ever coming up.
+            // ⛔ THERE IS NO TIME-BASED SAFETY NET BESIDE IT, and its absence is
+            // a decision rather than an omission (Р449): InputStarvation.Effective
+            // repeats the last input INCLUDING FireHeld for InputStarveTicks, so a
+            // lost input is never read as a release and needs no guarding against.
+            if (!input.FireHeld) p.BurstShots = 0;
 
             if (!CanFire(in p, in input, in weapon))
             {
@@ -132,6 +151,17 @@ namespace Ring.Simulation.Combat
                     // one body, one rule, one authoritative sink.
                     if (worldOrNull != null) worldOrNull.StatsRef(ownerIndex).AmmoSpent++;
                 }
+                // app-8dv: both counters advance HERE — after SpawnShot has read
+                // their pre-increment values as this shot's pattern input and its
+                // seed, and beside the recoil accumulation, which is the other
+                // per-shot write this loop owns. In the SHARED body, so a
+                // predicting client's counters walk in lockstep with the server's
+                // exactly the way Ammo above does; SpawnShot takes `p` by `in`
+                // precisely so it cannot do this itself. Any reordering here moves
+                // the golden replay hash — the same warning this method's own
+                // header gives about every other line of this bookkeeping.
+                p.BurstShots++;
+                p.ShotOrdinal++;
                 p.RecoilOffset = math.min(weapon.RecoilMaxRad, p.RecoilOffset + weapon.RecoilPerShotRad);
                 p.FireCooldown += interval;
             }
@@ -284,8 +314,8 @@ namespace Ring.Simulation.Combat
         }
 
         /// The shot itself: everything the authoritative sink owns and a
-        /// predicting client must not (CR 3) — the round, the spread draw that
-        /// shapes it, the shooter's own ShotsFired tally, and, since app-88jb
+        /// predicting client must not (CR 3) — the round, the shooter's own
+        /// ShotsFired tally, and, since app-88jb
         /// Т27, the catch-up that spends the input half of his rewind depth on
         /// the round (the call at the bottom carries its own reasoning).
         /// Lifted out of the former loop body of Update verbatim; `p` is
@@ -332,14 +362,35 @@ namespace Ring.Simulation.Combat
                 float2 dir2 = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
                 vel3 = new float3(dir2 * weapon.ProjectileSpeed, 0f);
             }
-            if (a > 0f)   // both modes draw — and only when there is a cone to draw from
+            if (a > 0f)   // both modes, one expression — and only when there is a cone
             {
-                float angle = w.SpreadRng.NextFloat(-a, a);
-                // Rotation around the VERTICAL axis only (K10): the horizontal
-                // pair turns, the climb rate rides along untouched, and the
-                // renormalise keeps |vel3| at exactly ProjectileSpeed.
-                float2 rotated = Geometry.Rotate(vel3.xy, angle);
-                vel3 = math.normalizesafe(new float3(rotated, vel3.z), vel3) * weapon.ProjectileSpeed;
+                // ⚠ THE SEED TAKES THE PRE-INCREMENT ShotOrdinal, while the
+                // shot's key in the journal (T4) is the POST-increment one.
+                // These are two different numbers with two different jobs and
+                // must not be confused: a seed needs only uniqueness, a key
+                // needs zero left free as a sentinel.
+                //
+                // ⭐ THE AIM POINT COMES FROM `input`, NOT FROM `p`. On the live
+                // path the two are identical -- both sides pin p.AimPoint to
+                // input.AimPoint before the weapon phase -- but SpawnShot
+                // already reads input.AimPoint for the direction in both
+                // branches above, and a test calling the geometry with pre-tick
+                // state would get (0,0) out of a fresh world's `p` and be red on
+                // correct code. One source, one number.
+                float2 spray = SprayPattern.Draw(p.BurstShots, p.ShotOrdinal, input.AimPoint,
+                    a, in weapon);
+                // Rotation around the VERTICAL axis only (K10) for the horizontal
+                // half, and the renormalize keeps |vel3| at exactly
+                // ProjectileSpeed.
+                float2 rotated = Geometry.Rotate(vel3.xy, spray.x);
+                // The vertical half is a SHIFT, not a rotation, and in aimed fire
+                // it decays as cos^2(theta): the gain in elevation angle is
+                // atan(tan(theta) + tan(p)) - theta. Against a gunner's head at
+                // 20 m that is x0.98, against a chaser at point blank x0.82, and
+                // "into the floor" down to x0.5.
+                vel3 = math.normalizesafe(
+                    new float3(rotated, vel3.z + math.length(rotated) * math.tan(spray.y)), vel3)
+                    * weapon.ProjectileSpeed;
             }
             // K9: the fractional-remainder pre-advance walks the round along its
             // OWN line — horizontally by its horizontal speed, vertically by its

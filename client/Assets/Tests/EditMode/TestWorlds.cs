@@ -755,5 +755,33 @@ namespace Ring.Simulation.Tests
             }
             return best;
         }
+
+        /// Held hip fire down a fixed +X aim line -- the one input fixture
+        /// every "hold the trigger down" weapon test builds on (app-8dv T1).
+        ///
+        /// ⚠⚠ THIS IS THE LIFTED `WeaponTests.Fire`, NOT A SECOND COPY OF IT.
+        /// That field carried exactly `{ AimPoint = new float2(10f, 0f),
+        /// FireHeld = true }`, and the same step REMOVES it and moves all
+        /// seven of its call sites onto this helper -- otherwise one file
+        /// would end up holding two identical fixtures under two names, a
+        /// duplicate that did not exist before the plan. Same rule and same
+        /// shape as `IdleTicks` above, which records the precedent: lifted
+        /// the moment a second test class needed it (rule 2). One difference
+        /// from that precedent is worth naming -- there the old home kept a
+        /// method and delegated to this class, here the field is gone
+        /// outright and its call sites name this helper directly, because a
+        /// one-expression fixture has nothing left to delegate WITH.
+        ///
+        /// ⚠ NO PARAMETER: the body reads no `in SimConfig`, and every
+        /// TestWorlds helper that does take one actually uses it.
+        ///
+        /// ⚠ AimHeight IS DELIBERATELY LEFT UNSET, and that is right rather
+        /// than an oversight: hip fire never reads it -- `WeaponSystem`
+        /// touches `input.AimHeight` only inside the `input.AimHeld` branch --
+        /// and the repository's canon does not set it either (the lifted
+        /// `WeaponTests.Fire` did not, and `ProjectileTests.FireRight` does
+        /// not).
+        public static SimInput HipFire() => new SimInput
+            { AimPoint = new float2(10f, 0f), FireHeld = true };
     }
 }

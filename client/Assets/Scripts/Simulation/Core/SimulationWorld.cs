@@ -3338,6 +3338,20 @@ namespace Ring.Simulation.Core
             // constant for the whole match -- and a constant that is not
             // hashed is a constant nothing can prove two worlds agree on.
             h = StateHash64.Add(h, p.HistorySlot);
+            // app-8dv (spec §3.2/§3.4): the two shot counters, in declaration
+            // order, after the slot that used to close both the struct and this
+            // fold. They sit together and at the end because they qualify each
+            // other rather than anything above them -- BurstShots is the
+            // pattern's input, ShotOrdinal the shot's identity, and the pair is
+            // what decides the angle of the NEXT round. (Placement by "beside
+            // what it qualifies", the rule RULING 129 pinned for this method;
+            // ending up last is a consequence here, not the reason.)
+            // Both are live per-tick state that survives across ticks and
+            // decides a future outcome, so a replay or a rollback that dropped
+            // either would fire the next round down a different line and still
+            // claim the same hash.
+            h = StateHash64.Add(h, p.BurstShots);
+            h = StateHash64.Add(h, p.ShotOrdinal);
             return h;
         }
 

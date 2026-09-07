@@ -128,6 +128,14 @@ namespace Ring.Simulation.Core
             // step that DECLARES them for the reason the note above gives.
             h = StateHash64.Add(h, c.PierceMassRatio);
             h = StateHash64.Add(h, c.PierceDamageLoss);
+            // app-8dv (spec §3.2/§3.8): the spray pattern's five numbers, in the
+            // section's own declaration order, folded in the step that DECLARES
+            // them for the reason the ricochet note above gives.
+            h = StateHash64.Add(h, c.SprayPatternShots);
+            h = StateHash64.Add(h, c.SprayYawAmplitude);
+            h = StateHash64.Add(h, c.SprayYawTurns);
+            h = StateHash64.Add(h, c.SprayPitchAmplitude);
+            h = StateHash64.Add(h, c.SprayVariance);
             return h;
         }
 

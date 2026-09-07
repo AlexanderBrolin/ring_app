@@ -78,7 +78,30 @@ namespace Ring.Data
         /// keeping zero, which the rule allows and which means "piercing costs
         /// the round nothing".
         [Range(0.001f, 1f)] public float PierceMassRatio = 0.06f;
-        [Range(0f, 0.95f)] public float PierceDamageLoss = 0.5f; // sync-marker key — keep LAST (was RicochetMinSpeed, app-88jb)
+        [Range(0f, 0.95f)] public float PierceDamageLoss = 0.5f; // Was the sync-marker key until app-8dv.
+
+        /// app-8dv (spec §3.2/§3.8, owner decisions Н27/Н29/Н32/Н33): the spray
+        /// PATTERN that replaced the world RNG draw — see WeaponSimConfig's own
+        /// doc for what the pattern is and for why the angle had to become a
+        /// function of state both sides already hold.
+        ///
+        /// `SprayPatternShots` is the burst length the pattern is drawn over and
+        /// is required STRICTLY POSITIVE by validation rule 1 (it is a divisor),
+        /// so the attribute's floor is 1 rather than 0.
+        /// `SprayYawTurns` is the only one of the five with no upper bound in
+        /// its rule (rule 5 asks non-negative): the attribute's 8 is an EDITOR
+        /// limit, since past a few turns per burst the horizontal simply reads
+        /// as noise and nothing above it is a different setting.
+        /// ⚠ `SprayYawTurns` and `SprayPitchAmplitude` MAY NOT BOTH BE ZERO
+        /// (rule 6) — together that is a weapon with no pattern at all. Either
+        /// one alone is legal, and deliberately so: `SprayPitchAmplitude = 0`
+        /// is half of the owner-facing rollback, `SprayVariance = 1` the other
+        /// half, and a rule that refused either would break the rollback.
+        [Range(1, 60)] public int SprayPatternShots = 12;
+        [Range(0f, 1f)] public float SprayYawAmplitude = 1.0f;
+        [Range(0f, 8f)] public float SprayYawTurns = 0.7f;
+        [Range(0f, 1f)] public float SprayPitchAmplitude = 0.35f;
+        [Range(0f, 1f)] public float SprayVariance = 0.35f; // sync-marker key — keep LAST (was PierceDamageLoss, app-8dv)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

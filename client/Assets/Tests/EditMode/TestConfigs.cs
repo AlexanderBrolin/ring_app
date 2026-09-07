@@ -122,7 +122,17 @@ namespace Ring.Simulation.Tests
                     // could only make the mechanic MORE active in the goldens,
                     // which is the very thing MaxRicochets above deviates to
                     // avoid.
-                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f },
+                    PierceMassRatio = 0.06f, PierceDamageLoss = 0.5f,
+                    // app-8dv (spec §3.2/§3.8): the spray pattern's five
+                    // numbers, MIRRORING WeaponConfig's C# defaults field for
+                    // field. No documented deviation here, and this task
+                    // deliberately introduces none: the pattern IS what the
+                    // golden scenarios must exercise, so a modest fixture value
+                    // would be the very loss of coverage MaxRicochets above
+                    // deviates the other way to avoid.
+                    SprayPatternShots = 12, SprayYawAmplitude = 1.0f,
+                    SprayYawTurns = 0.7f, SprayPitchAmplitude = 0.35f,
+                    SprayVariance = 0.35f },
                 Chaser = new MobSimConfig { MaxSpeed = 5.2f, Accel = 30f, Radius = 0.5f,
                     MaxHp = 30f, ContactDamage = 15f, AttackRange = 1.1f,
                     TelegraphSeconds = 0.35f, AttackCooldown = 0.9f,

@@ -2300,7 +2300,22 @@ namespace Ring.Simulation.Tests
             {
                 MaxHp = SnapHeroMaxHp, StaminaMax = EvtStaminaMax, MaxAimHeight = EvtMaxAimHeight,
             },
-            Weapon = new WeaponSimConfig { ProjectileSpeed = EvtWeaponSpeed },
+            // app-8dv (spec §3.2/§3.8): the spray pattern's five numbers.
+            // ⚠ THIS IS THE SPEC'S DoD ITEM, NOT A TECHNICAL NECESSITY, and
+            // saying so keeps the next reader from hunting for a dependency
+            // that is not here: this initializer is PARTIAL by design (one
+            // ProjectileSpeed, for the event payloads), the pattern is never
+            // computed on this path at all, and the floor inside
+            // SprayPattern.Draw makes a zero divisor harmless even if it were.
+            // The lines are cheap and are kept so the fixture does not drift
+            // away from its neighbor in TestConfigs.
+            Weapon = new WeaponSimConfig
+            {
+                ProjectileSpeed = EvtWeaponSpeed,
+                SprayPatternShots = 12, SprayYawAmplitude = 1.0f,
+                SprayYawTurns = 0.7f, SprayPitchAmplitude = 0.35f,
+                SprayVariance = 0.35f,
+            },
             Chaser = new MobSimConfig { MaxHp = SnapChaserMaxHp },
             Gunner = new MobSimConfig { MaxHp = SnapGunnerMaxHp, ProjectileSpeed = EvtGunnerSpeed },
         };
