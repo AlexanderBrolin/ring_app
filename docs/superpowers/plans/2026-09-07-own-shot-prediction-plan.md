@@ -49,13 +49,19 @@ Docker. **Новых пакетов заход не вводит** (CR 9).
 раздела «Отклонения от спеки» в конце файла, каждая запись которого обоснована фактом
 кода, проверенным лично.
 
-**Статус плана:** **v2 — после ОДНОГО круга self-review по `review_plan.md`** (четыре
-Explore-ревьюера: A — корректность кода, B — конвенции, C — переиспользование, D — TDD и
-полнота). **15 Critical, 32 Important, ~31 Minor; ложных — ноль.** Каждая Critical
-проверена главным агентом **лично** — открытием файла, грепом или пересчётом питоном
-(правило 626 и урок 689: согласие ревьюеров повышает приоритет проверки, но не отменяет
-её). Что изменилось — раздел «Что исправил self-review плана» в конце файла.
-⚠ **План против этого раздела — верить разделу** (урок 124).
+**Статус плана:** **v3 — после ДВУХ кругов self-review по `review_plan.md`** (по четыре
+Explore-ревьюера в круге: A — корректность кода, B — конвенции, C — переиспользование,
+D — TDD и полнота).
+Круг 1 против v1: **15 Critical, 32 Important, ~31 Minor**.
+Круг 2 против v2: **21 Critical, 41 Important, ~26 Minor**, и ⛔ **девять из
+двадцати одной Critical сидели в починках круга 1** — ровно тот класс, ради которого
+второй круг и проводится (прецедент: круг 3 плана эпика нашёл два дефекта в починках
+круга 2). Ложных за оба круга — ноль.
+Каждая Critical проверена главным агентом **лично** — открытием файла, грепом или
+пересчётом питоном (правило 626 и урок 689: согласие ревьюеров повышает приоритет
+проверки, но не отменяет её); ⭐ **три дефекта в собственных починках главный агент нашёл
+сам, до отчётов круга 2**. Что изменилось — раздел «Что исправили круги self-review» в
+конце файла. ⚠ **План против этого раздела — верить разделу** (урок 124).
 
 ---
 
@@ -224,7 +230,7 @@ Explore-ревьюера: A — корректность кода, B — кон�
 | **T4** | **НОЛЬ.** Журнал — новый тип без боевых вызывающих до T5; сток в `Advance` на сервере `null`, поведение мира не меняется. ⚠ Шестой параметр `Advance`/`Step` правит **семь** площадок (одна боевая, шесть тестовых) — компиляция обязана быть чистой в этом же таске |
 | **T5** | **НОЛЬ.** ⭐ **`GhostProjectileTests.Ghost_SpawnGateIsWouldFireThisTick` (`:210`) красным НЕ станет** — безгейтовый вход добавлен **рядом**, старый член сохранён (переведён в `internal`, `InternalsVisibleTo("Ring.Simulation.Tests")` уже есть). Это шестая строка таблицы спеки §4.1, оставленная разобранной |
 | **T6** | **НОЛЬ.** Восемь существующих `ImmediatePredictionLatchTests` обязаны остаться зелёными **без единой правки** — параметры ключа и ёмкости опциональны (пункт гейта) |
-| **T7** | 🆕 **ДВА, и оба в `NetInvariantsTests`** — новое правило #13 сужает домен поля, а два существующих теста стоят ровно на отменяемой половине (находка ревью A, проверена лично). (1) **`RewindSanityTicksZero_IsLegal` (`:571`)** — `CollectionAssert.IsEmpty` при `RewindSanityTicks = 0`: на фикстуре `3 + 0 = 3 < 5` правило теперь сообщает ошибку, и ноль перестаёт быть законным. (2) **`RewindSanityTicksNegative_IsReported` (`:543`)** — его `AssertOnly` (`:52-59`) требует **ровно одной** ошибки, а при `-4` их станет две (#12 и #13). ⚠ Восемь существующих `RewindDepthTests` при этом зелёные; отгруженные числа (`3 + 2 >= 5`) правило проходят |
+| **T7** | 🆕 **ТРИ, и все в `NetInvariantsTests`** — новое правило #13 сужает домен поля, а два существующих теста стоят ровно на отменяемой половине (находка ревью A, проверена лично). (1) **`RewindSanityTicksZero_IsLegal` (`:571`)** — `CollectionAssert.IsEmpty` при `RewindSanityTicks = 0`: на фикстуре `3 + 0 = 3 < 5` правило теперь сообщает ошибку, и ноль перестаёт быть законным. (2) **`RewindSanityTicksNegative_IsReported` (`:543`)** — его `AssertOnly` (`:52-59`) требует **ровно одной** ошибки, а при `-4` их станет две (#12 и #13). 🆕 (3) **`InterpBufferTicksZero_IsReported` (`:75`)** — он сужает **другую** половину суммы: `sim.Arena.RewindPictureTicks = 0` (`:104`), и `0 + 2 = 2 < 5` даёт вторую ошибку у того же `AssertOnly`. ⚠ Восемь существующих `RewindDepthTests` при этом зелёные; отгруженные числа (`3 + 2 >= 5`) правило проходят |
 | **T9** | **НОЛЬ** (амендменты ADR кода не трогают) |
 | **T10** | **НОЛЬ** |
 | **T11** | **НОЛЬ** (веха, кода нет) |
@@ -317,7 +323,8 @@ setsid nohup "$SCRATCH/tools/run.sh" "$SCRATCH/runs/<имя>" > "$SCRATCH/runs/<
 - Modify: `client/Assets/Scripts/Data/SimConfigBuilder.cs` (маппинг `Weapon`, валидация `:469-499`)
 - Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs` (`:1110` — аргумент маркера)
 - Modify: `client/Assets/Tests/EditMode/TestConfigs.cs` (`:63-120` — единственный литерал
-  `new WeaponSimConfig`), `SnapshotCodecTests.cs` (`:2303` — `EvtCfg.Weapon`)
+  `new WeaponSimConfig`), `SnapshotCodecTests.cs` (`:2303` — `EvtCfg.Weapon`),
+  🆕 **`TestWorlds.cs`** (подъём хелпера `HipFire` из `WeaponTests.Fire`)
 - Modify: `client/Assets/Tests/EditMode/WeaponTests.cs` (тесты 2, 5, 6, 10–12 + переписка
   `SettledAimWithoutRecoil_DrawsNoSpread`), `HotTweakTests.cs` (`ceilingByField` `:219`),
   `PredictionParityTests.cs` (`RoleByField` `:190`), `WorldLifecycleTests.cs` (расписка
@@ -370,6 +377,15 @@ public int BurstShots;
 public int ShotOrdinal;
 
 // Simulation/Combat/SprayPattern.cs — НОВЫЙ ФАЙЛ, public static.
+/// ⚠ ПУБЛИЧЕН РОВНО ОДИН ЧЛЕН — `Draw`, и это правило соседа дословно
+/// (`Spread.cs:6-10`): «public ahead of that need **because CrosshairView will
+/// read the very same formula**» — то есть публичность оправдана НАЗВАННЫМ
+/// потребителем, а у `Spread` публичный член ровно один. Соли, шаг
+/// квантизации, `Hash01` и `QuantizeAim` потребителя вне класса не имеют, и
+/// этот же план демотирует `TrySpawnFromPrediction` в `internal` по тому же
+/// доводу («публичным он был бы заряженным ружьём»). ⇒ они `const`/`static`
+/// без модификатора; тесту, если понадобится, хватит `internal` —
+/// `Simulation/AssemblyInfo.cs` уже открыт `Ring.Simulation.Tests`.
 public static class SprayPattern
 {
     /// ⚠ Соли взяты из СТИЛЯ уже существующих в этом файле-соседе
@@ -377,20 +393,15 @@ public static class SprayPattern
     /// 0x68E31DA4 / 0x1B56C4E9) и НЕ ПЕРЕСЕКАЮТСЯ с ними по значению, а также
     /// с zero-guard'ом 0x9E3779B9 у SimulationWorld.Fold: соль, совпавшая с
     /// чужой константой, читается как связь, которой нет.
-    public const uint SaltYaw = 0x2545F491u;
-    public const uint SaltPitch = 0x94D049BBu;
-    /// Шаг квантизации точки прицеливания: 1/64 м = 1.6 см.
-    public const float AimQuantScale = 64f;
-
+    const uint SaltYaw = 0x2545F491u;
+    const uint SaltPitch = 0x94D049BBu;
     /// Оба угла ОДНИМ вызовом: yaw в .x, pitch в .y, радианы, уже умноженные
     /// на полуширину конуса.
     public static float2 Draw(int burstShots, int shotOrdinal, float2 aimPoint,
         float coneRadians, in WeaponSimConfig weapon);
 
-    /// [0..1), чистая функция четырёх целых.
-    public static float Hash01(int ordinal, int aimKeyX, int aimKeyY, uint salt);
-
-    public static int QuantizeAim(float v);
+    /// [0..1), чистая функция номера выстрела, точки прицеливания и соли.
+    static float Hash01(int ordinal, float2 aimPoint, uint salt);
 }
 ```
 
@@ -555,8 +566,17 @@ namespace Ring.Simulation.Tests
                 sx += d.x; sy += d.y; sxy += (double)d.x * d.y;
                 sxx += (double)d.x * d.x; syy += (double)d.y * d.y;
             }
-            double cov = sxy / N - (sx / N) * (sy / N);
-            double r = cov / math.sqrt((sxx / N - (sx / N) * (sx / N)) * (syy / N - (sy / N) * (sy / N)));
+            double varX = sxx / N - (sx / N) * (sx / N);
+            double varY = syy / N - (sy / N) * (sy / N);
+            // ⛔ ПРЕМИССА ОБЯЗАТЕЛЬНА, И ОНА ПРОТИВ ВЫРОЖДЕННОГО Hash01, А НЕ
+            // ПРОТИВ M239: на нулевых дисперсиях r = 0/0 = NaN, а NUnit сводит
+            // Assert.Less к Double.CompareTo, где NaN меньше любого числа, —
+            // то есть тест прошёл бы на константной заглушке и ничего бы не
+            // свидетельствовал. (На самом M239 обе оси ненулевые, r ≈ 1, и он
+            // умирает без этой строки.)
+            Assert.Greater(varX, 1e-6d, "премисса: горизонталь обязана разбрасываться");
+            Assert.Greater(varY, 1e-6d, "премисса: вертикаль обязана разбрасываться");
+            double r = cov / math.sqrt(varX * varY);
             Assert.Less(math.abs(r), 0.1d, "оси коррелируют — соль у них одна");
         }
 
@@ -583,18 +603,14 @@ namespace Ring.Simulation.Tests
       `Hash01` возвращает `0f`, `QuantizeAim` возвращает `0` (⛔ КОНСТАНТЫ, не «почти
       реализация»); пять полей `WeaponSimConfig` — объявлены, нигде не читаются.
       R-FILTER `SprayPatternTests` → **`EXIT=2`**, `testcasecount` = **8** глазами.
-      ⚠⚠ **Красных ожидается ПЯТЬ, зелёных ТРИ** (пересчитано по ассертам; первая
-      редакция плана обещала семь красных и спровоцировала бы ложный стоп на первом же
-      шаге — находка ревью A/D):
-      **зелены** `SameArguments_GiveTheSameAngle` (ноль равен нулю),
-      `Amplitude_SaturatesAtThePatternLength` (`AreEqual(0f, 0f, Eps)`) и
-      ⛔ `TheTwoAxesAreUncorrelated` — на нулях `cov = 0`, дисперсии нули, `r = 0/0 = NaN`,
-      а NUnit сравнивает через `Double.CompareTo`, где **NaN меньше любого числа**, так
-      что `Assert.Less(NaN, 0.1d)` **проходит**;
-      **красны** тесты 3, 4б, 4в, 7 и 9.
-      ⇒ Тест 8 получает премиссу-сторож против NaN — иначе он не свидетельствует и на
-      мутанте M239: `Assert.Greater(sxx / N, 1e-6d, "премисса: горизонталь обязана
-      разбрасываться, иначе корреляция не определена");`
+      ⚠⚠ **Красных ожидается ШЕСТЬ, зелёных ДВЕ** (пересчитано по ассертам дважды;
+      первая редакция обещала семь, вторая — пять, и обе спровоцировали бы ложный стоп):
+      **зелены** `SameArguments_GiveTheSameAngle` (ноль равен нулю) и
+      `Amplitude_SaturatesAtThePatternLength` (`AreEqual(0f, 0f, Eps)`) — оба **сторожа**,
+      а не свидетели (427), и в их доках это сказано;
+      **красны** тесты 3, 4б, 4в, 7, 9 и 8. ⚠ Восьмой краснеет **премиссой**, а не
+      корреляцией: на нулях `r = 0/0 = NaN`, а `Assert.Less` в NUnit сводится к
+      `Double.CompareTo`, где NaN меньше любого числа, — без премиссы он прошёл бы.
 - [ ] **Step 3 (GREEN, формула):** тело `SprayPattern`:
 
 ```csharp
@@ -611,10 +627,8 @@ public static float2 Draw(int burstShots, int shotOrdinal, float2 aimPoint,
     float yawBase = weapon.SprayYawAmplitude * math.sin(phase) * amp;
     float pitchBase = weapon.SprayPitchAmplitude * amp;
 
-    int keyX = QuantizeAim(aimPoint.x);
-    int keyY = QuantizeAim(aimPoint.y);
-    float u = Hash01(shotOrdinal, keyX, keyY, SaltYaw);
-    float v = Hash01(shotOrdinal, keyX, keyY, SaltPitch);
+    float u = Hash01(shotOrdinal, aimPoint, SaltYaw);
+    float v = Hash01(shotOrdinal, aimPoint, SaltPitch);
 
     return new float2(
         coneRadians * math.lerp(yawBase, 2f * u - 1f, weapon.SprayVariance),
@@ -632,41 +646,35 @@ public static float2 Draw(int burstShots, int shotOrdinal, float2 aimPoint,
 /// видимого.
 /// ⚠ ЦЕНА СВЯЗАННОСТИ НАЗВАНА: с этого захода правка StateHash64 двигает не
 /// только эталонную константу, но и ТРАЕКТОРИИ ПУЛЬ.
-public static float Hash01(int ordinal, int aimKeyX, int aimKeyY, uint salt)
+static float Hash01(int ordinal, float2 aimPoint, uint salt)
 {
     ulong h = StateHash64.Begin();
     h = StateHash64.Add(h, ordinal);
-    h = StateHash64.Add(h, aimKeyX);
-    h = StateHash64.Add(h, aimKeyY);
+    // ⭐ ТОЧКА ИДЁТ В ХЕШ ЦЕЛИКОМ, БЕЗ СОБСТВЕННОЙ КВАНТИЗАЦИИ, и перегрузка
+    // float2 канонизирует знак нуля (-0.0 -> +0.0) внутри Add(float) — то
+    // есть делает ровно то, ради чего своя сетка и заводилась.
+    h = StateHash64.Add(h, aimPoint);
     h = StateHash64.Add(h, unchecked((int)salt));
     return (float)(h >> 40) * (1f / 16777216f);
 }
 
-/// ⚠ КВАНТИЗАЦИЯ ЯВНАЯ И СВОЯ, и v3 спеки называла её домен НЕВЕРНО:
-/// SimInput не несёт квантованной пары вовсе (float2 AimPoint), а InputCodec
-/// живёт в Ring.Networking, куда Ring.Simulation смотреть не может (Р180).
-///
-/// ⭐ ЧЕМ ГАРАНТИРОВАНО РАВЕНСТВО ДВУХ СТОРОН — И ЭТО НЕ Sanitize (поправка
-/// ревью A). Настоящий механизм — Р34: клиент предсказывает по ДЕКОДИРОВАННОМУ
-/// вводу. ReplicateData.FromInput квантует пару ОДИН раз при постройке
-/// структуры (Protocol/ReplicateData.cs:101-114, InputCodec.Encode в байты),
-/// после чего обе стороны декодируют ОДНИ И ТЕ ЖЕ байты — дока этой структуры
-/// говорит это дословно, а дока PlayerPrediction.Step требует того же от
-/// вызывающего. Sanitize отвечает за другое (клампы и подмену не-финитного) и
-/// гарантии равенства не даёт.
-///
-/// ⚠ ШАГ — КОНСТАНТА КОДА, А НЕ ЧИСЛО БАЛАНСА, и это решение (CR 6 не
-/// нарушен): 1/64 м не тюнится вкусом и не меняет ощущение боя — он меняет
-/// ПОСЕВ, то есть сами траектории, наравне с формулой. Прецедент рядом:
-/// VisibilitySystem.QuantizeAudiblePos держит свой шаг полем конфига именно
-/// потому, что там он и есть балансная величина (радиус слышимости), — здесь
-/// это не так.
-public static int QuantizeAim(float v) => (int)math.round(v * AimQuantScale);
+// ⛔⛔ СОБСТВЕННОЙ КВАНТИЗАЦИИ ПРИЦЕЛА НЕТ, И ЭТО ПОПРАВКА КРУГА 2
+// (запись 10 «Отклонений»). Спека §3.2 вводила её ради того, чтобы обе
+// стороны получили ОДИН посев. Проверено по коду: это уже гарантировано
+// проводом и без неё — Р34, клиент предсказывает по ДЕКОДИРОВАННОМУ вводу,
+// а `ReplicateData.FromInput` квантует пару один раз при постройке структуры
+// (`Protocol/ReplicateData.cs:101-114`), после чего обе стороны декодируют
+// ОДНИ И ТЕ ЖЕ байты. Своя сетка поверх проводной не покупает ничего:
+// её шаг (1/64 м = 1.5625 см) практически совпадает с проводным
+// (6*Radius/65535 = 1.58 см при Radius 173), то есть и грубее не делает.
+// ⚠ И заявленное ею смягчение риска Р-F («перебор субсантиметровых сдвигов
+// мыши») тоже не работало по той же причине — цена Р-F принята спекой как
+// есть, и изображать защиту, которой нет, план не будет.
 ```
 
 - [ ] **Step 4:** R-FILTER `SprayPatternTests` → **PASS 8/8**.
 - [ ] **Step 5 (RED, состояние):** два поля `PlayerState` (объявить **в конец струк­туры**,
-      после `HistorySlot`) и три теста в `WeaponTests.cs`:
+      после `HistorySlot`) и **четыре** теста в `WeaponTests.cs`:
 
 ```csharp
 [Test]
@@ -685,18 +693,25 @@ public void ReleasingFire_ResetsTheBurst_ButADashDoesNot()   // тесты 5 и 
     // исполняет: CanFireWhileDash = false в обоих источниках
     // (TestConfigs.cs:69, WeaponConfig.cs:20).
     //
-    // ⚠ HipFire ЗАВОДИТСЯ ЭТИМ ТАСКОМ В TestWorlds — хвостовым хелпером, а не
-    // локальным статиком: его зовут три файла (WeaponTests, ShotGeometryTests
-    // таска T3, PredictedShotLogTests таска T4), и локальная копия каждому
-    // была бы тем самым дублем, который запрещает правило 2:
-    //   public static SimInput HipFire(in SimConfig cfg) => new SimInput
+    // ⚠⚠ HipFire — ЭТО ПОДНЯТЫЙ `WeaponTests.Fire`, А НЕ ВТОРАЯ ЕГО КОПИЯ
+    // (находка круга 2, проверено побайтово: WeaponTests.cs:10-11 несёт ровно
+    // `{ AimPoint = new float2(10f, 0f), FireHeld = true }`). Тем же шагом
+    // `Fire` СНИМАЕТСЯ, а семь его площадок (:76, :89, :116, :152, :163,
+    // :214, :225) переводятся на общий хелпер — иначе в одном файле окажутся
+    // две одинаковые фикстуры под разными именами, то есть дубль, которого
+    // до плана не было. Прецедент подъёма записан в самом TestWorlds:
+    // "Lifted here from MatchFlowTests' own private Idle the moment a second
+    // test class needed it (rule 2); that file now delegates to this one".
+    //   public static SimInput HipFire() => new SimInput
     //       { AimPoint = new float2(10f, 0f), FireHeld = true };
+    // ⚠ БЕЗ ПАРАМЕТРА: `in SimConfig` тело не читает, а хелперы TestWorlds,
+    // которые его принимают, все до одного им пользуются.
     // ⚠ AimHeight НЕ задаётся, и это правильно: от бедра он не читается вовсе
-    // (WeaponSystem.cs:323 — только ветка AimHeld), а канон репозитория
-    // WeaponTests.cs:10-11 его тоже не задаёт.
+    // (WeaponSystem.cs:323 — только ветка AimHeld), и канон репозитория
+    // (WeaponTests.Fire, ProjectileTests.FireRight) его тоже не задаёт.
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
-    SimInput fire = TestWorlds.HipFire(in cfg);
+    SimInput fire = TestWorlds.HipFire();
     for (int i = 0; i < 30; i++) w.Tick(fire);
     Assert.Greater(w.Player.BurstShots, 2, "премисса: очередь должна набрать длину");
 
@@ -717,43 +732,41 @@ public void ReleasingFire_ResetsTheBurst_ButADashDoesNot()   // тесты 5 и 
 }
 
 [Test]
-public void TheClientAndTheServerAgreeOnTheAngle()   // ⭐⭐ тест 10, M241 — сердце задачи
+public void TheClientAndTheServerAgreeOnTheShotCounters()   // ⭐⭐ тест 10, M241
 {
-    // ⭐ СЕРВЕРНЫЙ УГОЛ ЧИТАЕТСЯ ИЗ СОБЫТИЯ (ProjectileFired.Amount несёт
-    // atan2 направления — SimulationWorld.cs:1409), КЛИЕНТСКИЙ — СЧИТАЕТСЯ
-    // ПРЕДСКАЗАННОЙ КОПИЕЙ по её собственному состоянию. Ни одна половина не
-    // зовёт проверяемую функцию дважды, поэтому это не тавтология (428).
-    // Аим-линия идёт по +X от неподвижного стрелка, значит Amount И ЕСТЬ
-    // отклонение — тот же приём, что у существующего AimedShotAngles (:34).
+    // ⛔⛔ ЭТОТ ТЕСТ ПРО СЧЁТЧИКИ, А НЕ ПРО УГОЛ, И ЭТО НЕ УПРОЩЕНИЕ, А ФАКТ
+    // КОДА (собственная находка при проверке починки круга 1). Угол здесь
+    // сравнить нечем: конус, из которого стреляет мир, берётся ПОСЛЕ распада
+    // отдачи — `Advance` уменьшает RecoilOffset на RecoilRecoveryRadPerSec*dt
+    // ПЕРВОЙ строкой, до цикла (WeaponSystem.cs:75), — а предсказанная копия
+    // до `Step` этого распада ещё не пережила. Тест, считающий клиентский
+    // угол от состояния "до тика", разошёлся бы с событием на распад одного
+    // такта и был бы КРАСЕН НА ВЕРНОМ КОДЕ. Воспроизводить же распад в теле
+    // теста значит переписать проверяемый код в тест — тавтология 428.
+    // ⇒ Свидетель "клиент и сервер дают ОДИН угол" — это тест 14 таска T4:
+    // там запись журнала рождается ВНУТРИ того же тика и потому несёт ровно
+    // тот конус, из которого стрелял мир. Пункт DoD спеки едет туда же.
+    //
+    // Здесь проверяется то, что до журнала наблюдаемо и чего мутация M241
+    // касается прямо: оба счётчика растут в ОБЩЕМ теле Advance, а не в
+    // серверной половине.
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
     var predicted = w.Player;                       // копия клиента
-    SimInput fire = TestWorlds.HipFire(in cfg);
-    int checkedShots = 0;
+    SimInput fire = TestWorlds.HipFire();
 
     for (int tick = 0; tick < 40; tick++)
     {
-        w.ClearEvents();
-        // Клиентская сторона считает угол ДО тика — из того же состояния, из
-        // которого его посчитает мир: конус и номер выстрела берутся
-        // пред-выстрельными, ровно как в SpawnShot.
-        float cone = Spread.HipRadians(in cfg.Weapon, in predicted, in cfg.Hero);
-        float2 clientSpray = SprayPattern.Draw(predicted.BurstShots, predicted.ShotOrdinal,
-            fire.AimPoint, cone, in cfg.Weapon);
-
         w.Tick(fire);
         PlayerPrediction.Step(ref predicted, in fire, in cfg, in ImpactPulse.None,
             System.ReadOnlySpan<PushableBody>.Empty);   // журнал придёт только в T4
-
-        if (!TestEvents.TryFirstOf(w, SimEventKind.ProjectileFired, out SimEvent shot)) continue;
-        Assert.AreEqual(shot.Amount, clientSpray.x, 1e-5f,
-            "клиент и сервер разошлись в УГЛЕ — посев или конус считаются по-разному");
         Assert.AreEqual(w.Player.ShotOrdinal, predicted.ShotOrdinal,
             "счётчик выстрелов разошёлся — он растёт не в общем теле Advance");
-        Assert.AreEqual(w.Player.BurstShots, predicted.BurstShots);
-        checkedShots++;
+        Assert.AreEqual(w.Player.BurstShots, predicted.BurstShots,
+            "номер в очереди разошёлся — сброс или инкремент стоят не в общем теле");
     }
-    Assert.Greater(checkedShots, 3, "премисса: очередь должна была отстреляться");
+    Assert.Greater(w.Player.ShotOrdinal, 3, "премисса: очередь должна была отстреляться");
+    Assert.Greater(w.Player.BurstShots, 3, "премисса: очередь должна была набрать длину");
 }
 
 [Test]
@@ -767,7 +780,7 @@ public void HipFire_NoLongerFlies_PerfectlyFlat()   // тест 11, M242
     SimConfig cfg = TestConfigs.OpenField();
     cfg.Weapon.SprayVariance = 0f;                 // чистый рисунок: ожидание считаемо
     var w = new SimulationWorld(1, cfg);
-    SimInput fire = TestWorlds.HipFire(in cfg);
+    SimInput fire = TestWorlds.HipFire();
     float peak = 0f;
     for (int i = 0; i < 60; i++)
     {
@@ -783,7 +796,7 @@ public void HipFire_NoLongerFlies_PerfectlyFlat()   // тест 11, M242
 }
 
 [Test]
-public void AimedFire_AlsoClimbs_ButTheShiftDecaysWithTheExistingTilt()   // тест 12, M243
+public void AimedFire_AlsoClimbs()   // тест 12, M243
 {
     // ⛔ БЕЗ ЭТОГО ТЕСТА МУТАЦИЯ "тангаж только в ветке от бедра" ЖИВЁТ:
     // предыдущий тест стреляет только от бедра и мутанта не видит.
@@ -799,38 +812,40 @@ public void AimedFire_AlsoClimbs_ButTheShiftDecaysWithTheExistingTilt()   // т�
     p.AimSettleTimer = cfg.Hero.AimSettleSeconds;
     w.SetPlayerForTest(p);
     SimInput aimed = AimedFire(in cfg);            // существующий хелпер (:17)
-    aimed.AimHeight = cfg.Hero.MuzzleHeight;       // настильный выстрел: theta ~ 0
 
     for (int i = 0; i < 30 && w.ProjectileCount == 0; i++) w.Tick(aimed);
     Assert.AreEqual(1, w.ProjectileCount, "премисса: прицельный выстрел обязан состояться");
-    Assert.Greater(math.abs(w.GetProjectileForTest(0).VelZ), 0f,
-        "в прицеле вертикали нет — рисунок применён только к бедровой ветке");
+    // ⚠ ОЖИДАНИЕ — ЧИСЛО, А НЕ «больше нуля» (поправка круга 2): при
+    // SprayVariance = 0 и сведённом прицеле конус равен RecoilMaxRad минус
+    // распад одного такта, амплитуда первого выстрела — 1/SprayPatternShots,
+    // а theta ≈ 0 (настильный выстрел), поэтому cos²θ ≈ 1 и подъём считается
+    // прямо.
+    float cone = cfg.Weapon.RecoilMaxRad
+        - cfg.Weapon.RecoilRecoveryRadPerSec * SimulationWorld.TickDt;
+    float pitch = cone * cfg.Weapon.SprayPitchAmplitude / cfg.Weapon.SprayPatternShots;
+    Assert.AreEqual(cfg.Weapon.ProjectileSpeed * math.tan(pitch),
+        w.GetProjectileForTest(0).VelZ, 0.02f,
+        "в прицеле вертикали нет или она не та — рисунок применён только к бедровой ветке");
 }
 
-[Test]
-public void ShootingStraightDown_PassesThePatternBy()   // вырожденный случай §3.2
-{
-    // Законно и названо: при совпадении точки прицеливания с позицией стрелка
-    // по горизонтали обнуляются ОБЕ составляющие, и выстрел проходит мимо
-    // рисунка целиком. Тест стоит, чтобы это не читалось как дефект.
-    SimConfig cfg = TestConfigs.OpenField();
-    var w = new SimulationWorld(1, cfg);
-    SimInput straightDown = TestWorlds.HipFire(in cfg);
-    straightDown.AimPoint = w.Player.Pos;          // ровно себе под ноги
-    for (int i = 0; i < 30 && w.ProjectileCount == 0; i++) w.Tick(straightDown);
-    Assert.AreEqual(1, w.ProjectileCount, "премисса: выстрел обязан состояться");
-    Assert.AreEqual(0f, w.GetProjectileForTest(0).VelZ, 1e-6f,
-        "вырожденный случай перестал быть вырожденным — рисунок нашёл ось там, где её нет");
-}
+// ⛔⛔ ТЕСТА ВЫРОЖДЕННОГО СЛУЧАЯ НЕТ, ПОТОМУ ЧТО НЕТ САМОГО СЛУЧАЯ — и это
+// отмена оговорки спеки §3.2, а не пропуск (запись 11 «Отклонений»; находка
+// круга 2, два ревьюера независимо, проверено по исходнику пакета).
+// `math.normalizesafe` возвращает НЕ ноль, а fallback:
+//   return math.select(defaultvalue, x * math.rsqrt(len), len > FLT_MIN_NORMAL);
+//   — Library/PackageCache/com.unity.mathematics@19a9377c/…/math.cs:3524-3528
+// а обе ветки `SpawnShot` передают ненулевой fallback (`new float2(1f, 0f)`,
+// `WeaponSystem.cs:322/332`). ⇒ `vel3.xy` не обнуляется НИКОГДА, стрельба
+// «себе под ноги» уходит вдоль +X и проходит через рисунок полностью.
+// Тест, написанный по букве спеки, был бы КРАСЕН НА ВЕРНОМ КОДЕ — тот же
+// класс, что два красных `ProjectileHeightTests`, только в новом тесте.
 ```
 
 - [ ] **Step 6:** заглушки полей (объявлены, не пишутся) до **компиляции**;
-      R-FILTER `WeaponTests` → `EXIT=2`, `testcasecount` = **19** глазами (14 + пять
+      R-FILTER `WeaponTests` → `EXIT=2`, `testcasecount` = **18** глазами (14 + четыре
       новых), красных — по счёту исполнителя **до** прогона. Ориентир: **четыре**
-      (`ReleasingFire…`, `TheClientAndTheServerAgreeOnTheAngle`,
-      `HipFire_NoLongerFlies_PerfectlyFlat`, `AimedFire_AlsoClimbs…`); пятый —
-      `ShootingStraightDown_PassesThePatternBy` — **зелен уже здесь** (`VelZ` и так ноль),
-      он сторож вырожденного случая, а не свидетель нового поведения (427).
+      (`ReleasingFire…`, `TheClientAndTheServerAgreeOnTheShotCounters`,
+      `HipFire_NoLongerFlies_PerfectlyFlat`, `AimedFire_AlsoClimbs`) — и это **все четыре** новых теста файла.
       ⚠ `SettledAimWithoutRecoil_DrawsNoSpread` на этом шаге ещё зелёный — бросок пока на
       месте; он краснеет на Step 8 и лечится Step 8a.
 - [ ] **Step 7 (GREEN, `Advance`):** сброс и инкременты — **точными местами**:
@@ -882,22 +897,36 @@ if (a > 0f)   // обе ветки, одно выражение
 }
 ```
 
-  ⚠ **Вырожденный случай назван и пинится тестом:** при `vel3.xy == 0` (стрельба «в пол»
-  в упор) обнуляются обе составляющие, и выстрел проходит мимо рисунка целиком. Это
-  законно; тест нужен, чтобы это не читалось как дефект.
+  ⛔ **Оговорки спеки про вырожденный случай `vel3.xy == 0` НЕТ — случая не существует**
+  (запись 11 «Отклонений»): `normalizesafe` в обеих ветках получает ненулевой fallback
+  `(1, 0)`, поэтому горизонталь не обнуляется ни при каком вводе, включая «в пол» в упор.
   ⚠ **Предшаг K9 не ломается:** `height = muzzleH + overshoot * vel3.z` задуман «walks
   the round along its OWN line»; ненулевой `vel3.z` от бедра — то, для чего строка
   написана. Высота рождения начинает гулять на ≤ 6 см стоя и до 12 см в слайде —
   состояние хешируемое, причина сдвига названа в §4.2 и уйдёт в обоснование T2.
 - [ ] **Step 8a (ЛЕКАРСТВО ТРЁМ КРАСНЫМ, БЕЗ КОТОРОГО Step 14 НЕДОСТИЖИМ):** три
-      существующих теста краснеют от Step 8, и у каждого своё лекарство.
+      существующих теста краснеют, и у каждого своё лекарство.
+      ⚠ **Краснеют они на РАЗНЫХ шагах, и это сказано, а не подразумевается** (находка
+      круга 2): `SettledAimWithoutRecoil_DrawsNoSpread` — на **Step 8**, потому что
+      бросок исчезает независимо от чисел; оба `ProjectileHeightTests` — только на
+      **Step 13**, когда пять чисел рисунка доедут до `TestConfigs` (до этого они нули,
+      и `Draw` возвращает `(0,0)`). Лечение вносится здесь для всех трёх — то есть для
+      двух последних **до** появления их красной фазы, и наблюдаемого FAIL у них не
+      будет. Это осознанно: дробить лечение по шагам ради демонстрации красного значило
+      бы оставить дерево красным на четыре шага.
       (1) **`WeaponTests.SettledAimWithoutRecoil_DrawsNoSpread`** — это **тест 2 спеки** и
       **жертва M231**. Последний ассерт (`:341`) требует, чтобы поток двигался; после
       правки он не двигается никогда. Переписывается в утверждение спеки — «ни один
-      выстрел не берёт `SpreadRng`»: второй `AreNotEqual` становится `AreEqual`, хвост
-      про «вторую очередь» уходит, имя — `NoShotEverTouchesTheSpreadStream`, дока
-      объясняет, что поток остался в мире ради прокачки (Р450) и что **сесть на путь
-      выстрела он больше не имеет права**.
+      выстрел не берёт `SpreadRng`»: `AreNotEqual` (`:341`) становится `AreEqual`, имя —
+      `NoShotEverTouchesTheSpreadStream`, дока объясняет, что поток остался в мире ради
+      прокачки (Р450) и что **сесть на путь выстрела он больше не имеет права**.
+      ⛔⛔ **ЦИКЛ ВТОРОГО ВЫСТРЕЛА И ПРЕМИССА `Assert.Greater(RecoilOffset, 0f)`
+      СОХРАНЯЮТСЯ** (находка круга 2): на ПЕРВОМ выстреле конус равен нулю (сведённый
+      прицел, отдача 0), ветка `if (a > 0f)` не исполняется **и на мутанте M231**, —
+      значит единственное место, где мутант двигает поток, это второй выстрел, у
+      которого отдача уже открыла конус. Убрать «хвост про вторую очередь» значило бы
+      оставить M231 без жертвы. Уходит только прозаическая строка доки, которая после
+      правки лжёт.
       (2) **`ProjectileHeightTests.HipShot_HorizontalAtMuzzleHeight`** и
       (3) **`…SlideFire_FromSlideMuzzleHeight`** — оба про **геометрию ствола**, а не про
       рисунок, и оба обязаны остаться про неё. Лечение — явная фикстура на месте:
@@ -964,9 +993,11 @@ if (a > 0f)   // обе ветки, одно выражение
       `Validate_SprayPitchAmplitudeAboveOne_Throws`,
       `Validate_SprayVarianceAboveOne_Throws`,
       `Validate_NegativeSprayYawTurns_Throws`,
-      `Validate_BothSprayAxesOff_Throws`, и **позитивный**
-      `ShippedSprayNumbers_PassValidation` (тест 34 — иначе противоречие чисел и правил
-      доехало бы до вехи). ⚠ Плюс граничные легальные: `SprayVariance = 1f` и
+      `Validate_BothSprayAxesOff_Throws`, ⭐ **и тест 34 — ПУНКТОМ ГЕЙТА, а не новым тестом** (поправка круга 2): существующий
+      `ConfigTests.Build_DefaultAssets_ProducesValidConfig` (`:194-200`) строит конфиг из
+      `MakeDefaults()`, то есть из C#-дефолтов, которые заход зеркалит поле в поле (Р117),
+      и падает `ArgumentException`, если любое из шести правил противоречит отгруженным
+      числам. Нового наблюдения свой тест не добавил бы — ровно как с тестом 35. ⚠ Плюс граничные легальные: `SprayVariance = 1f` и
       `SprayPitchAmplitude = 0f` **по отдельности** обязаны проходить — это откат
       правки, и правило, запрещающее его, сломало бы Р-A.
       Форма — конвенция репозитория (`ConfigTests.cs:1217-1228`, `ZoneConfigTests.cs:209-218`),
@@ -976,29 +1007,32 @@ if (a > 0f)   // обе ветки, одно выражение
 [Test]
 public void Validate_BothSprayAxesOff_Throws()   // правило 6, M263
 {
-    var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+    // ⚠ БЕЗ КВАЛИФИКАТОРА `ConfigTests.` — тесты живут В ЭТОМ ЖЕ классе, и все
+    // тридцать его площадок зовут MakeDefaults/BuildShipped напрямую.
+    // Квалифицированная форма — это форма ZoneConfigTests, того самого файла,
+    // который план объявил не тем домом (поправка круга 2).
+    var (h, w, c, g, wv, a, vis) = MakeDefaults();
     w.SprayYawTurns = 0f;
     w.SprayPitchAmplitude = 0f;
     var ex = Assert.Throws<System.ArgumentException>(
-        () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+        () => BuildShipped(h, w, c, g, wv, a, vis));
     Assert.That(ex.Message, Does.Contain("Weapon.SprayYawTurns"));
     Assert.That(ex.Message, Does.Contain("must not both be zero"));
 }
 
-[Test]
-public void TheOwnersRollbackNumbers_StayLegal()   // страховка Р-A
-{
-    // Откат — ДВА числа, и валидация обязана их пропускать: правило,
-    // запрещающее SprayVariance = 1 или SprayPitchAmplitude = 0 по
-    // отдельности, отняло бы у владельца возможность вернуть сегодняшнее
-    // поведение без правки кода.
-    var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-    w.SprayVariance = 1f;
-    Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-    var (h2, w2, c2, g2, wv2, a2, vis2) = ConfigTests.MakeDefaults();
-    w2.SprayPitchAmplitude = 0f;
-    Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h2, w2, c2, g2, wv2, a2, vis2));
-}
+// ⛔ ОТДЕЛЬНОГО ТЕСТА «ОТКАТ ЛЕГАЛЕН» НЕТ, И ЭТО КОНВЕНЦИЯ ФАЙЛА (поправка
+// круга 2): ConfigTests пинит легальную границу ВНУТРИ теста самого правила и
+// говорит зачем — «saying so pins WHICH comparison this is» (:1240-1244,
+// AmmoStart == AmmoMax). ⇒ две страховки Р-A встают туда же:
+//   * в `Validate_SprayVarianceAboveOne_Throws` — второй половиной:
+//       w.SprayVariance = 1f;
+//       Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+//           "SprayVariance = 1 — половина отката владельца, а не ошибка конфигурации");
+//   * в `Validate_BothSprayAxesOff_Throws` — там же, где две оси вместе
+//     запрещены, а одна вертикаль в нуле обязана быть законной:
+//       w.SprayPitchAmplitude = 0f;   // одна ось — легально
+//       Assert.DoesNotThrow(() => BuildShipped(h, w, c, g, wv, a, vis),
+//           "SprayPitchAmplitude = 0 — вторая половина отката владельца");
 ```
 - [ ] **Step 13 (GREEN, три рефлективных сторожа и фикстуры):**
       `HotTweakTests.ceilingByField` += `["BurstShots"] = float.PositiveInfinity` и
@@ -1042,9 +1076,9 @@ public void TheOwnersRollbackNumbers_StayLegal()   // страховка Р-A
       client/Assets/Data/WeaponConfig.asset` показывает **пять новых строк и ничего
       больше**; ⛔ **числа руками не править**.
 - [ ] **Step 17:** R-TEST полный → красных **ТРИ ЭТАЛОНА И ТОЛЬКО ОНИ** (сверять
-      **именами** тестов); `total` глазами = 1833 + 8 (`SprayPatternTests`) + 5
-      (`WeaponTests`) + 8 (`ConfigTests`: шесть правил + тест 34 + откат Р-A) =
-      **1854** — ⚠ **ориентир; исполнитель считает сам и пишет число ДО прогона**;
+      **именами** тестов); `total` глазами = 1833 + 8 (`SprayPatternTests`) + 4
+      (`WeaponTests`) + 6 (`ConfigTests`: шесть правил; тест 34 — гейт, откат Р-A —
+      ассерты внутри двух из шести) = **1851** — ⚠ **ориентир; исполнитель считает сам и пишет число ДО прогона**;
       время и `uptime` записать.
 - [ ] **Step 18:** свипы → ГЕЙТ-ФАЙЛ для двух созданных файлов → ГЕЙТ-META → R-COMMIT
       `feat(app-8dv): T1 — рисунок разброса вместо мирового ГСЧ`.
@@ -1150,8 +1184,11 @@ public void TheZoneCountersRideTheEndOfMatchMessage()   // тест 33, M268
       игнорирует зону) **и три `int` в `MatchEndedNet`** — объявлены, не заполняются
       (⚠ без последнего тест 33 не компилируется, а ошибка компиляции ≠ RED — находка
       ревью A/D). До **компиляции**; R-FILTER `HitZoneTests` → `EXIT=2`,
-      `testcasecount` = **16**, красных **ТРИ** (`HeadshotKills_NeverExceedHeadHits`
-      на нулях **зелен**: `0 <= 0` — ложный стоп предупреждён).
+      `testcasecount` = **16**, красных **ЧЕТЫРЕ**. ⚠ **Не три** (поправка круга 2):
+      оговорка «`HeadshotKills_NeverExceedHeadHits` на нулях зелен» относилась к прежней
+      фикстуре; круг 1 обязал её содержать **добивание в голову**, а `HeadshotKills` —
+      существующий счётчик, который этот таск не трогает, поэтому на заглушке он равен 1
+      против `HeadHits = 0`, и `Assert.LessOrEqual(1, 0)` падает.
 - [ ] **Step 3 (GREEN):** инкремент **внутри** `IncrementShotsHit`, `switch` по зоне;
       оба вызывающих передают `zone` (он в области видимости у обоих);
       `HashStats` += три поля после `CellsPicked`; расписка `WorldLifecycleTests`:
@@ -1199,10 +1236,16 @@ public void TheZoneCountersRideTheEndOfMatchMessage()   // тест 33, M268
 - [ ] **Step 1:** R-TEST полный **до** перепина; три `But was: <N>` — разбором xml
       питоном, **не грепом**; записать старые и новые значения парами.
 - [ ] **Step 2 (R-GOLDEN):** три hex + **десятичные дубли** + письменное обоснование,
-      называющее **шесть** причин выше. ⚠ Проверить, что
-      `GoldenScenario_ExercisesAllMechanics_Coverage` покрывает рисунок: если сценарий
-      не стреляет очередями достаточной длины, перепин зафиксирует число, которое
-      рисунка не охраняет, — тогда покрытие **расширяется ПЕРЕД снятием чисел**.
+      называющее **шесть** причин выше.
+      ⚠⚠ **И сторож покрытия правится ПЕРЕД снятием чисел** (находка круга 2):
+      `GoldenScenario_ExercisesAllMechanics_Coverage` определяет «в сценарии был
+      прицельный выстрел» как `if (round.VelZ != 0f) anyAimedProjectileFired = true;`
+      (`DeterminismTests.cs:1890`). После T1 **любой** бедровый выстрел несёт ненулевой
+      `VelZ`, и флаг становится истинным тавтологически — ровно то, что план ловит у
+      `SpreadDrawDoesNotShiftWaves`. Признак переписывается на порог рисунка
+      (`|VelZ| > ProjectileSpeed * tan(cone * SprayPitchAmplitude)`) либо на само
+      условие прицела, и правка идёт **до** перепина: иначе он фиксирует число, которое
+      охраняет меньше, чем говорит его собственная дока.
 - [ ] **Step 3:** R-TEST полный → **красных НОЛЬ**; `total` глазами; время и `uptime` —
       в отчёт.
 - [ ] **Step 4:** снять **новый** md5 `DeterminismTests.cs` и записать в отчёт
@@ -1280,15 +1323,32 @@ public readonly struct ShotSolution
 {
     public readonly float2 SpawnPos;
     public readonly float Height;
-    public readonly float2 Vel;      // горизонтальная пара, уже с рисунком
+    /// ⭐ НАПРАВЛЕНИЕ И СКОРОСТЬ ПОРОЗНЬ, А НЕ ОДНИМ `float2 Vel` (находка
+    /// круга 2): ровно эту форму принимает боевой сток
+    /// `TracerProjectiles.TrySpawn(…, float2 dir, float horizSpeed, float velZ, …)`
+    /// (`:379-383`), и ровно так же устроен провод — `SnapshotEventPayload`
+    /// несёт `Dir`/`HorizSpeed`/`VelZ` порознь, а `RouteToTracers` передаёт
+    /// их БЕЗ ЕДИНОГО ВЫРАЖЕНИЯ. Хранить произведение значило бы заставить
+    /// бэкенд писать `normalizesafe`/`length` на месте — то есть завести
+    /// вторую бессвидетельную арифметическую строку в приватном методе,
+    /// против которого там же стоит рулинг 306 («an expression written HERE
+    /// would be the second seam in this task with no witness at all»).
+    /// Серверный сток берёт `dir * horizSpeed` там, где сегодня уже стоит
+    /// `vel3.xy`, — одно умножение в тестируемом `Ring.Simulation`.
+    public readonly float2 Dir;
+    public readonly float HorizSpeed;
     public readonly float VelZ;
-    public readonly float ConeRadians;
-    public readonly int PictureTicks, InputTicks, BirthSteps;
+    public readonly int PictureTicks, InputTicks;
+    /// ⚠ ВЫЧИСЛЯЕМОЕ, А НЕ ХРАНИМОЕ (находка круга 2, рулинг 291): догоняющие
+    /// шаги плюс один обычный шаг тика рождения. Два поля рядом были бы
+    /// «одним числом с двумя домами» внутри одной структуры, а так они
+    /// физически не могут разойтись.
+    public int BirthSteps => InputTicks + 1;
 
     /// readonly-поля заполняются только конструктором — иначе структуру
     /// нечем построить (находка ревью A).
-    public ShotSolution(float2 spawnPos, float height, float2 vel, float velZ,
-        float coneRadians, int pictureTicks, int inputTicks, int birthSteps);
+    public ShotSolution(float2 spawnPos, float height, float2 dir, float horizSpeed,
+        float velZ, int pictureTicks, int inputTicks);
 }
 
 public static ShotSolution Solve(in PlayerState p, in SimInput input, in SimConfig cfg,
@@ -1314,7 +1374,7 @@ public void Solve_ReproducesTheAngleTheWorldFires()   // сторож тожде
     // FireAimed3D/IdleTicks/RelocatePlayerForTest.
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
-    SimInput fire = TestWorlds.HipFire(in cfg);
+    SimInput fire = TestWorlds.HipFire();
     w.ClearEvents();
     // ⚠ Состояние берётся ДО тика намеренно — Solve обязан отвечать на то же
     // состояние, из которого стреляет мир. Посев при этом читает input.AimPoint
@@ -1332,16 +1392,21 @@ public void Solve_ReproducesTheAngleTheWorldFires()   // сторож тожде
     // ошибка в один такт означала бы 1.75 м расхождения.
     ShotSolution s = ShotGeometry.Solve(in before, in fire, in cfg,
         overshoot: SimulationWorld.TickDt);
-    Assert.AreEqual(shot.Amount, math.atan2(s.Vel.y, s.Vel.x), 1e-5f,
+    Assert.AreEqual(shot.Amount, math.atan2(s.Dir.y, s.Dir.x), 1e-5f,
         "перенос геометрии изменил угол — он обязан быть дословным");
 
-    // ⭐ И ТОЧКА ВЫЛЕТА, А НЕ ТОЛЬКО УГОЛ: без этих трёх ассертов мутация
-    // M270 (предшаг K9 до рисунка вместо после) выживает — она направление
-    // не трогает вовсе, она двигает начало.
-    ProjectileState born = w.GetProjectileForTest(0);
-    Assert.AreEqual(born.Pos.x, s.SpawnPos.x, 1e-4f, "точка вылета уехала по X");
-    Assert.AreEqual(born.Pos.y, s.SpawnPos.y, 1e-4f, "точка вылета уехала по Y");
-    Assert.AreEqual(born.Height, s.Height, 1e-4f, "высота вылета уехала");
+    // ⭐ И ТОЧКА ВЫЛЕТА, А НЕ ТОЛЬКО УГОЛ: без неё мутация M270 (предшаг K9
+    // до рисунка вместо после) выживает — она направление не трогает вовсе,
+    // она двигает начало.
+    // ⛔⛔ ТОЧКА БЕРЁТСЯ ИЗ СОБЫТИЯ, А НЕ ИЗ ТЕЛА СНАРЯДА (находка круга 2):
+    // событие несёт ДУЛО — «the birth event reports the MUZZLE, which is a
+    // pre-step point, while every body a client receives is an end-of-tick
+    // state» (RewindTests.cs:918-925), а к концу тика снаряд уже прошёл свой
+    // обычный шаг. Сверка с `w.GetProjectileForTest(0).Pos` разошлась бы на
+    // ProjectileSpeed * TickDt = 1.167 м при допуске 1e-4 — то есть тест был
+    // бы красен на верном коде.
+    Assert.AreEqual(shot.Pos.x, s.SpawnPos.x, 1e-4f, "точка вылета уехала по X");
+    Assert.AreEqual(shot.Pos.y, s.SpawnPos.y, 1e-4f, "точка вылета уехала по Y");
 }
 
 [Test]
@@ -1350,7 +1415,7 @@ public void Solve_SplitsTheRewindDepthOnce()   // рулинг 291
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
     var p = w.Player;
-    SimInput fire = TestWorlds.HipFire(in cfg);
+    SimInput fire = TestWorlds.HipFire();
     // Премисса — СВОЙСТВО, не литерал; каст обязателен: RewindTicks — byte,
     // RewindCapTicks — int (тот же приём, что в SimInputSanitizer.cs:60).
     fire.RewindTicks = (byte)cfg.Arena.RewindCapTicks;
@@ -1408,14 +1473,14 @@ public void AimRadians_CarriesNoMovementMultiplier()   // Р469
       `SpawnPos`/`Height`. На фикстуре с `overshoot = TickDt` расхождение равно
       `overshoot × horizSpeed × sin(yaw)`; ассерты сравнивают `s.SpawnPos`/`s.Height` с
       `w.GetProjectileForTest(0)` того же выстрела.
-      **M271** — `BirthSteps` считать как `InputTicks` (без `+1`, то есть уронить
-      обычный шаг тика рождения). Жертва — `Solve_SplitsTheRewindDepthOnce`, ассерт
-      `AreEqual(s.InputTicks + 1, s.BirthSteps)`. ⛔ **Прежняя форма («второй вызов
-      `RewindSplit` от необрезанного `k`») поведения не меняла вовсе:** `Sanitize`
-      клампит `RewindTicks` до `RewindCapTicks` ещё до `Step`, поэтому «необрезанного
-      `k`» внутри `Solve` не существует, и мутант был бы неотличим.
-- [ ] **Step 7:** R-TEST полный → **красных НОЛЬ**; `total` = 1855 + 3 = **1858**
-      (ориентир).
+      **M271** ⛔ **СНЯТА КРУГОМ 2 — её ветки больше нет.** `BirthSteps` стал
+      вычисляемым свойством `InputTicks + 1` (рулинг 291), то есть «уронить `+1`» —
+      это уже не ослабление ветки, а правка формулы в одном-единственном месте, и
+      разойтись двум числам физически негде. В таблице мутаций её место занимает
+      запись «закрыта по построению», как у теста 35.
+      ⚠ Прежняя её форма («второй вызов `RewindSplit` от необрезанного `k`») была
+      отменена ещё кругом 1: `Sanitize` клампит заявку до `Step`, и мутант был неотличим.
+- [ ] **Step 7:** R-TEST полный → **красных НОЛЬ**; `total` = 1855 + 3 = **1858** (ориентир).
 - [ ] **Step 8:** свипы → ГЕЙТ-ФАЙЛ → R-COMMIT
       `refactor(app-8dv): T3 — ShotGeometry и Spread.AimRadians, перенос дословный`.
 
@@ -1443,9 +1508,11 @@ public void AimRadians_CarriesNoMovementMultiplier()   // Р469
   ⚠ **и числа в её собственной доке**: «eight seams», «FIVE OF THE EIGHT», «the seventh»
   становятся десятью)
 - Create: `client/Assets/Scripts/Networking/Client/SpawnedShotKeys.cs` (+ `.meta`)
-- Modify: `client/Assets/Tests/EditMode/MatchLifecycleTests.cs` (два новых шва),
+- Modify: `client/Assets/Tests/EditMode/MatchLifecycleTests.cs` (два новых шва **и
+  одиннадцать площадок конструктора `ClientMatchReset`**),
   `PredictionParityTests.cs`, `ReconcileCodecTests.cs`, `BodyCollisionTests.cs`
-  (шесть тестовых площадок `Step`)
+  (⚠ **два инвентаря сразу**: восемь площадок `PlayerPrediction.Step` и **девять**
+  площадок `PlayerPredictionCore.Predict`, растущего третьим параметром — тиком)
 
 **Interfaces:**
 
@@ -1513,29 +1580,52 @@ public readonly struct PredictedShot
     public PredictedShot(int key, uint localTick, in ShotSolution solution);
 }
 
-// Networking/Client/SpawnedShotKeys.cs — граница УЖЕ РОЖДЁННЫХ ключей.
+// Networking/Client/SpawnedShotKeys.cs — что УЖЕ РОЖДЕНО.
 /// ⛔ NOT the same bookkeeping the latch keeps (spec §3.5, finding C2₃): this
-/// one answers "has a TRAIL been born for this shot" and is written by the
-/// backend AFTER the tick; the latch's answers "has the ACT been shown" and
-/// is written in the frame BEFORE it. One home would mean a muzzle grant
-/// marks a shot before the log has recorded it -- and the predicted trail
-/// would then never appear at all.
+/// one answers "has a TRAIL been born" and is written by the backend AFTER
+/// the tick; the latch's answers "has the ACT been shown" and is written in
+/// the frame BEFORE it. One home would mean a muzzle grant marks a shot
+/// before the log has recorded it -- and the predicted trail would then never
+/// appear at all.
 ///
-/// ⭐ ОДНО ЧИСЛО, А НЕ КОЛЬЦО, И ЭТО УПРОЩЕНИЕ ПРОТИВ СПЕКИ §3.4 (находка
-/// ревью C, запись 7 «Отклонений»). Ключи монотонны в пределах прямого
-/// прогона по построению, поэтому «рождён ли уже» — это сравнение с
-/// границей, а откат реконсиляции — её опускание. Кольцо отвечало бы на тот
-/// же вопрос дороже и принесло бы собственный вопрос о ёмкости, который
-/// спека и разбирает на стресс-кейсе FireInterval 0.01; у границы его нет
-/// вовсе. ⚠ Отброшенный сверх кадрового кэпа выстрел границу НЕ двигает —
-/// он родится следующим кадром.
+/// ⛔⛔ КЛЮЧ ДЕДУПА — ТИК FISHNET, А НЕ `ShotOrdinal`, И ЭТО ОТМЕНЯЕТ ШОВ
+/// `BeginReconcile` ИЗ СПЕКИ §3.4 (запись 9 «Отклонений»; находка круга 2,
+/// проверена по коду лично). Механизм спеки — «ключ = ShotOrdinal» плюс
+/// «BeginReconcile вычищает всё выше авторитетного ординала» — даёт ДУБЛЬ
+/// СЛЕДА НА КАЖДОЙ РЕКОНСИЛЯЦИИ, то есть примерно тридцать раз в секунду:
+///   * `[Reconcile]` приходит на КАЖДЫЙ стейт-пакет, а не только при
+///     мисспредикте (`PlayerNetworkController.cs:278-282`);
+///   * авторитетный `ShotOrdinal` — это ординал на СЕРВЕРНОМ тике, который
+///     отстаёт от предсказанного на глубину предсказания, поэтому вычистка
+///     «всё выше авторитетного» штатно опускает границу ниже ключей уже
+///     РОЖДЁННЫХ следов;
+///   * реплей на клиенте-владельце снова идёт в `Predict`
+///     (`RouteReplicate`: `isOwner ? PredictLocally : Ignore`, `:477-483`) и
+///     переписывает те же ключи в журнал;
+///   * гард дубля у трассера промахивается, потому что каждый новый гост
+///     получает НОВЫЙ ghost-id (`_nextGhostId--`, `GhostProjectiles.cs:270`).
+/// Спека смешала «рождён авторитетно» с «след уже нарисован»: ключ, которого
+/// сервер ещё не выдавал, действительно не рождён авторитетно — но он уже
+/// нарисован предсказанием, и это единственное, что здесь важно.
+///
+/// ⭐ ТИК ПОДХОДИТ ТОЧНО, И ФОРМА ВЗЯТА У СОСЕДА. `TimeManager.LocalTick`
+/// монотонен для процесса (в отличие от `ShotOrdinal`, который
+/// `BeginReconcile` шагает назад), а реплей переигрывает ТЕ ЖЕ тики — значит
+/// повтор отбрасывается по построению, а выстрел, переехавший коррекцией на
+/// другой тик, рождается как новый. Форма — дословно `EventDedup.TryAcceptState`
+/// (`EventDedup.cs:169-176`), high-water-mark на тик; вторая половина пары
+/// нужна для стресс-кейса «два выстрела за тик» (`FireInterval 0.01`), и
+/// сравнение идёт лексикографически по паре.
+///
+/// ⚠ ФЛАГА `_hasApplied`, КОТОРЫЙ ВЫНУЖДЕН ДЕРЖАТЬ СОСЕД, ЗДЕСЬ НЕ НУЖНО: у
+/// него тик 0 легален, а здесь запись с тиком 0 недостижима -- журнал пишет
+/// только под тиком, который `Predict` получил от `PerformReplicate`.
 public sealed class SpawnedShotKeys
 {
-    /// false = этот ключ уже рождён (повтор реплея).
-    public bool TryClaim(int key);
-    /// Шов BeginReconcile: ключи выше авторитетного заведомо не рождены
-    /// авторитетно, и после отката их обязано быть можно родить заново.
-    public void DropAbove(int authoritativeOrdinal);
+    /// false = эта запись уже рождала след (повтор реплея).
+    /// `seqInTick` — порядковый номер записи с этим тиком, 0-based: цикл
+    /// `while` в `Advance` умеет выстрелить дважды за тик.
+    public bool TryClaim(uint localTick, int seqInTick);
     public void Reset();
 }
 
@@ -1610,9 +1700,14 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
     // запись обязана нести конус, BurstShots и overshoot ТОГО МОМЕНТА, а не
     // пост-тикового состояния.
     ...
-    Assert.AreEqual(serverShot.Pos.x, record.SpawnPos.x, 1e-5f);
+    // ⭐⭐ ЭТО И ЕСТЬ СВИДЕТЕЛЬ ПУНКТА DoD «клиент и сервер дают ОДИН угол»
+    // (переехал сюда из T1 — там он неисполним, см. доку теста 10). Запись
+    // рождается ВНУТРИ того же тика, поэтому несёт ровно тот конус, из
+    // которого стрелял мир: и распад отдачи, и BurstShots, и overshoot.
+    Assert.AreEqual(serverShot.Pos.x, record.Solution.SpawnPos.x, 1e-5f);
     Assert.AreEqual(math.atan2(serverVel.y, serverVel.x),
-        math.atan2(record.Vel.y, record.Vel.x), 1e-5f);
+        math.atan2(record.Solution.Dir.y, record.Solution.Dir.x), 1e-5f,
+        "клиент и сервер разошлись в угле — посев, конус или overshoot считаются по-разному");
 }
 ```
 
@@ -1636,6 +1731,11 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
       ⚠ **Оба вызывающих `Advance` тоже правятся здесь:** `Update` передаёт `null`
       явно, `AdvanceNoSpawn` получает свой параметр журнала — тоже **без умолчания**,
       иначе клиентский путь молча остался бы без стока.
+      ⚠⚠ **И `Predict` растёт ТРЕТЬИМ параметром (тик), а это ещё ДЕВЯТЬ площадок**
+      (находка круга 2, сверено грепом): одна боевая (`PlayerNetworkController.cs:275`)
+      и восемь тестовых — `ReconcileCodecTests` ×7 (`:453, :597, :607, :618, :636,
+      :755, :770, :787`) и `BodyCollisionTests` ×1 (`:542`). Оба файла — в Files таска.
+      ⛔ Без этого таск не компилируется, а `error CS` красной фазой не является.
       ⚠ **Разница дисциплин названа:** у латча (T6) параметры **опциональны**, потому
       что там умолчание означает «сегодняшнее поведение» для четырёх живых вызывающих;
       здесь умолчание означало бы «этот клиент не предсказывает свои выстрелы» — тихую
@@ -1650,13 +1750,18 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
       `EnsureController` отдаёт оба новым швом `AttachShotLog(log, keys)` — **отдельным
       от `Configure`**, потому что `Configure` зовёт и `MatchServer` (`:765`), а серверу
       журнал не нужен и не должен существовать.
-- [ ] **Step 7 (GREEN, откат ординала):** `BeginReconcile` получает свой шов:
-      `keys?.DropAbove(authoritativeState.ShotOrdinal)`.
-      ⛔ **Самая опасная находка круга 3 (C1₃):** `BeginReconcile` кладёт
-      `_predicted = authoritativeState` **целиком**, поэтому `ShotOrdinal` шагает
-      **назад** тем же механизмом, что `Ammo`. Наивный дедуп «ключ уже рождён» после
-      отката отбросил бы **настоящие** выстрелы реплея — до секунды беззвучной стрельбы.
-      Ключи, которых сервер ещё не выдавал, заведомо не рождены авторитетно.
+- [ ] **Step 7 (⛔ ШОВ `BeginReconcile` НЕ ЗАВОДИТСЯ — И ЭТО ПРАВКА МЕХАНИЗМА СПЕКИ):**
+      спека §3.4 (находка C1₃) требует вычищать из кольца всё, что выше авторитетного
+      `ShotOrdinal`, потому что «наивный дедуп после отката отбросил бы настоящие выстрелы
+      реплея». ⛔ **С дедупом по тику проблемы, ради которой шов вводился, не существует, а
+      сам шов даёт дубль следа на каждой реконсиляции** — разбор в доке `SpawnedShotKeys`
+      выше, проверено по коду лично. ⇒ `BeginReconcile` не трогается вовсе, `DropAbove`
+      не заводится, **мутация M272 снимается** (её ветки больше нет).
+      ⚠ **Цена названа честно:** выстрел, который коррекция ПЕРЕНЕСЛА на другой тик,
+      родит второй след — первый к тому моменту уже нарисован и протухнет за 400 мс, не
+      найдя подтверждения. Это ровно риск **Р-C** («один неверно опознанный след,
+      самоисправляется»), уже принятый спекой §8, и он платится **только на настоящем
+      мисспредикте огня**, а не на каждом пакете.
 - [ ] **Step 8 (GREEN, пер-матчевые швы):** `ClientMatchReset` += `_shotLog.Reset()` и
       `_spawnedKeys.Reset()`; **числа в её доке становятся десятью**; в
       `MatchLifecycleTests` — два новых теста по образцу восьми существующих
@@ -1664,8 +1769,8 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
       ⚠ **Конструктор растёт с восьми параметров до десяти, и это ОДИННАДЦАТЬ площадок**
       (находка ревью A, сверено грепом): одна боевая (`NetworkSimBackend.cs:1900`) и
       десять в `MatchLifecycleTests` (`:697, :700, :703, :706, :709, :713, :718, :731,
-      :736, :960`), из которых девять — рукописные гарды `ArgumentNullException` по
-      одному параметру. Оба новых параметра получают **свой гард и свою строку в
+      :736, :960`), из которых **восемь** — рукописные гарды `ArgumentNullException` по
+      одному параметру (по числу сегодняшних параметров; `:736` и `:960` — другое). Оба новых параметра получают **свой гард и свою строку в
       гард-тесте** — он рукописный, красного не даст, а дыру оставит.
       ⚠ Дока класса требует этого дословно: «A NEW PER-MATCH SEAM MUST THEREFORE BE
       ADDED IN TWO PLACES — here, and in `MatchLifecycleTests`».
@@ -1673,9 +1778,10 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
       `MatchLifecycleTests` → PASS; R-FILTER `PredictionParityTests` → PASS;
       R-FILTER `ReconcileCodecTests` → PASS; R-FILTER `BodyCollisionTests` → PASS.
 - [ ] **Step 10 (мутации M244, M245, M246, плюс НОВАЯ M272; предсказания ДО прогона):**
-      **M272** — `BeginReconcile` не чистит кольцо ключей → жертва: новый тест
-      «после отката ординала выстрел реплея рождает след» (иначе эта ветка осталась бы
-      без свидетеля вовсе).
+      **M272** 🆕 (переформулирована кругом 2) — `TryClaim` сравнивает **только тик**,
+      игнорируя `seqInTick` → жертва: тест «два выстрела в одном тике рождают два следа»
+      (стресс-фикстура `FireInterval 0.01`). ⛔ Прежняя форма («`BeginReconcile` не чистит
+      кольцо») отменена вместе со швом.
 - [ ] **Step 11:** R-TEST полный → **красных НОЛЬ**; `total` = 1858 + **10** = **1868**
       (ориентир; таск добавляет пять тестов типа, два теста стока, два шва
       `MatchLifecycleTests` и один свидетель отката ординала — считает исполнитель).
@@ -1686,367 +1792,25 @@ public void TheRecordCarriesThePreShotConeAndOvershoot()   // тест 14, M245
 - R-TEST: красных ноль; эталоны зелёные (⛔ **любой красный — стоп**, санкции нет).
 - Журнал имеет боевого писателя; читателя ему даст T5 — и это записано, а не забыто.
 - Швов в `ClientMatchReset` **десять**, у каждого свой тест.
-- Мутации фазы: две (T3) + четыре (T4) — **шесть**; предсказания сверены.
+- Мутации фазы: одна (T3 — M270; M271 снята как закрытая по построению) + четыре (T4) — **пять**; предсказания сверены.
 - Два ревьюера на таск; `bd note`; push; jsonl-chore.
 
 ---
 
-## Фаза Ф-C — картинка своего выстрела (T5 → T6 → T7)
+## Фаза Ф-C — картинка своего выстрела (T7 → T5 → T6)
 
 Цель фазы — **всё, что клиент теперь знает о своём выстреле, доходит до экрана**: след
 из ствола, вспышка и звук на каждом выстреле очереди, и картинка на той же глубине,
 по которой судит сервер.
 
-### Task T5: предсказанный след
-
-⛔ **ВТОРОГО МЕХАНИЗМА ОЧЕРЕДИ НЕ СТРОИТЬ** — `GhostProjectiles` уже реализует ровно
-нужное (кольцевой FIFO неподтверждённых, `Confirm` гасит старейшее, окно
-`GhostConfirmTicks`, чистка по возрасту, прибор `UnconfirmedGhosts`) и покрыт
-семнадцатью тестами. Он не подключён, и это единственное, что с ним не так.
-
-**Files:**
-- Modify: `client/Assets/Scripts/Networking/Client/GhostProjectiles.cs` (безгейтовый вход;
-  `TrySpawnFromPrediction` `:263` → `internal`; `TryConfirm` рядом с `Confirm` `:309`)
-- Modify: `client/Assets/Scripts/Networking/Client/TracerProjectiles.cs` (второй ключ
-  `ServerId` + сентинел; `Adopt`; `IndexOf` `:993` по обоим ключам)
-- Create: `client/Assets/Scripts/Networking/Client/OwnShotRouting.cs` (+ `.meta`),
-  `client/Assets/Tests/EditMode/OwnShotRoutingTests.cs` (+ `.meta`)
-- Modify: `client/Assets/Scripts/PresentationNet/NetworkSimBackend.cs` (вычерпывание
-  журнала **над** веткой рендер-пары; `RouteToGhosts` `:2946-2963`; `RouteToTracers`
-  `:2997`; потребитель протухших id `:1588`)
-- Modify: `client/Assets/Scripts/Networking/NetStats.cs` (счётчик отброшенных),
-  `client/Assets/Scripts/Presentation/NetDiagnostics.cs`,
-  `client/Assets/Scripts/Presentation/DevOverlay.cs` (`:293`)
-- Modify: `client/Assets/Tests/EditMode/GhostProjectileTests.cs` (17 существующих + новые),
-  `TracerFlightTests.cs`, `AllocationTests.cs`
-
-**Interfaces:**
-
-```csharp
-// GhostProjectiles.cs
-/// Безгейтовый вход: выстрел УЖЕ состоялся, гейт не нужен и вреден.
-/// ⛔ Старый TrySpawnFromPrediction сохраняется и становится `internal`
-/// (находка I3₃): боевого вызывающего у него нет и не будет, а публичным он
-/// был бы заряженным ружьём — "всегда false после выстрела". Три фикстуры
-/// Ghost_SpawnGateIsWouldFireThisTick остаются зелёными,
-/// InternalsVisibleTo("Ring.Simulation.Tests") уже есть.
-public bool TrySpawnPredictedShot(uint predictedTick, out int ghostId);
-
-/// ⚠ НОВЫЙ ЧЛЕН РЯДОМ СО СТАРЫМ, а не смена сигнатуры Confirm (находка I2₃):
-/// `.Confirm(` вызывается в тестах 22 раза, все с именованными аргументами,
-/// и out-параметр сломал бы каждый — а ошибка компиляции не RED. Confirm
-/// остаётся тонкой обёрткой над этим.
-public bool TryConfirm(int serverId, uint tick, out int ghostId);
-
-// TracerProjectiles.cs
-/// ВТОРОЙ КЛЮЧ и его сентинел. Треки зануляются `= default`, поэтому
-/// неусыновлённый след нёс бы ServerId == 0 -- а ноль ЛЕГАЛЕН на проводе
-/// (id усекается до u16, снаряд 65536 приезжает как 0).
-///
-/// ⛔⛔ И ОН НЕ МОЖЕТ БЫТЬ −1 (находка ревью A, проверена по коду): первичный
-/// ключ трека — ghost-id, а `GhostProjectiles.FirstGhostId` РАВЕН −1
-/// (`:177`), то есть самый первый предсказанный след носит ровно это число.
-/// `IndexOf`, ищущий по обоим ключам, нашёл бы по −1 и его, и любой ещё не
-/// усыновлённый трек. Домены обязаны не пересекаться:
-const int NoServerId = int.MinValue;
-
-/// ⛔ ПИШЕТ ТОЛЬКО КЛЮЧ (находки B-C1₂/D-C3₂, рулинг 325): переносить
-/// серверную геометрию рождения нельзя -- пере-засев birth-половины
-/// телепортировал бы след назад к дулу, то есть ровно тот артефакт, который
-/// запрещает Р67.
-public bool Adopt(int ghostId, int serverId);
-```
-
-⚠ **ПОЧЕМУ ВТОРОЙ КЛЮЧ У ТРАССЕРА, А НЕ ПЕРЕВОД ЧЕРЕЗ `GhostProjectiles`** (вопрос
-ревьюера C; решение принято спекой — Р453, рулинги 320/321 — и вот его основание по
-коду). Пара «ghost-id ↔ server-id» у госта живёт ровно столько, сколько живёт САМ гост:
-`TryTranslateEnd` освобождает слот на `ProjectileEnded` (`:329-343`), а `Advance`
-освобождает подтверждённые по `maxTrackTicks` (`:394-398`). След живёт по своим
-правилам — до `EndTick`, а при потерянном конце ещё `LostEndSlackTicks` сверх TTL
-(`TracerProjectiles.cs:269`). Связать поиск следа с чужим жизненным циклом значит
-отдать право потерять ключ объекту, у которого свой календарь. Второй ключ у трассера
-делает след самодостаточным, и `IndexOf` уже читают пятеро.
-
-⚠ **Коллизия ghost-id и server-id невозможна:** `FirstGhostId = -1`, счётчик идёт вниз;
-серверные id — `u16`, всегда ≥ 0 (проверено в файле, `:171`/`:177`). ⛔ **Но это не
-покрывает третье число — сентинел**, и именно поэтому он `int.MinValue`, а не −1
-(см. блок Interfaces выше). Дополнительная страховка в самом `IndexOf`: сравнение по
-второму ключу выполняется **только когда `_live[i].ServerId != NoServerId`**.
-
-⚠ **И существующий сентинел не дублируется** (находка ревью C): `GhostProjectiles`
-держит свой `const int NoServerId = -1` приватно и по своему поводу (там это «гост ещё
-не подтверждён»). Два одинаковых имени с разными значениями в одном namespace —
-приглашение к ошибке, поэтому у трассера константа называется **`NoAdoptedServerId`**, и
-её дока называет соседку и объясняет, чем они отличаются.
-
-⚠ **`IndexOf` ищет по обоим ключам, и читают его ПЯТЕРО:** `TrySpawn` (гард дубля),
-`Retire`, `OnRicochet`, `TryGetOwner` — и `RestoreShooter` через `TryGetOwner`.
-
-**Жизненный цикл — первичный id не меняется никогда** (Р67, рулинг 320):
-
-| Событие | Что делает бэкенд |
-|---|---|
-| запись журнала с новым ключом | `TrySpawnPredictedShot(spawnTick, out ghostId)` → `_tracers.TrySpawn(ghostId, spawnTick, …)` |
-| `ProjectileSpawned`, свой | `TryConfirm(p.Id, tick, out ghostId)` → `_tracers.Adopt(ghostId, p.Id)`; второй след не рождается |
-| ⚠ `TryConfirm` **отказал** (дубль или пустая очередь — гост протух за 400 мс либо не родился) | **обычный `TrySpawn(p.Id, …)`, как сегодня** — иначе свой выстрел остался бы вообще без следа |
-| `ProjectileRicocheted` / `ProjectileEnded`, свой | находятся по **второму ключу** `ServerId` |
-| гост протух | `Advance` уже возвращает протухшие id — у них появляется потребитель: `_tracers.Retire(ghostId, …)` |
-
-**Перевод доменов — формулой, а не словами** (находка C4₃). Запись рождается в
-`PerformReplicate`, где есть только тик FishNet; трассеру нужен мировой. Домены
-несвязаны (Н-11; `MatchServer` носит шрам вычитания одного из другого), поэтому
-переводится **дельта**:
-
-```csharp
-// int − uint в C# даёт long, а uint-вычитание оборачивается, если запись
-// пришла из будущего относительно текущего LocalTick (реплей). Оба края
-// закрыты явно — формула, а не намерение:
-long age = (long)_nm.TimeManager.LocalTick - record.LocalTick;   // ≥ 0 в прямом прогоне
-if (age < 0) age = 0;                                            // запись «из будущего» реплея
-int spawnTick = predictedTick - (int)age;
-```
-
-Дельта берётся **на момент вычерпывания** — отсюда требование вычерпывать до `WriteInto`.
-Без формулы все записи кадра получили бы один тик рождения, и точность, ради которой
-закрывали `overshoot` (1.75 м), потерялась бы на 1–3 тиках (1.75–5 м).
-⚠ **Госту — `TimeManager.LocalTick`** (его домен, Р67); трассеру — `spawnTick` выше.
-
-**Где вычерпывается — названо строкой кода, и первая редакция плана называла её
-противоречиво** (находки ревью A-C5 и C-M7, проверено лично): сегодня
-`int predictedTick = renderTick + _rewindDepth;` стоит **ВНУТРИ** ветки
-`if (ResolveRenderPair(renderTick))` (`NetworkSimBackend.cs:1518` → `:1543`), там же
-`StepTo` (`:1554`) и оба `WriteInto` (`:1559-1560`). Требования «безусловно» и «сразу
-после `StepTo`» одновременно неисполнимы.
-
-⇒ **Порядок кадра после правки, три строки:**
-
-```csharp
-// БЫЛО: predictedTick объявлялся внутри ветки. СТАЛО: он поднимается над ней —
-// его нужны ДВА потребителя, и один из них обязан работать на кадре без пары.
-int predictedTick = renderTick + _drawDepth;          // выше строки 1518
-DrainPredictedShots(predictedTick);                   // БЕЗУСЛОВНО, до ветки
-if (ResolveRenderPair(renderTick))                    // дальше как сегодня
-{
-    …
-    _tracers.StepTo(predictedTick);                   // следы, рождённые выше,
-    _prev.ProjectileCount = _tracers.WriteInto(…);    // попадают в ЭТОТ же кадр
-    _curr.ProjectileCount = _tracers.WriteInto(…);
-    _tracers.Prune(predictedTick);
-}
-```
-
-⛔ **Внутрь ветки вычерпывание класть нельзя:** ровно оттуда был вынесен `BlendOwnPlayer`
-(`app-5fh`/`app-0t6`) с письменным обоснованием — «замораживать собственное предсказание
-клиента вместе с чужой картинкой есть противоположность тому, зачем предсказание
-существует». Дыра в кольце снимков означала бы, что свои выстрелы не рождаются, а при
-закрытии дыры вываливаются пачкой в кадровый кэп.
-
-- [ ] **Step 1 (RED, реестры):** тесты 15–22 — в `GhostProjectileTests` и
-      `TracerFlightTests`: повтор реплея не рождает второго следа; кэп рождений за кадр
-      соблюдён и излишек отброшен со счётчиком; свой `ProjectileSpawned` подтверждает и
-      не рождает второго следа; отказ `TryConfirm` роняет рождение на обычный путь;
-      `Adopt` проставляет второй ключ и **не трогает первичный id**; неусыновлённый след
-      не находится по серверному коду **0**; гард дубля в `TrySpawn` видит занятый
-      серверный код; протухший гост снимает свой след **за 400 мс, а не за 1.77 с**.
-- [ ] **Step 2:** заглушки до компиляции; R-FILTER `GhostProjectileTests` → `EXIT=2`,
-      `testcasecount` = **17 + новые**, красных — по счёту ассертов исполнителем.
-- [ ] **Step 3 (GREEN, `GhostProjectiles`):** безгейтовый вход; старый член →
-      `internal`; `TryConfirm` + обёртка `Confirm`.
-      ⚠ **Шапка класса правится здесь же — это работа таска.** Сегодня она утверждает
-      «THE SPAWN GATE IS `WeaponSystem.WouldFireThisTick`» (`:30`) и «NO FLIGHT MATH
-      LIVES HERE… geometry (position, velocity, the aim/spread draw `WeaponSystem.
-      SpawnShot` owns) is Ф9's job» (`:19-24`). После этого таска гейт остаётся правдой
-      **только для старого internal-члена**, а геометрия приходит готовой из журнала —
-      и класс по-прежнему её не считает, что и надо сказать прямо, вместо утверждения,
-      которое читается как запрет на сделанное.
-      ⚠ **У безгейтового входа обязан быть свой свидетель отсутствия аллокаций**
-      (находка M1₃): существующий `GhostProjectiles_HotPathDoesNotAllocateGC` (`:367`)
-      пинает **старый** член — новый получает свою строку в том же тесте.
-- [ ] **Step 4 (GREEN, `TracerProjectiles`):** поле `ServerId` в `Track`; сентинел
-      `NoServerId` — **в инициализаторе `TrySpawn` и в списке сбрасываемых полей**
-      (`Reset`/`Prune` зануляют `= default`, поэтому забытый сентинел молча станет нулём);
-      `Adopt`; `IndexOf` по обоим ключам.
-- [ ] **Step 5 (GREEN, маршрутизация как ЗНАЧЕНИЕ, а не как четыре предиката):**
-      ⛔ **Пять мутаций живут на пути, который EditMode не достаёт** (находка C3₃): M248,
-      M249, M253, M260 и половина M246 бьют в приватные строки `NetworkSimBackend`.
-      ⚠ **Первая редакция плана выносила четыре булевых предиката, и три из них были
-      тавтологиями** (находки ревью C-I4/D-I9/B-8): `SpawnsTracerForOwnShot(bool confirmed)`
-      возвращает свой же аргумент, тест на него — `f(x) == f(x)`, а решение остаётся
-      жить в `if` на площадке, куда мутация и бьёт. Честная форма — **одно решение
-      значением**, по образцу `MatchEndPolicy.Evaluate` и `SpectatePolicy.ShouldLogRefusal`:
-
-```csharp
-// Networking/Client/OwnShotRouting.cs — НОВЫЙ ФАЙЛ, public static class,
-// в той же сборке, что реестры, которыми решение и распоряжается.
-public enum OwnShotRoute : byte
-{
-    Ignore = 0,        // не наш выстрел — обычный путь чужого снаряда
-    AdoptGhost = 1,    // TryConfirm подтвердил: усыновить, второго следа не рождать
-    PlainSpawn = 2,    // TryConfirm отказал (гост протух или не родился): как сегодня
-}
-
-/// Что делать с ПРИШЕДШИМ ProjectileSpawned (M248/M249 разом).
-public static OwnShotRoute RouteOwnSpawn(bool isOwnShot, bool ghostConfirmed);
-
-/// Что делать с протухшим ghost-id (M253): снять его след, а не выбросить id.
-public static bool RetiresTracerOfExpiredGhost(int ghostId, bool tracerAlive);
-
-/// Сколько записей журнала родить в ЭТОМ кадре (M247), остальное — в счётчик.
-public static int SpawnsThisFrame(int pending, int budget);
-```
-
-  Тогда мутанты убиваются тестами по значению, а в приватных строках остаётся `switch`
-  по ответу. ⚠ **Дом назван поимённо** — отдельный файл рядом с реестрами, а не «рядом
-  с `RewindDepthMeter`»: тот отвечает за глубину отмотки и своему имени соответствовать
-  обязан.
-- [ ] **Step 6 (GREEN, бэкенд):** вычерпывание журнала в названном месте; перевод
-      доменов формулой; рождение через реестры; `RouteToGhosts` — `TryConfirm` + `Adopt`
-      и откат на `TrySpawn`; потребитель протухших id у `_ghosts.Advance` (`:1588`).
-- [ ] **Step 6a (GREEN, ПРИБОР — иначе у DoD нет эвиденса):** ⛔ **`unconfirmedGhosts`
-      доказательством работы предсказания НЕ является** — он считает **НЕ**подтверждённые
-      предсказания, и ноль на нём одинаково согласуется с «всё подтверждено» и с «ничего
-      не родилось» (урок 687; ровно в эту ловушку DoD спеки уже попадал). ⇒ Заводится
-      **`NetStats.PredictedShotsDropped`** — счётчик записей, отброшенных сверх кадрового
-      кэпа, по образцу соседа `DroppedEvents` (`NetStats.cs:61-63`), и выводится там же,
-      где живут остальные: строка в `NetDiagnostics` и `DrawIntCounter` в `DevOverlay`
-      (`:293`). ⚠ **Отдельного «счётчика рождений» план не заводит** — спека отказала ему
-      прямо (находка I2₃: ни дома, ни теста, ни мутации). Факт рождения следа
-      подтверждается **пунктом вехи 1** («след выходит из ствола») и этим счётчиком.
-- [ ] **Step 7:** R-FILTER `GhostProjectileTests` → PASS; `TracerFlightTests` → PASS;
-      `AllocationTests` → PASS (⚠ прогон трассера и новый вход не аллоцируют).
-- [ ] **Step 8 (мутации: половина M246, M247, M248, M249, M250, M251, M252, M253 —
-      **восемь**; предсказания ДО прогона).**
-- [ ] **Step 9:** R-TEST полный → красных ноль; `total` — по счёту исполнителя.
-- [ ] **Step 10:** свипы → R-COMMIT `feat(app-8dv): T5 — предсказанный след своего выстрела`.
-
-### Task T6: очередь предсказаний вспышки и звука
-
-⛔ Механизм «пол по времени» **не воскрешается** — три измеренные причины отката в ноте
-`app-8dv` (эхо реконсиляции приходит позже пола; такт огня квантован и даёт зазоры
-133/100 мс при поле 96 мс; очередь ломала контракт «грант ≠ показ»).
-
-⭐⭐ **Записи ключуются `ShotOrdinal`** (Р454, рулинг 322). Правило «одно за раз»
-существует **не** ради очереди: **реконсиляция выдаёт второй фронт на один выстрел**
-(G-2, шапка латча) — переигрывание двигает `FireCooldown` назад, гейт идёт false→true
-повторно для уже показанного выстрела, а событие приходит одно. Снять замок голой
-очередью значит показать выстрел дважды (`app-id9`).
-
-**Files:**
-- Modify: `client/Assets/Scripts/Presentation/ImmediatePredictionLatch.cs`
-- Modify: `client/Assets/Scripts/Presentation/SimulationRunner.cs` (свойство ключа рядом
-  с `WouldFireThisFrame` `:483`)
-- Modify: `client/Assets/Scripts/Presentation/MuzzleFlashView.cs` (`:236`, `:251`, `:323`
-  🆕 **+ `OnEnable`/`OnDisable`: подписка на `WorldRestarted`, сегодня её нет**),
-  `client/Assets/Scripts/Presentation/AudioDirector.cs` (`:244`, `:249`, `:342`
-  🆕 **+ сброс выстрельного латча внутри `StopAll`**, подписка уже есть `:154/:156`)
-- Modify: `client/Assets/Tests/EditMode/ImmediatePredictionLatchTests.cs` (+ новые;
-  ⛔ **восемь существующих — БЕЗ ПРАВОК**)
-
-**Interfaces:**
-
-```csharp
-// ImmediatePredictionLatch.cs — параметры ОПЦИОНАЛЬНЫ, и это решение:
-// умолчание означает "сегодняшнее поведение" для четырёх живых вызывающих,
-// из которых ДВА дэшевых не меняются ни строкой.
-public bool ShouldPredict(bool gateSatisfied, float now, int key = NoKey);
-public void Arm(float now, float windowSeconds, int key = NoKey);
-public bool TryConsume(float now);
-
-/// ⚠ СЕНТИНЕЛ — НОЛЬ, И ОН НАЗВАН ЧИСЛОМ (находки B-I5₂/D-I9₂/I9₃): дэшевые
-/// вызывающие ключа не передают, и для них проверка идентичности выключена
-/// целиком. Без сентинела все дэши шли бы под одним значением и второй дэш
-/// отвергался бы навсегда — падали бы восемь существующих тестов, которые
-/// DoD обещает держать зелёными без правок. Ноль СВОБОДЕН именно потому,
-/// что ключ выстрела пост-инкрементный и первый выстрел матча получает 1.
-public const int NoKey = 0;
-
-/// Ёмкость очереди и кольца показанных ключей — ВЫВЕДЕНА, а не выбрана
-/// (прецедент ClientEventQueue: "capacity is DERIVED from the two numbers
-/// that actually bound the wait"): ceil(BufferedWindowSeconds 0.5 /
-/// FireInterval 0.12) = 5. Кольцо не короче очереди — иначе запись пережила
-/// бы собственный ключ (находка M7₃).
-const int DefaultCapacity = 5;
-
-// SimulationRunner.cs — ОДИН источник ключа, рядом с гейтом, который и
-// существует затем, "чтобы решения двух компонентов не разъехались" (Р470).
-// Значение доступно: BlendOwnPlayer копирует ВЕСЬ предсказанный PlayerState
-// (`PlayerState pose = _ownCurr;`, лерпится только Pos).
-public int PredictedShotKey => Ready ? RenderCurr.Player.ShotOrdinal + 1 : 0;
-```
-
-⚠ **Смена семантики гранта названа** (находка D-I8): сегодня `ShouldPredict` ничего не
-взводит, поэтому «грант без показа» невозможен. Новое правило «грант кладёт запись,
-показ помечает» требует, чтобы **непомеченная запись пропускалась `TryConsume`** — иначе
-акт не будет показан вовсе. Это своё правило, свой тест и своя мутация.
-
-⛔ **Дэшевая половина не меняется ни строкой.** Инстансов латча четыре
-(`MuzzleFlashView.cs:176`, `AudioDirector.cs:115`/`:127`,
-`PersistentPropsDirector.cs:303`); два последних — дэшевые.
-
-- [ ] **Step 1 (RED):** тесты 23–26 в `ImmediatePredictionLatchTests`:
-      три гранта подряд показаны все три; ⭐⭐ **сценарий реконсиляции** — повторный
-      фронт с тем же `ShotOrdinal` не даёт второго показа, **в обоих порядках** (фронт
-      до события и после); рестарт — кольцо ординалов сброшено, первый выстрел нового
-      матча предсказан; непомеченная запись пропускается `TryConsume`.
-- [ ] **Step 2:** заглушки до компиляции; R-FILTER `ImmediatePredictionLatchTests` →
-      `EXIT=2`, `testcasecount` = **12**, ⛔ **восемь существующих обязаны быть
-      ЗЕЛЁНЫМИ уже здесь** — если хоть один красен, опциональность параметров нарушена,
-      и это стоп.
-- [ ] **Step 3 (GREEN):** очередь записей `{key, expireAt, shown}`; кольцо показанных
-      ключей — **приватное поле каждого инстанса**; переполнение — отказ значением со
-      счётчиком (Р82).
-- [ ] **Step 3a (GREEN, У СБРОСА ПОЯВЛЯЕТСЯ БОЕВОЙ ВЫЗЫВАЮЩИЙ — иначе тест 25 зелен, а
-      бой сломан):** `Reset()` объявляется (см. Interfaces) и **зовётся по рестарту
-      матча**, потому что `ClientMatchReset` до `Presentation` не дотягивается
-      (`Presentation.asmdef` не ссылается на `Ring.Networking`, Р180). Событие в
-      `Presentation` уже есть — `SimulationRunner.WorldRestarted`, и на него подписаны
-      четверо (`AudioDirector.cs:154/156`, `DeathOverlayController.cs:109/111`,
-      `DevOverlay.cs:66`, `PersistentPropsDirector.cs:346`).
-      ⇒ `AudioDirector` сбрасывает **свой выстрельный латч** внутри `StopAll` (он уже
-      подписан), `MuzzleFlashView` **заводит подписку** `OnEnable`/`OnDisable` по
-      дословному образцу соседа. ⛔ **Дэшевые латчи не трогаются**: их состояние
-      оконное, и старое решение шапки для них остаётся верным.
-      ⚠ **Абзац «A MATCH RESTART CLEARS NOTHING HERE» правится здесь же** — тем же
-      приёмом, каким T7 отменяет половину правила #12 `NetInvariants`: решение
-      отменяется **явной правкой**, а не молча, иначе дока и код спорят.
-      ⛔ **Кольцо латча и кольцо журнала (T4) — РАЗНЫЕ**, и в доке класса это сказано
-      тремя причинами: разные вопросы в разных фазах кадра; инстансов четыре, и общий
-      счётчик дал бы вспышке глушить звук того же выстрела; `ClientMatchReset` физически
-      не достаёт латч (`Presentation.asmdef` не ссылается на `Ring.Networking`, Р180).
-- [ ] **Step 4 (GREEN, вызывающие):** `MuzzleFlashView` и `AudioDirector` (выстрел)
-      передают `_runner.PredictedShotKey` в `ShouldPredict` и в `Arm`; дэшевые — ничего
-      не передают.
-- [ ] **Step 4a (доки, которые иначе станут ложью — это РАБОТА таска, а не побочный
-      эффект):** три места правятся здесь же, и каждое сегодня утверждает обратное тому,
-      что таск делает.
-      (а) **Шапка `ImmediatePredictionLatch`**: «ONE UNCONFIRMED PREDICTION AT A TIME» —
-      второй из трёх фактов класса — перестаёт быть фактом для выстрела и остаётся им
-      для дэша; абзац «WHAT IT COSTS, SAID PLAINLY» («some rounds of a held burst are
-      shown late rather than early») описывает ровно ту цену, которую таск и снимает.
-      (б) ⭐⭐ **Комментарий G-4 в `AudioDirector` (`:249-259`)** — он **предсказывает
-      этот заход и его опасность дословно**: «It could only have lost a sound while the
-      latch held a QUEUE of predictions, where one shot's event could consume a record
-      another shot had left behind». Это ровно тот дефект, который лечит правило «грант
-      кладёт запись, показ помечает, непомеченная запись пропускается `TryConsume`»
-      (тест 26 / M257). ⛔ Оставить абзац как есть — значит оставить в файле
-      предупреждение против правки, которая уже сделана и покрыта тестом; следующий
-      читатель поверит комментарию, а не коду.
-      (в) 🆕 **и тот самый абзац про рестарт** (Step 3a).
-      (г) **Инвентарь снят свипом этой сессией, а не памятью** (урок 492):
-      `grep -rn "ONE UNCONFIRMED|one at a time|ONE PREDICTION" client/Assets/Scripts/`
-      даёт **четыре** вхождения, из которых правки требует **одно** —
-      `ImmediatePredictionLatch.cs:31`. Соседнее `:26` («ONE PREDICTION PER GATE PULSE»)
-      **остаётся в силе и не трогается**: одно предсказание на импульс гейта — это про
-      фронт, а не про замок. Два оставшихся (`ISimBackend.cs:439`,
-      `PersistentPropsDirector.cs:227`) — про другое и к латчу отношения не имеют.
-      ⚠ В `GhostProjectiles` такой формулировки нет вовсе — проверено тем же свипом.
-- [ ] **Step 5:** R-FILTER `ImmediatePredictionLatchTests` → **PASS 12/12**, из них
-      восемь старых — **без единой правки** (пункт гейта).
-- [ ] **Step 6 (мутации M254, M255, M256, M257, M265; предсказания ДО прогона).**
-      ⚠ **M256** («дэшевый вызывающий получает ключ и ёмкость») жертвой имеет **восемь
-      существующих тестов** — это и есть машинная запись обещания «дэш не тронут».
-- [ ] **Step 7:** R-TEST полный → красных ноль.
-- [ ] **Step 8:** свипы → R-COMMIT `feat(app-8dv): T6 — очередь предсказаний вспышки и звука`.
+⚠ **T7 ИДЁТ ПЕРВЫМ, И ЭТО ПОПРАВКА КРУГА 2** (находка A/D независимо): T5 поднимает
+`predictedTick` над веткой рендер-пары и обязан считать его от **судейской** глубины,
+а поле `_drawDepth` и функция `DrawTickFor` заводятся именно T7. При обратном порядке
+T5 использовал бы то, чего ещё нет, — прямое нарушение пункта 4 собственного
+self-review плана. Спека §10 ставит T7 без зависимостей, поэтому отклонения нет:
+переставлены две независимые работы внутри одной фазы. ⭐ Побочная выгода: следы
+рождаются на судейской глубине **сразу**, и веха меряет конечное поведение, а не
+промежуточное.
 
 ### Task T7: глубина отрисовки равна судейской (`app-x12a`)
 
@@ -2136,11 +1900,27 @@ misconfiguration». При `RewindPictureTicks 3` и капе 5 новое пр�
       Тест переписывается в **`RewindSanityTicksBelowTheFloor_IsReported`** — домен поля
       сузился до `>= RewindCapTicks − RewindPictureTicks`, и новая нижняя граница
       пинится **выражением от полей фикстуры**, а не литералом (307/308).
-      (2) **`RewindSanityTicksNegative_IsReported`** ломается не сутью, а формой: его
-      `AssertOnly` (`:52-59`) требует **ровно одной** ошибки, а при `-4` их станет две.
-      Лечение — фикстура, на которой срабатывает только #12: поднять
-      `sim.Arena.RewindPictureTicks` так, чтобы сумма прошла порог #13, и сказать в
-      комментарии, почему теста два, а не один.
+      (2) **`RewindSanityTicksNegative_IsReported`** и 🆕 (3)
+      **`InterpBufferTicksZero_IsReported`** ломаются не сутью, а формой: их `AssertOnly`
+      (`:52-59`) требует **ровно одной** ошибки, а правило #13 добавляет вторую.
+      ⛔⛔ **Лечение «поднять `RewindPictureTicks`» НЕИСПОЛНИМО** (находка круга 2, оба
+      ревьюера): правило #11 требует `RewindPictureTicks == InterpBufferTicks`
+      (`NetInvariants.cs:397-403`), поэтому подъём одного поля немедленно даёт третью
+      ошибку, а следом по цепочке #3 и #4 — четвёртую (`Visibility.LingerTicks` в
+      фикстуре равен 5). ⇒ Поля двигаются **четвёркой и выражениями**, по дословному
+      образцу соседа `RewindPictureTicksAndInterpBuffer_MayMoveTogether` (`:519-527`):
+
+```csharp
+net.InterpBufferTicks = sim.Arena.RewindCapTicks - net.RewindSanityTicks; // #13 проходит
+sim.Arena.RewindPictureTicks = net.InterpBufferTicks;                     // #11
+net.GhostConfirmTicks = net.InterpBufferTicks + 1;                        // #3
+sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;                   // #4
+```
+
+      ⚠ Для (3) фикстура сознательно ставит «клиент не интерполирует», поэтому ей
+      честнее опустить кап: `sim.Arena.RewindCapTicks = 0` — тогда #13 выполняется
+      тождественно и смысл теста («нулевой буфер — это ошибка сама по себе») сохраняется
+      без четвёрки. Выбор между двумя формами делает исполнитель и записывает в отчёт.
 - [ ] **Step 5:** R-FILTER `RewindDepthTests` → PASS; `NetInvariantsTests` → PASS.
 - [ ] **Step 5a (GREEN, чтобы M260 имела жертву, а не обещание):** ⛔ **Тест «оба
       потребителя читают один дом» в EditMode ненаписуем** — оба потребителя суть
@@ -2153,20 +1933,441 @@ misconfiguration». При `RewindPictureTicks 3` и капе 5 новое пр�
 /// Тик, на котором показывается СЛЕДСТВИЕ выстрела: и след (`:1543`), и
 /// искра с её звуком и креном (`:3130`). Одно выражение, один дом — иначе
 /// половины одного события разъезжаются на два тика (то, что чинила A28б).
-public static int DrawTickFor(int renderTick, byte drawDepth) => renderTick + drawDepth;
+///
+/// ⛔⛔ ПРИНИМАЕТ ИЗМЕРЕННУЮ ГЛУБИНУ И КАП, А НЕ ГОТОВЫЙ `drawDepth`, и это
+/// решает судьбу мутации M260 (находка круга 2). Форма
+/// `DrawTickFor(renderTick, drawDepth)` выносит СЛОЖЕНИЕ, тогда как мутация
+/// живёт в ВЫБОРЕ АРГУМЕНТА («передать `_rewindDepth` вместо `_drawDepth`
+/// на одной из двух площадок») — тест на такую функцию зелен и на мутанте,
+/// а свип «renderTick + _» даёт ноль строк на обеих ветках. Приняв два
+/// числа, функция делает необрезанную глубину непередаваемой:
+public static int DrawTickFor(int renderTick, byte measured, int capTicks)
+    => renderTick + DrawDepth(measured, capTicks);
 ```
 
 - [ ] **Step 6 (мутации M258, M259, M260, M266; предсказания ДО прогона).**
       ⚠ **M260** («заклампить только `:1543`, оставив `:3130`») после Step 5a убивается
-      тестом на `DrawTickFor` плюс **гейтом свипа**: `grep -n "renderTick + _" ` по
-      `NetworkSimBackend.cs` обязан давать **ноль** строк — оба места ходят через дом.
+      **числом**: `DrawTickFor(10, measured: 7, capTicks: 5) == 15`, а мутант, вернувший
+      необрезанную глубину, даёт 17. Плюс гейт свипа
+      `grep -nE "renderTick \+|_rewindDepth" NetworkSimBackend.cs` → только объявление
+      поля и его замер: обе площадки ходят через дом и передать необрезанное число
+      физически не могут.
 - [ ] **Step 7:** R-TEST полный → красных ноль.
 - [ ] **Step 8:** свипы → R-COMMIT `feat(app-8dv): T7 — глубина отрисовки равна судейской`.
+
+### Task T5: предсказанный след
+
+⛔ **ВТОРОГО МЕХАНИЗМА ОЧЕРЕДИ НЕ СТРОИТЬ** — `GhostProjectiles` уже реализует ровно
+нужное (кольцевой FIFO неподтверждённых, `Confirm` гасит старейшее, окно
+`GhostConfirmTicks`, чистка по возрасту, прибор `UnconfirmedGhosts`) и покрыт
+семнадцатью тестами. Он не подключён, и это единственное, что с ним не так.
+
+**Files:**
+- Modify: `client/Assets/Scripts/Networking/Client/GhostProjectiles.cs` (безгейтовый вход;
+  `TrySpawnFromPrediction` `:263` → `internal`; `TryConfirm` рядом с `Confirm` `:309`)
+- Modify: `client/Assets/Scripts/Networking/Client/TracerProjectiles.cs` (второй ключ
+  `ServerId` + сентинел; `Adopt`; `IndexOf` `:993` по обоим ключам)
+- Create: `client/Assets/Scripts/Networking/Client/OwnShotPolicy.cs` (+ `.meta`),
+  `client/Assets/Tests/EditMode/OwnShotPolicyTests.cs` (+ `.meta`)
+- Modify: `client/Assets/Scripts/PresentationNet/NetworkSimBackend.cs` (вычерпывание
+  журнала **над** веткой рендер-пары; `RouteToGhosts` `:2946-2963`; `RouteToTracers`
+  `:2997`; потребитель протухших id `:1588`)
+- Modify: `client/Assets/Scripts/Presentation/NetDiagnostics.cs` (поле рядом с
+  `UnconfirmedGhosts` `:173`), `client/Assets/Scripts/Presentation/DevOverlay.cs` (`:293`)
+  ⚠ **`NetStats.cs` НЕ трогается** — его состав закрыт собственной докой (`:29-35`)
+- Modify: `client/Assets/Tests/EditMode/GhostProjectileTests.cs` (17 существующих + новые),
+  🆕 **`TracerProjectilesTests.cs`** (14 существующих — **дом тестов второго ключа,
+  `Adopt`, гарда дубля и сентинела**: там уже живут `ADuplicateIdIsRefused_NotTrackedTwice`
+  `:271`, `ResetDropsEverything_…` `:254`, `TryGetOwner_*`; ⛔ `TracerFlightTests` — дом
+  ИНТЕГРАТОРА, и его дока запрещает мешать туда табличные фикстуры, Ruling 287),
+  `TracerFlightTests.cs` (только то, что гоняет `StepTo`), `AllocationTests.cs`
+
+**Interfaces:**
+
+```csharp
+// GhostProjectiles.cs
+/// Безгейтовый вход: выстрел УЖЕ состоялся, гейт не нужен и вреден.
+/// ⛔ Старый TrySpawnFromPrediction сохраняется и становится `internal`
+/// (находка I3₃): боевого вызывающего у него нет и не будет, а публичным он
+/// был бы заряженным ружьём — "всегда false после выстрела". Три фикстуры
+/// Ghost_SpawnGateIsWouldFireThisTick остаются зелёными,
+/// InternalsVisibleTo("Ring.Simulation.Tests") уже есть.
+public bool TrySpawnPredictedShot(uint predictedTick, out int ghostId);
+
+/// ⚠ НОВЫЙ ЧЛЕН РЯДОМ СО СТАРЫМ, а не смена сигнатуры Confirm (находка I2₃):
+/// `.Confirm(` вызывается в тестах 22 раза, все с именованными аргументами,
+/// и out-параметр сломал бы каждый — а ошибка компиляции не RED. Confirm
+/// остаётся тонкой обёрткой над этим.
+public bool TryConfirm(int serverId, uint tick, out int ghostId);
+
+// TracerProjectiles.cs
+/// ВТОРОЙ КЛЮЧ и его сентинел. Треки зануляются `= default`, поэтому
+/// неусыновлённый след нёс бы ServerId == 0 -- а ноль ЛЕГАЛЕН на проводе
+/// (id усекается до u16, снаряд 65536 приезжает как 0).
+///
+/// ⛔⛔ И ОН НЕ МОЖЕТ БЫТЬ −1 (находка ревью A, проверена по коду): первичный
+/// ключ трека — ghost-id, а `GhostProjectiles.FirstGhostId` РАВЕН −1
+/// (`:177`), то есть самый первый предсказанный след носит ровно это число.
+/// `IndexOf`, ищущий по обоим ключам, нашёл бы по −1 и его, и любой ещё не
+/// усыновлённый трек. Домены обязаны не пересекаться:
+const int NoAdoptedServerId = int.MinValue;
+
+/// ⛔ ПИШЕТ ТОЛЬКО КЛЮЧ (находки B-C1₂/D-C3₂, рулинг 325): переносить
+/// серверную геометрию рождения нельзя -- пере-засев birth-половины
+/// телепортировал бы след назад к дулу, то есть ровно тот артефакт, который
+/// запрещает Р67.
+public bool Adopt(int ghostId, int serverId);
+```
+
+⚠ **ПОЧЕМУ ВТОРОЙ КЛЮЧ У ТРАССЕРА, А НЕ ПЕРЕВОД ЧЕРЕЗ `GhostProjectiles`** (вопрос
+ревьюера C; решение принято спекой — Р453, рулинги 320/321 — и вот его основание по
+коду). Пара «ghost-id ↔ server-id» у госта живёт ровно столько, сколько живёт САМ гост:
+`TryTranslateEnd` освобождает слот на `ProjectileEnded` (`:329-343`), а `Advance`
+освобождает подтверждённые по `maxTrackTicks` (`:394-398`). След живёт по своим
+правилам — до `EndTick`, а при потерянном конце ещё `LostEndSlackTicks` сверх TTL
+(`TracerProjectiles.cs:269`). Связать поиск следа с чужим жизненным циклом значит
+отдать право потерять ключ объекту, у которого свой календарь. Второй ключ у трассера
+делает след самодостаточным, и `IndexOf` уже читают пятеро.
+
+⚠ **Коллизия ghost-id и server-id невозможна:** `FirstGhostId = -1`, счётчик идёт вниз;
+серверные id — `u16`, всегда ≥ 0 (проверено в файле, `:171`/`:177`). ⛔ **Но это не
+покрывает третье число — сентинел**, и именно поэтому он `int.MinValue`, а не −1
+(см. блок Interfaces выше). Дополнительная страховка в самом `IndexOf`: сравнение по
+второму ключу выполняется **только когда `_live[i].ServerId != NoAdoptedServerId`**.
+
+⚠ **И существующий сентинел не дублируется** (находка ревью C): `GhostProjectiles`
+держит свой `const int NoServerId = -1` приватно и по своему поводу (там это «гост ещё
+не подтверждён»). Два одинаковых имени с разными значениями в одном namespace —
+приглашение к ошибке, поэтому у трассера константа называется **`NoAdoptedServerId`**, и
+её дока называет соседку и объясняет, чем они отличаются.
+
+⚠ **`IndexOf` ищет по обоим ключам, и читают его ПЯТЕРО:** `TrySpawn` (гард дубля),
+`Retire`, `OnRicochet`, `TryGetOwner` — и `RestoreShooter` через `TryGetOwner`.
+
+**Жизненный цикл — первичный id не меняется никогда** (Р67, рулинг 320):
+
+| Событие | Что делает бэкенд |
+|---|---|
+| запись журнала с новым ключом | `TrySpawnPredictedShot(spawnTick, out ghostId)` → `_tracers.TrySpawn(ghostId, spawnTick, …)`. ⚠ **Раскладка записи в девять параметров названа, чтобы её не изобретали, и она БЕЗ АРИФМЕТИКИ** (рулинг 306): `pos = s.SpawnPos`, `height = s.Height`, `dir = s.Dir`, `horizSpeed = s.HorizSpeed`, `velZ = s.VelZ`, `birthSteps = s.BirthSteps`; `radius`/`ttl` — из `cfg.Weapon` (их на проводе нет и у записи нет тоже), `owner = ProjectileOwner.Player`, `ownerIndex = LocalPlayerIndex` |
+| `ProjectileSpawned`, свой | `TryConfirm(p.Id, tick, out ghostId)` → `_tracers.Adopt(ghostId, p.Id)`; второй след не рождается |
+| ⚠ `TryConfirm` **отказал** (дубль или пустая очередь — гост протух за 400 мс либо не родился) | **обычный `TrySpawn(p.Id, …)`, как сегодня** — иначе свой выстрел остался бы вообще без следа |
+| `ProjectileRicocheted` / `ProjectileEnded`, свой | находятся по **второму ключу** `ServerId` |
+| гост протух | `Advance` уже возвращает протухшие id — у них появляется потребитель: `_tracers.Retire(ghostId, …)` |
+
+**Перевод доменов — формулой, а не словами** (находка C4₃). Запись рождается в
+`PerformReplicate`, где есть только тик FishNet; трассеру нужен мировой. Домены
+несвязаны (Н-11; `MatchServer` носит шрам вычитания одного из другого), поэтому
+переводится **дельта**:
+
+```csharp
+// int − uint в C# даёт long, а uint-вычитание оборачивается, если запись
+// пришла из будущего относительно текущего LocalTick (реплей). Оба края
+// закрыты явно — формула, а не намерение:
+long age = (long)_nm.TimeManager.LocalTick - record.LocalTick;   // ≥ 0 в прямом прогоне
+if (age < 0) age = 0;                                            // запись «из будущего» реплея
+int spawnTick = predictedTick - (int)age;
+```
+
+Дельта берётся **на момент вычерпывания** — отсюда требование вычерпывать до `WriteInto`.
+Без формулы все записи кадра получили бы один тик рождения, и точность, ради которой
+закрывали `overshoot` (1.75 м), потерялась бы на 1–3 тиках (1.75–5 м).
+⚠ **Госту — `TimeManager.LocalTick`** (его домен, Р67); трассеру — `spawnTick` выше.
+
+**Где вычерпывается — названо строкой кода, и первая редакция плана называла её
+противоречиво** (находки ревью A-C5 и C-M7, проверено лично): сегодня
+`int predictedTick = renderTick + _rewindDepth;` стоит **ВНУТРИ** ветки
+`if (ResolveRenderPair(renderTick))` (`NetworkSimBackend.cs:1518` → `:1543`), там же
+`StepTo` (`:1554`) и оба `WriteInto` (`:1559-1560`). Требования «безусловно» и «сразу
+после `StepTo`» одновременно неисполнимы.
+
+⇒ **Порядок кадра после правки, три строки:**
+
+```csharp
+// БЫЛО: predictedTick объявлялся внутри ветки. СТАЛО: он поднимается над ней —
+// его нужны ДВА потребителя, и один из них обязан работать на кадре без пары.
+// ⚠ Через дом глубины, который завёл T7 (он идёт первым в этой фазе именно
+// поэтому): необрезанную глубину здесь передать физически нельзя.
+int predictedTick = RewindDepthMeter.DrawTickFor(renderTick, _rewindDepth,
+                                                _cfg.Arena.RewindCapTicks);   // выше :1518
+DrainPredictedShots(predictedTick);                   // БЕЗУСЛОВНО, до ветки
+if (ResolveRenderPair(renderTick))                    // дальше как сегодня
+{
+    …
+    _tracers.StepTo(predictedTick);                   // следы, рождённые выше,
+    _prev.ProjectileCount = _tracers.WriteInto(…);    // попадают в ЭТОТ же кадр
+    _curr.ProjectileCount = _tracers.WriteInto(…);
+    _tracers.Prune(predictedTick);
+}
+```
+
+⛔ **Внутрь ветки вычерпывание класть нельзя:** ровно оттуда был вынесен `BlendOwnPlayer`
+(`app-5fh`/`app-0t6`) с письменным обоснованием — «замораживать собственное предсказание
+клиента вместе с чужой картинкой есть противоположность тому, зачем предсказание
+существует». Дыра в кольце снимков означала бы, что свои выстрелы не рождаются, а при
+закрытии дыры вываливаются пачкой в кадровый кэп.
+
+- [ ] **Step 1 (RED, реестры):** тесты 15–22 — в `GhostProjectileTests` и
+      `TracerFlightTests`: повтор реплея не рождает второго следа; кэп рождений за кадр
+      соблюдён и излишек отброшен со счётчиком; свой `ProjectileSpawned` подтверждает и
+      не рождает второго следа; отказ `TryConfirm` роняет рождение на обычный путь;
+      `Adopt` проставляет второй ключ и **не трогает первичный id**; неусыновлённый след
+      не находится по серверному коду **0**; гард дубля в `TrySpawn` видит занятый
+      серверный код; протухший гост снимает свой след **за 400 мс, а не за 1.77 с**.
+- [ ] **Step 2:** заглушки до компиляции; R-FILTER `GhostProjectileTests` → `EXIT=2`,
+      `testcasecount` = **17 + новые**, красных — по счёту ассертов исполнителем.
+- [ ] **Step 3 (GREEN, `GhostProjectiles`):** безгейтовый вход; старый член →
+      `internal`; `TryConfirm` + обёртка `Confirm`.
+      ⚠ **Шапка класса правится здесь же — это работа таска.** Сегодня она утверждает
+      «THE SPAWN GATE IS `WeaponSystem.WouldFireThisTick`» (`:30`) и «NO FLIGHT MATH
+      LIVES HERE… geometry (position, velocity, the aim/spread draw `WeaponSystem.
+      SpawnShot` owns) is Ф9's job» (`:19-24`). После этого таска гейт остаётся правдой
+      **только для старого internal-члена**, а геометрия приходит готовой из журнала —
+      и класс по-прежнему её не считает, что и надо сказать прямо, вместо утверждения,
+      которое читается как запрет на сделанное.
+      ⚠ **У безгейтового входа обязан быть свой свидетель отсутствия аллокаций**
+      (находка M1₃): существующий `GhostProjectiles_HotPathDoesNotAllocateGC` (`:367`)
+      пинает **старый** член — новый получает свою строку в том же тесте.
+- [ ] **Step 4 (GREEN, `TracerProjectiles`):** поле `ServerId` в `Track`; сентинел
+      `NoServerId` — **в инициализаторе `TrySpawn` и в списке сбрасываемых полей**
+      (`Reset`/`Prune` зануляют `= default`, поэтому забытый сентинел молча станет нулём);
+      `Adopt`; `IndexOf` по обоим ключам.
+- [ ] **Step 5 (GREEN, маршрутизация как ЗНАЧЕНИЕ, а не как четыре предиката):**
+      ⛔ **Пять мутаций живут на пути, который EditMode не достаёт** (находка C3₃): M248,
+      M249, M253, M260 и половина M246 бьют в приватные строки `NetworkSimBackend`.
+      ⚠ **Первая редакция плана выносила четыре булевых предиката, и три из них были
+      тавтологиями** (находки ревью C-I4/D-I9/B-8): `SpawnsTracerForOwnShot(bool confirmed)`
+      возвращает свой же аргумент, тест на него — `f(x) == f(x)`, а решение остаётся
+      жить в `if` на площадке, куда мутация и бьёт. Честная форма — **одно решение
+      значением**, по образцу `MatchEndPolicy.Evaluate` и `SpectatePolicy.ShouldLogRefusal`:
+
+```csharp
+// Networking/Client/OwnShotPolicy.cs — НОВЫЙ ФАЙЛ, public static class,
+// в той же сборке, что реестры, которыми решение и распоряжается.
+public enum OwnShotRoute : byte
+{
+    /// ⚠ IGNORE IS ZERO ON PURPOSE, and the reason is the one MatchOutcome
+    /// states for its own zero: the default has to point in the SAFE
+    /// direction. A round this client did not fire takes the ordinary path
+    /// of somebody else's bullet — that is what a forgotten branch must
+    /// fall back to, never "adopt a ghost that may not be ours".
+    Ignore = 0,
+    /// TryConfirm подтвердил: усыновить гост, второго следа не рождать.
+    AdoptGhost = 1,
+    /// TryConfirm отказал (гост протух за 400 мс или не родился) — рождаем
+    /// обычным путём, как сегодня, иначе свой выстрел остался бы без следа.
+    SpawnPlainly = 2,
+}
+
+/// Что делать с ПРИШЕДШИМ ProjectileSpawned (M248/M249 разом).
+public static OwnShotRoute RouteOwnSpawn(bool isOwnShot, bool ghostConfirmed);
+
+/// Сколько записей журнала родить в ЭТОМ кадре (M247), остальное — в счётчик
+/// отброшенных. ⚠ Имя по канону значения (`ExitCodeFor`/`OutcomeFor`), а не
+/// предиката.
+public static int SpawnBudgetFor(int pending, int budget);
+
+// ⛔ ТРЕТЬЕЙ ФУНКЦИИ НЕТ, И ЭТО ПОПРАВКА КРУГА 2. Первая редакция заводила
+// `RetiresTracerOfExpiredGhost(int ghostId, bool tracerAlive)` — предикат,
+// возвращающий свой же аргумент, то есть ровно та тавтология, за которую
+// круг 1 забраковал четыре прежних предиката. Потребитель протухших id зовёт
+// `_tracers.Retire(ghostId, tick)` НАПРЯМУЮ: тот уже отвечает `bool` «был ли
+// такой трек» (`TracerProjectiles.cs:438`) — тот самый факт, который обёртка
+// собиралась пересказать. Жертва M253 — тест на `Retire`, а не на обёртку.
+```
+
+  Тогда мутанты убиваются тестами по значению, а в приватных строках остаётся `switch`
+  по ответу. ⚠ **Дом назван поимённо** — отдельный файл рядом с реестрами, а не «рядом
+  с `RewindDepthMeter`»: тот отвечает за глубину отмотки и своему имени соответствовать
+  обязан.
+- [ ] **Step 6 (GREEN, бэкенд):** вычерпывание журнала в названном месте; перевод
+      доменов формулой; рождение через реестры; `RouteToGhosts` — `TryConfirm` + `Adopt`
+      и откат на `TrySpawn`; потребитель протухших id у `_ghosts.Advance` (`:1588`).
+- [ ] **Step 6a (GREEN, ПРИБОР — иначе у DoD нет эвиденса):** ⛔ **`unconfirmedGhosts`
+      доказательством работы предсказания НЕ является** — он считает **НЕ**подтверждённые
+      предсказания, и ноль на нём одинаково согласуется с «всё подтверждено» и с «ничего
+      не родилось» (урок 687; ровно в эту ловушку DoD спеки уже попадал). ⇒ Счётчик отброшенных живёт **на владельце вычерпывания, а не в `NetStats`**
+      (поправка круга 2): состав `NetStats` объявлен **закрытым** его собственной докой
+      (`:29-35`), а сосед формулирует правило дословно — «not a `NetStats` field:
+      `NetStats`' composition is closed and **this is a fact about this object**, which
+      the dev overlay reads from here» (`ClientEventQueue.cs:115-119`). ⇒ единственный
+      счётчик — уже заводимый `PredictedShotLog.OverflowDroppedShots`, и он выводится
+      **двумя строками по готовому маршруту**: поле в `NetDiagnostics` рядом с
+      `UnconfirmedGhosts` (`:173`) и `DrawIntCounter` в `DevOverlay` (`:293`).
+      ⛔ **Второго счётчика не заводить** — две записи об одном факте («предсказанный
+      выстрел потерян») из двух домов были бы ровно тем дублем, который правило 2
+      запрещает. ⚠ **Отдельного «счётчика рождений» план не заводит** — спека отказала ему
+      прямо (находка I2₃: ни дома, ни теста, ни мутации). Факт рождения следа
+      подтверждается **пунктом вехи 1** («след выходит из ствола») и этим счётчиком.
+- [ ] **Step 7:** R-FILTER `GhostProjectileTests` → PASS; `TracerProjectilesTests` → PASS;
+      `TracerFlightTests` → PASS; `OwnShotPolicyTests` → PASS;
+      `AllocationTests` → PASS (⚠ прогон трассера и новый вход не аллоцируют).
+      ⚠ **У счётчика отброшенных есть свой свидетель**, а не только строка в оверлее:
+      тест на `OwnShotPolicy.SpawnBudgetFor` проверяет, что излишек равен
+      `pending − budget`, и что счётчик журнала переживает `Reset` — по образцу
+      соседа (`ClientLinkTests` пинит `OverflowDroppedEvents` ровно так).
+- [ ] **Step 8 (мутации: половина M246, M247, M248, M249, M250, M251, M252, M253 —
+      **восемь**; предсказания ДО прогона).**
+- [ ] **Step 9:** R-TEST полный → красных ноль; `total` — по счёту исполнителя.
+- [ ] **Step 10:** свипы → R-COMMIT `feat(app-8dv): T5 — предсказанный след своего выстрела`.
+
+### Task T6: очередь предсказаний вспышки и звука
+
+⛔ Механизм «пол по времени» **не воскрешается** — три измеренные причины отката в ноте
+`app-8dv` (эхо реконсиляции приходит позже пола; такт огня квантован и даёт зазоры
+133/100 мс при поле 96 мс; очередь ломала контракт «грант ≠ показ»).
+
+⭐⭐ **Записи ключуются `ShotOrdinal`** (Р454, рулинг 322). Правило «одно за раз»
+существует **не** ради очереди: **реконсиляция выдаёт второй фронт на один выстрел**
+(G-2, шапка латча) — переигрывание двигает `FireCooldown` назад, гейт идёт false→true
+повторно для уже показанного выстрела, а событие приходит одно. Снять замок голой
+очередью значит показать выстрел дважды (`app-id9`).
+
+**Files:**
+- Modify: `client/Assets/Scripts/Presentation/ImmediatePredictionLatch.cs`
+- Modify: `client/Assets/Scripts/Presentation/SimulationRunner.cs` (свойство ключа рядом
+  с `WouldFireThisFrame` `:483`; 🆕 **дока события `WorldRestarted` `:832-838` — счёт и
+  поимённый список подписчиков**)
+- Modify: `client/Assets/Scripts/Presentation/MuzzleFlashView.cs` (`:236`, `:251`, `:323`
+  🆕 **+ `OnEnable`/`OnDisable`: подписка на `WorldRestarted`, сегодня её нет**),
+  `client/Assets/Scripts/Presentation/AudioDirector.cs` (`:244`, `:249`, `:342`
+  🆕 **+ сброс выстрельного латча внутри `StopAll`**, подписка уже есть `:154/:156`)
+- Modify: `client/Assets/Tests/EditMode/ImmediatePredictionLatchTests.cs` (+ новые;
+  ⛔ **восемь существующих — БЕЗ ПРАВОК**)
+
+**Interfaces:**
+
+```csharp
+// ImmediatePredictionLatch.cs — параметры ОПЦИОНАЛЬНЫ, и это решение:
+// умолчание означает "сегодняшнее поведение" для четырёх живых вызывающих,
+// из которых ДВА дэшевых не меняются ни строкой.
+public bool ShouldPredict(bool gateSatisfied, float now, int key = NoKey);
+public void Arm(float now, float windowSeconds, int key = NoKey);
+public bool TryConsume(float now);
+
+/// ⚠ СЕНТИНЕЛ — НОЛЬ, И ОН НАЗВАН ЧИСЛОМ (находки B-I5₂/D-I9₂/I9₃): дэшевые
+/// вызывающие ключа не передают, и для них проверка идентичности выключена
+/// целиком. Без сентинела все дэши шли бы под одним значением и второй дэш
+/// отвергался бы навсегда — падали бы восемь существующих тестов, которые
+/// DoD обещает держать зелёными без правок. Ноль СВОБОДЕН именно потому,
+/// что ключ выстрела пост-инкрементный и первый выстрел матча получает 1.
+public const int NoKey = 0;
+
+/// Ёмкость очереди и кольца показанных ключей — ВЫВЕДЕНА, а не выбрана
+/// (прецедент ClientEventQueue: "capacity is DERIVED from the two numbers
+/// that actually bound the wait"): ceil(BufferedWindowSeconds 0.5 /
+/// FireInterval 0.12) = 5. Кольцо не короче очереди — иначе запись пережила
+/// бы собственный ключ (находка M7₃).
+const int DefaultCapacity = 5;
+
+// SimulationRunner.cs — ОДИН источник ключа, рядом с гейтом, который и
+// существует затем, "чтобы решения двух компонентов не разъехались" (Р470).
+// Значение доступно: BlendOwnPlayer копирует ВЕСЬ предсказанный PlayerState
+// (`PlayerState pose = _ownCurr;`, лерпится только Pos).
+public int PredictedShotKey => Ready ? RenderCurr.Player.ShotOrdinal + 1 : 0;
+```
+
+⚠ **Смена семантики гранта названа** (находка D-I8): сегодня `ShouldPredict` ничего не
+взводит, поэтому «грант без показа» невозможен. Новое правило «грант кладёт запись,
+показ помечает» требует, чтобы **непомеченная запись пропускалась `TryConsume`** — иначе
+акт не будет показан вовсе. Это своё правило, свой тест и своя мутация.
+
+⛔ **Дэшевая половина не меняется ни строкой.** Инстансов латча четыре
+(`MuzzleFlashView.cs:176`, `AudioDirector.cs:115`/`:127`,
+`PersistentPropsDirector.cs:303`); два последних — дэшевые.
+
+- [ ] **Step 1 (RED):** тесты 23–26 в `ImmediatePredictionLatchTests`:
+      три гранта подряд показаны все три; ⭐⭐ **сценарий реконсиляции** — повторный
+      фронт с тем же `ShotOrdinal` не даёт второго показа, **в обоих порядках** (фронт
+      до события и после); рестарт — кольцо ординалов сброшено, первый выстрел нового
+      матча предсказан; непомеченная запись пропускается `TryConsume`.
+- [ ] **Step 2:** заглушки до компиляции; R-FILTER `ImmediatePredictionLatchTests` →
+      `EXIT=2`, `testcasecount` = **12**, ⛔ **восемь существующих обязаны быть
+      ЗЕЛЁНЫМИ уже здесь** — если хоть один красен, опциональность параметров нарушена,
+      и это стоп.
+- [ ] **Step 3 (GREEN):** очередь записей `{key, expireAt, shown}`; кольцо показанных
+      ключей — **приватное поле каждого инстанса**; переполнение — отказ значением со
+      счётчиком (Р82).
+- [ ] **Step 3a (GREEN, У СБРОСА ПОЯВЛЯЕТСЯ БОЕВОЙ ВЫЗЫВАЮЩИЙ — иначе тест 25 зелен, а
+      бой сломан):** `Reset()` объявляется (см. Interfaces) и **зовётся по рестарту
+      матча**, потому что `ClientMatchReset` до `Presentation` не дотягивается
+      (`Presentation.asmdef` не ссылается на `Ring.Networking`, Р180). Событие в
+      `Presentation` уже есть — `SimulationRunner.WorldRestarted`, и на него подписаны
+      четверо (`AudioDirector.cs:154/156`, `DeathOverlayController.cs:109/111`,
+      `DevOverlay.cs:66`, `PersistentPropsDirector.cs:346`).
+      ⇒ `AudioDirector` получает **свой обработчик** `HandleWorldRestarted()`
+      (`StopAll(); _latch.Reset();`), и подписка `:154/:156` переводится на него.
+      ⚠ **Не «дописать `_latch.Reset()` внутрь `StopAll`»** (собственная находка при
+      проверке починки): `StopAll` называет то, что делает — останавливает голоса, — и
+      сегодня он вызывается ровно из одного места, но имя обязано остаться честным, если
+      завтра его позовут откуда-то ещё. Прецедент формы рядом:
+      `DeathOverlayController.HandleWorldRestarted` (`:246`).
+      `MuzzleFlashView` **заводит `OnEnable`/`OnDisable`** — сегодня их у него нет вовсе,
+      а поле `_runner` уже есть (`:168`), — по дословному образцу соседа. ⛔ **Дэшевые латчи не трогаются**: их состояние
+      оконное, и старое решение шапки для них остаётся верным.
+      ⚠ **Абзац «A MATCH RESTART CLEARS NOTHING HERE» правится здесь же** — тем же
+      приёмом, каким T7 отменяет половину правила #12 `NetInvariants`: решение
+      отменяется **явной правкой**, а не молча, иначе дока и код спорят.
+      ⚠ **Что именно чистит `Reset()` — названо поимённо**, иначе обещание теста 25 в бою
+      не выполняется: `_armed`, `_expireAt`, `_shownFromEvent`, `_shownExpireAt`, очередь
+      записей, кольцо показанных ключей **и `_gateWasSatisfied`**. Последнее — не
+      формальность: шапка класса прямо говорит, что оно переживает рестарт и что «a
+      player who holds Fire across a restart gets no prediction for the first round of
+      the new match», а тест 25 обещает ровно обратное.
+      ⛔ **КРИТЕРИЙ ПРИЁМКИ, потому что EditMode сюда не достаёт** (правило регламента о
+      Presentation-шаге): (1) R-COMPILE зелёный; (2) свип
+      `grep -n "WorldRestarted" client/Assets/Scripts/Presentation/MuzzleFlashView.cs`
+      даёт **две** строки — подписку и отписку; (3) **пункт вехи 2а в T11**: после
+      рестарта матча первый выстрел нового матча предсказан — вспышка и звук на первом
+      же нажатии.
+      ⛔ **Кольцо латча и кольцо журнала (T4) — РАЗНЫЕ**, и в доке класса это сказано
+      тремя причинами: разные вопросы в разных фазах кадра; инстансов четыре, и общий
+      счётчик дал бы вспышке глушить звук того же выстрела; `ClientMatchReset` физически
+      не достаёт латч (`Presentation.asmdef` не ссылается на `Ring.Networking`, Р180).
+- [ ] **Step 4 (GREEN, вызывающие):** `MuzzleFlashView` и `AudioDirector` (выстрел)
+      передают `_runner.PredictedShotKey` в `ShouldPredict` и в `Arm`; дэшевые — ничего
+      не передают.
+- [ ] **Step 4a (доки, которые иначе станут ложью — это РАБОТА таска, а не побочный
+      эффект):** три места правятся здесь же, и каждое сегодня утверждает обратное тому,
+      что таск делает.
+      (а) **Шапка `ImmediatePredictionLatch`**: «ONE UNCONFIRMED PREDICTION AT A TIME» —
+      второй из трёх фактов класса — перестаёт быть фактом для выстрела и остаётся им
+      для дэша; абзац «WHAT IT COSTS, SAID PLAINLY» («some rounds of a held burst are
+      shown late rather than early») описывает ровно ту цену, которую таск и снимает.
+      (б) ⭐⭐ **Комментарий G-4 в `AudioDirector` (`:249-259`)** — он **предсказывает
+      этот заход и его опасность дословно**: «It could only have lost a sound while the
+      latch held a QUEUE of predictions, where one shot's event could consume a record
+      another shot had left behind». Это ровно тот дефект, который лечит правило «грант
+      кладёт запись, показ помечает, непомеченная запись пропускается `TryConsume`»
+      (тест 26 / M257). ⛔ Оставить абзац как есть — значит оставить в файле
+      предупреждение против правки, которая уже сделана и покрыта тестом; следующий
+      читатель поверит комментарию, а не коду.
+      (в) 🆕 **и тот самый абзац про рестарт** (Step 3a).
+      (в-бис) 🆕 ⛔ **Дока события `SimulationRunner.WorldRestarted` (`:832-838`)** — она
+      перечисляет подписчиков **поимённо** и говорит «nine registries listen for it», а
+      их уже десять (`InventoryWindowController` в списке нет). T6 добавляет
+      одиннадцатого — `MuzzleFlashView`, — и список правится вместе с ним. Это тот же
+      класс дефекта, который план чинит у `ClientMatchReset` («eight seams» → десять) и
+      который сам бутстрап называет «a comment that lies about the code».
+      (г) **Инвентарь снят свипом этой сессией, а не памятью** (урок 492):
+      `grep -rn "ONE UNCONFIRMED|one at a time|ONE PREDICTION" client/Assets/Scripts/`
+      даёт **четыре** вхождения, из которых правки требует **одно** —
+      `ImmediatePredictionLatch.cs:31`. Соседнее `:26` («ONE PREDICTION PER GATE PULSE»)
+      **остаётся в силе и не трогается**: одно предсказание на импульс гейта — это про
+      фронт, а не про замок. Два оставшихся (`ISimBackend.cs:439`,
+      `PersistentPropsDirector.cs:227`) — про другое и к латчу отношения не имеют.
+      ⚠ В `GhostProjectiles` такой формулировки нет вовсе — проверено тем же свипом.
+- [ ] **Step 5:** R-FILTER `ImmediatePredictionLatchTests` → **PASS 12/12**, из них
+      восемь старых — **без единой правки** (пункт гейта).
+- [ ] **Step 6 (мутации M254, M255, M256, M257, M265; предсказания ДО прогона).**
+      ⚠ **M256** («дэшевый вызывающий получает ключ и ёмкость») жертвой имеет **восемь
+      существующих тестов** — это и есть машинная запись обещания «дэш не тронут».
+- [ ] **Step 7:** R-TEST полный → красных ноль.
+- [ ] **Step 8:** свипы → R-COMMIT `feat(app-8dv): T6 — очередь предсказаний вспышки и звука`.
 
 **Гейт фазы Ф-C:**
 - R-TEST: красных ноль; эталоны зелёные.
 - Восемь тестов латча зелены **без правок**; восемь `RewindDepthTests` зелены.
-- Мутации фазы: девять (T5) + пять (T6) + четыре (T7) — **восемнадцать**.
+- Мутации фазы: восемь (T5) + пять (T6) + три (T7) — **шестнадцать**.
 - ГЕЙТ-КОДОГЕН пуст (провод фаза не трогала — проверить, а не предположить).
 - Два ревьюера на таск; `bd note`; push; jsonl-chore.
 
@@ -2243,6 +2444,10 @@ Windows-клиент от `6ed99ed` устарел ещё до этого зах
 1. ⭐⭐ **След выходит из ствола в момент нажатия** — главный вердикт; `app-umeg`
    закрывается им.
 2. ⭐ **Спрей читается**: вспышка и звук на **каждом** выстреле очереди.
+2а. 🆕 **После рестарта матча первый выстрел нового матча предсказан** — вспышка и звук
+   на первом же нажатии. ⚠ Это единственный наблюдаемый критерий сброса кольца латча:
+   EditMode до подписки `MuzzleFlashView` не достаёт, и без этого пункта тест 25 остался
+   бы зелёным при сломанном бое.
 3. **Рисунок ощущается и отыгрывается.** ⚠ Число для разговора: при `SprayYawTurns 0.7`
    направление меняется **раз в 8.57 выстрела (1.03 с)** — внутри жанрового 8–10.
 4. **Вертикаль помогает, а не мешает** (Н32). ⚠ Считать по **прицельным** числам:
@@ -2312,29 +2517,29 @@ bd create "Ф-D: амендменты ADR, сборки и веха плейте
 | M238 `SprayVariance` игнорируется | T1 Step 15 | `VarianceZeroIsPurePattern_AndOneIsAUniformDraw` |
 | M239 `v := u` (одна соль на обе оси) | T1 Step 15 | `TheTwoAxesAreUncorrelated` (корреляция уходит к 1.0) |
 | M240 посев берёт `BurstShots` вместо `ShotOrdinal` | T1 Step 15 | `TheSeedComesFromTheShotOrdinal_NotFromTheBurstCounter` |
-| M241 счётчики растут в `Update`, но не в `AdvanceNoSpawn` | T1 Step 15 | **`TheClientAndTheServerAgreeOnTheAngle` — сердце задачи** |
+| M241 счётчики растут в `Update`, но не в `AdvanceNoSpawn` | T1 Step 15 | **`TheClientAndTheServerAgreeOnTheShotCounters`**. ⚠ Свидетель «один УГОЛ» — тест 14 таска T4: до журнала клиентский угол ненаблюдаем (конус распадается внутри `Advance` до выстрела) |
 | M242 вертикаль всегда ноль | T1 Step 15 | `HipFire_NoLongerFlies_PerfectlyFlat` (ожидание — число из геометрии, не «больше нуля») |
 | M243 тангаж применяется только к ветке от бедра | T1 Step 15 | 🆕 **`AimedFire_AlsoClimbs_ButTheShiftDecaysWithTheExistingTilt`** — отдельный тест прицельной ветки. ⛔ Прежняя жертва («тот же тест в прицельной половине») мутанта не убивала: тот стреляет только от бедра |
 | M263 ослабить каждое из шести правил `Validate` (**шесть мутаций**) | T1 Step 15 | шесть свидетелей в `ConfigTests` — по жертве на правило |
-| **M269** новое поле не входит в round-trip `ReconcileData` | T1 Step 14 | `ReconcileCodecTests.ReconcileData_SurvivesTheFishNetWireRoundTrip` — филлер рефлективен (`:29-30`, `:47-73`), поэтому свидетель **уже есть** и краснеет сам |
+| **M269** новое поле не входит в round-trip `ReconcileData` | T1 Step 15 | `ReconcileCodecTests.ReconcileData_SurvivesTheFishNetWireRoundTrip`. ⚠ **Форма ослабления названа** (находка круга 2): ручного сериализатора `PlayerState` в дереве нет — байты кладёт кодоген по полям, поэтому единственная исполнимая мутация это `[System.NonSerialized]` на `BurstShots`. Свидетель рефлективен (`:29-30`, филлер `:47-74`) и краснеет сам |
 | M264 `amp = k/N` без `min` | T1 Step 15 | `Amplitude_SaturatesAtThePatternLength` |
 | M261 снять инкремент `HeadHits` / спутать зоны | T8 Step 6 | `AHeadHitRaisesHeadHits_ButNotHeadshotKills_WhenTheMobSurvives` |
 | M262 вынести счётчики зон наружу из `IncrementShotsHit` | T8 Step 6 | `TheThreeZonesSumToShotsHit_IncludingAShooterWhoDiedInFlight` |
 | M267 `HeadshotKills` растёт без `HeadHits` | T8 Step 6 | `HeadshotKills_NeverExceedHeadHits` |
 | M268 счётчики зон не едут в `FinalStats` | T8 Step 6 | `TheZoneCountersRideTheEndOfMatchMessage` |
 | **M270** 🆕 в `Solve` предшаг K9 идёт до рисунка | T3 Step 6 | `Solve_ReproducesTheAngleTheWorldFires`, **ассерты по `SpawnPos`/`Height`** — угол мутация не трогает |
-| **M271** 🆕 `BirthSteps` считается как `InputTicks`, без `+1` | T3 Step 6 | `Solve_SplitsTheRewindDepthOnce`. ⛔ Прежняя форма («второй вызов от необрезанного `k`») поведения не меняла: `Sanitize` клампит заявку до `Step` |
+| ~~M271~~ | — | ⛔ **СНЯТА кругом 2: закрыта по построению.** `BirthSteps` — вычисляемое свойство `InputTicks + 1`, второго дома у числа нет, ослаблять нечего |
 | M244 журнал не пишет запись (сегодняшнее состояние) | T4 Step 10 | **`APredictedShotWritesARecord` — прямой RED, пишется первым** |
 | M245 журнал пишет вне цикла, из пост-тикового состояния | T4 Step 10 | `TheRecordCarriesThePreShotConeAndOvershoot` |
 | M246 бэкенд не отбрасывает повторы реплея по ключу | T4 Step 10 + T5 Step 8 | тест 15 (⚠ **половина мутации живёт в приватной строке бэкенда** и убивается чистой функцией T5 Step 5) |
-| **M272** 🆕 `BeginReconcile` не чистит кольцо ключей | T4 Step 10 | «после отката ординала выстрел реплея рождает след» — иначе ветка без свидетеля |
-| M247 снять кэп рождений за кадр | T5 Step 8 | тест 16 через `OwnShotRouting.SpawnsThisFrame` |
+| **M272** 🆕 `TryClaim` сравнивает только тик, без `seqInTick` | T4 Step 10 | «два выстрела в одном тике рождают два следа» (`FireInterval 0.01`). ⛔ Прежняя форма («`BeginReconcile` не чистит кольцо») снята вместе со швом — круг 2 |
+| M247 снять кэп рождений за кадр | T5 Step 8 | тест 16 через `OwnShotPolicy.SpawnBudgetFor` |
 | M248 свой `ProjectileSpawned` рождает след наравне с чужим | T5 Step 8 | тест 17 через `RouteOwnSpawn` (ответ `AdoptGhost` вместо `Ignore`) |
-| M249 `TryConfirm` отказал → след не рождается вовсе | T5 Step 8 | тест 18 через `RouteOwnSpawn` (ответ `PlainSpawn`) |
+| M249 `TryConfirm` отказал → след не рождается вовсе | T5 Step 8 | тест 18 через `RouteOwnSpawn` (ответ `SpawnPlainly`) |
 | M250 `Adopt` не проставляет второй ключ | T5 Step 8 | тест 19 |
-| M251 сентинел `NoServerId` не проставляется | T5 Step 8 | тест 20 (снаряд с серверным кодом **0** не находит чужой след) |
+| M251 сентинел `NoAdoptedServerId` не проставляется | T5 Step 8 | тест 20 (снаряд с серверным кодом **0** не находит чужой след) |
 | M252 `IndexOf` ищет только по первичному ключу | T5 Step 8 | тест 21 (гард дубля в `TrySpawn`) |
-| M253 протухшие id снова выбрасываются | T5 Step 8 | тест 22 через `OwnShotRouting.RetiresTracerOfExpiredGhost` |
+| M253 протухшие id снова выбрасываются | T5 Step 8 | тест 22 на `TracerProjectiles.Retire` (он уже отвечает `bool` «был ли трек») — ⛔ обёртки нет, круг 2 снял её как тавтологию |
 | M254 латч без ключа | T6 Step 6 | **тест 24 — сценарий реконсиляции, оба порядка** |
 | M255 кольцо ординалов не сбрасывается на рестарте | T6 Step 6 | тест 25 |
 | M256 дэшевый вызывающий получает ключ и ёмкость | T6 Step 6 | **восемь существующих `ImmediatePredictionLatchTests`** |
@@ -2345,19 +2550,22 @@ bd create "Ф-D: амендменты ADR, сборки и веха плейте
 | M260 заклампить только `:1543`, оставив `:3130` | T7 Step 6 | тест 29 через `RewindDepthMeter.DrawTickFor` (Step 5a) **плюс свип** «`renderTick + _` даёт ноль строк». ⛔ Без выноса выражения жертвы у неё нет: обе площадки приватны |
 | M266 `DrawDepth` всегда возвращает кап | T7 Step 6 | тест 29б |
 
-**Итого мутаций: 42.** ⚠ **Счёт пересобран после ревью — прежний был внутренне
-противоречив** (находка D-m1: «41» считала M263 одной строкой, а гейт фазы — шестью).
-Правило счёта названо: **M263 — это ШЕСТЬ мутаций** (по одной на правило валидации),
-остальные строки — по одной. По фазам: **Ф-A 25** (T1: 14 строк, из них M263 = 6 ⇒ 19
-мутаций… считает исполнитель по своему листу; T8: 4), **Ф-B 6** (T3: 2, T4: 4),
-**Ф-C 17** (T5: 8, T6: 5, T7: 4). ⛔ **Число в этой строке — ориентир; источник истины —
-лист исполнителя, записанный ДО прогона**, ровно как для `total` и «красных N».
-Новых мутаций плана три: **M270, M271, M272**.
+**Итого прогоняемых мутаций: 45.** ⚠ **Счёт пересобран ДВАЖДЫ — первая редакция дала
+41 против суммы гейтов 48, вторая исправила правило, но не арифметику** (находка
+круга 2). Правило: **M263 — это ШЕСТЬ мутаций** (по одной на правило валидации),
+остальные строки — по одной; **M271 снята** (закрыта по построению), **M269 исполняется
+гейтом**, а не прогоном.
+По фазам, и суммы сходятся с гейтами: **Ф-A 24** = T1 **20** (14 строк, из которых
+M263 считается шестью) + T8 **4**; **Ф-B 5** = T3 **1** (M270; M271 снята) + T4 **4**;
+**Ф-C 16** = T5 **8** + T6 **5** + T7 **3** (M258, M259, M266; M260 — через `DrawTickFor`,
+считается в тех же трёх).
+⛔ **Числа — ориентир; источник истины — лист исполнителя, записанный ДО прогона**,
+ровно как для `total` и «красных N». Новых мутаций плана две: **M270, M272**.
 ⚠ **Тасков БЕЗ мутаций три, и у каждого назван критерий вместо неё:** T2 (перепин —
 критерий «красных ноль после, ровно три до»), T9 (ADR, кода нет), T10/T11 (сборки, образ
 и веха — гейты и плейтест).
 
-## Отклонения от спеки (правило 22) — **восемь** записей
+## Отклонения от спеки (правило 22) — **одиннадцать** записей
 
 1. ⛔⛔ **T8 исполняется ДО T2, а не «без зависимости» (§10).** Спека §4.2 сама называет
    «три счётчика зон в `HashStats`» среди причин сдвига эталонов, а §10 не ставит T8
@@ -2370,8 +2578,7 @@ bd create "Ф-D: амендменты ADR, сборки и веха плейте
    §3.4 называет «кольцо рождённых ключей у бэкенда», но типа не даёт. Приватное поле
    `NetworkSimBackend` было бы **непокрываемо EditMode** (его конструктор требует живой
    `NetworkManager`), а мутация M246 и новая M272 остались бы без жертв. Отдельный класс
-   получает тесты, попадает в `ClientMatchReset` десятым швом и делает шов
-   `BeginReconcile` исполнимым.
+   получает тесты и попадает в `ClientMatchReset` десятым швом.
 3. **Тик записи журнала приходит через `PredictedShotLog.BeginTick`, а не через
    `Advance`.** Спека §3.4 фиксирует сигнатуру `Advance` ровно с одним новым параметром
    (`logOrNull`), и тика FishNet в ней нет. Проверено: `PerformReplicate` держит
@@ -2403,14 +2610,39 @@ bd create "Ф-D: амендменты ADR, сборки и веха плейте
    выводит ёмкость кольца и разбирает стресс-кейс `FireInterval 0.01`. Ключи монотонны в
    пределах прямого прогона, поэтому «рождён ли уже» — это сравнение с границей, а
    `BeginReconcile` её опускает; вопрос ёмкости исчезает вместе с кольцом. Свойства
-   сохранены все, включая дедуп реплея и откат ординала (M246, M272).
+   ⚠ **И это отклонение круг 2 переписал ещё раз, уже по существу — см. запись 9.**
 8. 🆕 **Идентификатор `IndexOfServerId` из §3.1 спеки не заводится.** Спека
    противоречит себе: §3.1 называет новый член, §10 той же спеки — «`IndexOf` по обоим
    ключам». Берётся второе: член уже существует (`TracerProjectiles.cs:993`) и его
    читают пятеро (`:386`, `:440`, `:502`, `:601` и `RestoreShooter` через `TryGetOwner`).
-   ⚠ И сентинел второго ключа называется **`NoAdoptedServerId`**, а не `NoServerId`:
-   имя `NoServerId` уже занято в том же namespace (`GhostProjectiles.cs:171`) с ДРУГИМ
-   значением и другим смыслом, а значение −1 вдобавок совпадает с `FirstGhostId`.
+   ⚠ И сентинел второго ключа называется **`NoAdoptedServerId`**, а не `NoServerId`.
+   ⛔ **Причина — НЕ коллизия имён, и первая редакция этой записи выдумала факт**
+   (находка круга 2, проверена лично): `GhostProjectiles.NoServerId` объявлен **без
+   модификатора внутри класса** (`:171`), то есть приватен, в namespace не виден и
+   компиляции не мешает — прецеденты приватных сентинелов рядом: `TracerProjectiles.NoEnd`,
+   `HitFeedbackTrail.NoTick`. Настоящих причин две: **читаемость** (у госта «не
+   подтверждён», у трассера «не усыновлён» — два разных факта одним именем) и
+   **значение**: −1 у трассера совпало бы с `GhostProjectiles.FirstGhostId` (`:177`),
+   а `IndexOf` ищет по обоим ключам.
+9. 🆕 ⛔⛔ **Дедуп рождения идёт по ТИКУ FISHNET, а не по `ShotOrdinal`, и шов
+   `BeginReconcile` из §3.4 НЕ ЗАВОДИТСЯ.** Механизм спеки даёт дубль следа примерно
+   тридцать раз в секунду — на каждой реконсиляции, а не на мисспредикте: `[Reconcile]`
+   приходит на каждый стейт-пакет, авторитетный ординал отстаёт на глубину предсказания,
+   вычистка «всё выше авторитетного» опускает границу ниже уже нарисованных следов,
+   реплей на клиенте-владельце снова идёт в `Predict`, а гард дубля у трассера
+   промахивается, потому что каждый новый гост получает новый ghost-id. Разбор с
+   адресами — в доке `SpawnedShotKeys` (T4). ⚠ **Ключ `ShotOrdinal` при этом остаётся у
+   латча (T6) и остаётся правильным там**: у него вопрос «показан ли этот акт», и
+   повторный фронт реконсиляции — это тот же акт с тем же ординалом.
+   ⚠ **Цена нового механизма названа:** выстрел, перенесённый коррекцией на другой тик,
+   родит второй след — это риск Р-C, уже принятый спекой, и платится он только на
+   настоящем мисспредикте огня.
+11. 🆕 ⛔ **Вырожденного случая `vel3.xy == 0` НЕ СУЩЕСТВУЕТ, и теста под него нет.**
+   Спека §3.2 называет его законным и требует «пинить тестом, чтобы не читалось как
+   дефект». Проверено по исходнику пакета: `math.normalizesafe` возвращает не ноль, а
+   **fallback** (`math.select(defaultvalue, …)`), и обе ветки `SpawnShot` передают
+   ненулевой `(1, 0)`. ⇒ горизонталь не обнуляется ни при каком вводе, включая стрельбу
+   себе под ноги в упор; тест, написанный по букве спеки, был бы красен на верном коде.
 
 ## Соответствие спеке (сводно)
 
@@ -2425,15 +2657,23 @@ Constraints + Files каждого таска · §3.2 рисунок вмест
 валидация → T1 Steps 10–13 · §3.9 чего не делаем → вне плана по построению · §4.1 пять
 ожидаемых красных → таблица «Что красное на каждом таске» · §4.2 перепин №5 → **T2**
 (шесть причин поимённо) · §4.3 мутации M231–M269 → таблица выше · §4.4 тесты 1–36 →
-T1 (1, 3, 4а–в, 7–9 в `SprayPatternTests`; 2, 5, 6, 10–12 в `WeaponTests`), T4 (13, 14),
+T1 (1, 3, 4а–в, 7–9 в `SprayPatternTests`; 2, 5, 6, 10–12 в `WeaponTests` — ⚠ у теста 6
+слайдовая треть остаётся сторожем, запись 10 «Отклонений», а у теста 12 вырожденная
+половина снята, запись 11), T4 (13, 14),
 T5 (15–22), T6 (23–26), T7 (27–29б), T8 (30–33), T1 (34 — свой тест в `ConfigTests`;
 **35 — автоматически, рефлективным филлером `ReconcileCodecTests`**; 36 — рефлективный свип
 `SimConfigHashTests`, пункт гейта) · §5 веха → **T11** ·
 §6 decision log Р445–Р470 → исполняется по месту, ссылки в тексте тасков ·
 §7 DoD → гейты фаз · §8 риски → таблица ниже · §9 амендменты → **T9** ·
-§10 декомпозиция → фазы Ф-A…Ф-D с одним отклонением (запись 1).
+§10 декомпозиция → фазы Ф-A…Ф-D с двумя перестановками: **T8 перед T2** (запись 1,
+отклонение) и **T7 перед T5** внутри Ф-C (не отклонение — спека даёт T7 без
+зависимостей, а T5 обязан считать глубину, которую заводит T7).
 
-**Пункты DoD §7, забранные поимённо:** тест 10 → T1 Step 5; тест 4б в новой
+**Пункты DoD §7, забранные поимённо:** ⭐⭐ **«тест 10 зелёный: клиент и сервер дают один
+угол, серверный читается из события» → T4 Step 4 (тест 14)**, а не T1: до журнала
+клиентский угол ненаблюдаем, потому что конус распадается внутри `Advance` до выстрела
+(`WeaponSystem.cs:75`), и сравнение от состояния «до тика» было бы красным на верном
+коде. В T1 остаётся половина, которую мутация M241 и трогает, — счётчики; тест 4б в новой
 формулировке → T1 Step 1; ⛔ **`unconfirmedGhosts` в логе забега остаётся 0** (он считает
 **НЕ**подтверждённые — урок 687) → факт работы предсказания подтверждается **счётчиком
 отброшенных сверх кадрового кэпа** (T5) и пунктом вехи 1, отдельного «счётчика
@@ -2448,7 +2688,7 @@ T5 (15–22), T6 (23–26), T7 (27–29б), T8 (30–33), T1 (34 — свой т
 | # | Риск | Где смягчается в плане |
 |---|---|---|
 | **Р-A** | Рисунок меняет TTK и ощущение боя | ⭐ **Откат ДВУМЯ числами** (`SprayVariance = 1` + `SprayPitchAmplitude = 0`) без правки кода — и валидация **обязана их пропускать** (T1 Step 12 пинит обе границы отдельными тестами); остальные три числа крутятся живьём на вехе T11 |
-| **Р-B** | Предсказание расходится на реконсиляции | Оба счётчика едут в `ReconcileData` целиком (тест 35 — round-trip, T1); журнал дописывается реплеем; кольцо ключей чистится швом `BeginReconcile` (T4 Step 7), и у этого шва своя мутация M272 |
+| **Р-B** | Предсказание расходится на реконсиляции | Оба счётчика едут в `ReconcileData` целиком (тест 35 — round-trip, T1); журнал дописывается реплеем; ⭐ **дедуп рождения идёт по тику FishNet, который реконсиляция не двигает** (T4), поэтому повтор реплея отбрасывается по построению, а не швом, который сам был бы источником дублей |
 | **Р-C** | «KNOWN LIMIT» гостов становится видимым | Один неверно опознанный след, самоисправляется; цена принята спекой и названа в доке `GhostProjectiles` |
 | **Р-D** | Очередь латча воскрешает `app-id9` | Ключ + кольцо показанных (T6); **тест 24 в обоих порядках**; M254 и M265 бьют в обе половины замка |
 | **Р-E** | Вертикаль делает бег и слайд бесполезными | Числа сняты **до** плейтеста (§0 спеки, повторены в T11 пункт 4); в упор — тело в любом режиме; гасится нулём |
@@ -2526,11 +2766,9 @@ RED → verify FAIL → GREEN → verify PASS → мутация → приём�
 внутреннего противоречия §3.1 и §10 самой спеки. ⚠ **Ни одна не меняет ни одного числа
 рисунка и ни одного решения владельца Н27–Н34.**
 
-## Что исправил self-review плана (v1 → v2)
+## Что исправили круги self-review (v1 → v2 → v3)
 
-Четыре Explore-ревьюера по `review_plan.md`; **15 Critical, 32 Important, ~31 Minor,
-ложных ноль**. Каждая Critical открыта и проверена лично. Ниже — только то, что меняло
-план; полные отчёты остались в транскрипте сессии.
+### Круг 1 (против v1): 15 Critical, 32 Important, ~31 Minor, ложных ноль
 
 **Класс 1 — свидетель не умирает от своей мутации (пять мест, самый ценный улов).**
 M237 пинилась **слайдом**, который огня не закрывает вовсе (`CanFireWhileSlide = true` и
@@ -2607,6 +2845,83 @@ M260 «убивалась тестом», который в EditMode ненап�
 0.781/0.523, размах 1.988 против ровно нуля, первый выстрел 0.042 конуса, полупериод
 8.571). Словарь ADR-003 чист, слои и границы asmdef верны, `float.PositiveInfinity` и
 `int`-типы полей обоснованы, счётчики фикстур сошлись пофайлово.
+
+### Круг 2 (против v2): 21 Critical, 41 Important, ~26 Minor, ложных ноль
+
+⛔ **Девять Critical сидели в починках круга 1.** Это и есть ответ на вопрос «зачем
+второй круг»: правка, сделанная по верной находке, сама оказывается новым дефектом чаще,
+чем кажется.
+
+**Класс 1 — механизм спеки давал дубль следа тридцать раз в секунду.** Дедуп «ключ =
+`ShotOrdinal`» плюс шов `BeginReconcile` (§3.4) разобран по коду: `[Reconcile]` приходит
+на **каждый** стейт-пакет, авторитетный ординал отстаёт на глубину предсказания,
+вычистка «всё выше авторитетного» опускает границу ниже уже нарисованных следов, реплей
+на клиенте-владельце снова идёт в `Predict`, а гард дубля у трассера промахивается —
+каждый новый гост получает новый id. Спека смешала «рождён авторитетно» с «след уже
+нарисован». ⇒ дедуп переехал на **тик FishNet** (монотонен для процесса, реплей
+переигрывает те же тики), шов снят, M272 переформулирована. Запись 9 «Отклонений».
+
+**Класс 2 — четыре теста были бы красны на ВЕРНОМ коде.** Вырожденный случай
+`vel3.xy == 0` не существует вовсе (`normalizesafe` отдаёт fallback `(1,0)`, а не ноль) —
+снят вместе с оговоркой спеки; тест 10 сравнивал конус до распада отдачи, который
+`Advance` делает первой строкой; сторож T3 сверял до-шаговое решение с после-шаговым
+снарядом (расхождение 1.167 м при допуске `1e-4`) — точка вылета переехала на событие;
+лечение красных в `NetInvariantsTests` требовало поднять поле, которое правило #11
+держит равным другому.
+
+**Класс 3 — три ожидаемых красных не были предсказаны.** Третий в `NetInvariantsTests`
+(`InterpBufferTicksZero_IsReported` сужает другую половину суммы), четвёртый в T8
+(фикстура с добиванием, дописанная кругом 1, ломает оговорку «`0 <= 0` зелен»), и
+премисса-сторож в тесте 8 сама меняет счёт с пяти на шесть.
+
+**Класс 4 — мутации по-прежнему не убивали жертв.** M260 после выноса `DrawTickFor`
+оставалась живой (мутация в **выборе аргумента**, а не в сложении) — функция стала
+принимать измеренную глубину и кап; M271 закрылась по построению вместе с вычисляемым
+`BirthSteps` и снята; M269 не имела названной формы ослабления.
+
+**Класс 5 — план не компилировался бы (пять мест).** `Predict` растёт третьим параметром
+и ломает девять площадок, которых не было ни в одном инвентаре; T5 использовал
+`_drawDepth`, который заводит T7 (⇒ T7 переставлен перед T5); имя сентинела в блоке
+Interfaces осталось отменённым; `HipFire` звался без квалификатора; `TestWorlds.cs` и
+`TracerProjectilesTests.cs` отсутствовали в Files.
+
+**Класс 6 — дубли и лишние сущности, заведённые самой починкой.** `TestWorlds.HipFire`
+байт-в-байт повторял живой `WeaponTests.Fire` (⇒ подъём с удалением оригинала);
+`ShotSolution` хранил `Vel` там, где и сток, и провод ждут `Dir`/`HorizSpeed` порознь
+(⇒ вторая бессвидетельная арифметика в приватном методе, против рулинга 306);
+`BirthSteps` лежал полем рядом с `InputTicks`, из которого выводится; собственная
+квантизация прицела ничего не покупала — точка уже квантована проводом с практически
+тем же шагом; `NetStats` переоткрывался при закрытом составе; третий предикат
+маршрутизации возвращал свой же аргумент.
+
+**Класс 7 — я выдумал факт.** Обоснование переименования сентинела ссылалось на
+«коллизию имён в namespace», а константа соседа приватна. Настоящих причин две —
+читаемость и совпадение значения −1 с `FirstGhostId`. Ровно урок 689, и на этот раз он
+про меня.
+
+**Класс 8 — доки, которые стали бы ложью, и инвентари по памяти.** Дока события
+`WorldRestarted` перечисляет подписчиков поимённо и уже отстала на одного (их десять, а
+не девять); план называл четверых. Абзац на второй площадке глубины объясняет, почему
+выражение **повторено, а не вынесено**, — T7 его выносит. Сторож покрытия эталона
+(`GoldenScenario_ExercisesAllMechanics_Coverage`) после T1 становится тавтологией:
+«прицельный выстрел был» определяется через `VelZ != 0`, а теперь его несёт любой
+бедровый.
+
+**Класс 9 — дома и конвенции.** Свидетели валидации переехали в `ConfigTests`, но форма
+осталась от `ZoneConfigTests` (квалифицированные вызовы); граничная легальность
+вынесена в отдельный тест против конвенции файла; тест 34 дублировал существующий
+`Build_DefaultAssets_ProducesValidConfig`; публичная поверхность `SprayPattern` была
+шире, чем у соседа `Spread`, без названного потребителя; тесты второго ключа трассера
+были адресованы в файл интегратора, чья дока это запрещает.
+
+**Чего круг 2 НЕ нашёл (проверено и держится).** Порядок «T8 до T2» подтверждён всеми
+четырьмя ревьюерами независимо, как и шесть причин сдвига эталонов. Вся арифметика
+рисунка пересчитана дважды и сошлась до третьего знака. Инвентари площадок
+`PlayerPrediction.Step` (восемь) и конструктора `ClientMatchReset` (одиннадцать) верны.
+Три эталона и md5 сверены байт в байт. Счётчики фикстур (`WeaponTests` 14,
+`HitZoneTests` 12, `ImmediatePredictionLatchTests` 8, `RewindDepthTests` 8,
+`GhostProjectileTests` 17, `PlayerState` 36, `MatchStats` 10) сошлись пофайлово.
+Словарь ADR-003, слои, границы asmdef и отсутствие коммит-трейлера — чисты.
 
 ## ⭐ Вопросы владельцу (решения, которые план не принимает сам)
 
