@@ -1927,7 +1927,7 @@ namespace Ring.Simulation.Core
             // slot it leaves behind is never walked by HashMob.
             _mobs[index].TiltVel += Impact.AngularImpulse(hitHeight, target.CenterOfMassHeight,
                 dv, target.TiltGain);
-            if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex);
+            if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex, zone);
             if (_mobs[index].Hp <= 0f)
             {
                 if (ownerIndex != ProjectileIds.NoOwner)
@@ -2025,7 +2025,43 @@ namespace Ring.Simulation.Core
         /// DamagePlayer below is the second caller — a round that lands on
         /// another PLAYER credits its shooter exactly the same way one that
         /// lands on a mob does.
-        void IncrementShotsHit(int index) { if (_players[index].Alive) _matchStats[index].ShotsHit++; }
+        /// app-8dv / app-dw0z: `zone` arrives here because the per-zone
+        /// counters have to share the Alive guard with ShotsHit itself -- a
+        /// counter lifted out of it would part company with ShotsHit at the
+        /// shooter who died while his round was still flying.
+        /// ⭐ ONE GUARD, FOUR COUNTERS, AND THAT IS THE WHOLE POINT: the zone
+        /// buckets are incremented INSIDE the same `Alive` test ShotsHit is,
+        /// so `HeadHits + BodyHits + LegHits == ShotsHit` holds by
+        /// construction rather than by two call sites agreeing. Lifted out of
+        /// the guard they would part company with ShotsHit at exactly one
+        /// shooter -- the one who died while his round was still in the air --
+        /// and HitZoneTests.TheThreeZonesSumToShotsHit_IncludingAShooterWho
+        /// DiedInFlight is the witness that refuses that arrangement.
+        void IncrementShotsHit(int index, HitZone zone)
+        {
+            if (_players[index].Alive)
+            {
+                _matchStats[index].ShotsHit++;
+                switch (zone)
+                {
+                    case HitZone.Head: _matchStats[index].HeadHits++; break;
+                    case HitZone.Body: _matchStats[index].BodyHits++; break;
+                    case HitZone.Legs: _matchStats[index].LegHits++; break;
+                    default:
+                        // HitZone.None IS UNREACHABLE for a game round, and
+                        // the branch is written out rather than left implicit
+                        // so the next reader can see the omission was measured
+                        // instead of forgotten: HitZones.Resolve hands back a
+                        // real zone only together with `true`, and the callers
+                        // refuse every NoOwner path before they reach this
+                        // method. Nothing is counted here on purpose -- a
+                        // fourth bucket for "no zone" could only ever read
+                        // zero, and a counter that cannot move is a counter
+                        // nobody can test.
+                        break;
+                }
+            }
+        }
         void IncrementKills(int index) { if (_players[index].Alive) _matchStats[index].Kills++; }
         void IncrementHeadshotKills(int index) { if (_players[index].Alive) _matchStats[index].HeadshotKills++; }
 
@@ -2216,7 +2252,7 @@ namespace Ring.Simulation.Core
             // the intended reading of accuracy — damage dealt, not rounds that
             // merely arrived — not an oversight to be "fixed" by hoisting this
             // line above the guards.
-            if (attackerIndex != ProjectileIds.NoOwner) IncrementShotsHit(attackerIndex);
+            if (attackerIndex != ProjectileIds.NoOwner) IncrementShotsHit(attackerIndex, zone);
             _matchStats[victimIndex].DamageTaken += dmg;
             // EntityId/playerIndex (Stage 2 Task 7 decision 5): both carry the
             // VICTIM's index, spec §3.2 — the attacker is deliberately NOT what
@@ -3556,6 +3592,17 @@ namespace Ring.Simulation.Core
             // of state and the behavior behind it entered the digest in the
             // same phase, which is what errata E-1 asked for.
             h = StateHash64.Add(h, s.AmmoSpent); h = StateHash64.Add(h, s.CellsPicked);
+            // app-8dv / app-dw0z: the three per-zone hit counters, in the
+            // struct's own declaration order, after the economy pair above.
+            // They are hashed for the reason every other counter here is:
+            // they are per-tick state that survives across ticks, so a replay
+            // or a rollback that dropped them would report a different match
+            // and still claim the same digest.
+            // ⚠ THIS IS WHAT MOVES THE THREE GOLDEN DIGESTS on this task --
+            // sanctioned, and re-pinned once at T2, never here.
+            h = StateHash64.Add(h, s.HeadHits);
+            h = StateHash64.Add(h, s.BodyHits);
+            h = StateHash64.Add(h, s.LegHits);
             return h;
         }
 

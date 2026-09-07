@@ -1,4 +1,6 @@
 using NUnit.Framework;
+using Ring.Networking.Protocol;
+using Ring.Presentation.Net;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
@@ -28,6 +30,14 @@ namespace Ring.Simulation.Tests
         /// travel (ProjectileSpeed / 30), so a shot fired here lands on the very
         /// next tick and the fixture never has to budget for flight time.
         const float TargetX = 1f;
+
+        /// app-8dv / app-dw0z: the FAR target, for the one fixture that needs a
+        /// round to still be in the air on a later tick than the one it was
+        /// fired on. Not asserted as a tick count here -- the flight is a
+        /// PROPERTY the fixture checks for itself (`ProjectileCount > 0` after a
+        /// tick), so a change to ProjectileSpeed moves the number of ticks and
+        /// breaks nothing this file claims.
+        const float FlightX = 20f;
 
         static SimEvent Blow(SimulationWorld w, SimEventKind kind)
         {
@@ -421,6 +431,135 @@ namespace Ring.Simulation.Tests
             SimEvent damaged = Blow(w, SimEventKind.PlayerDamaged);
             Assert.AreEqual(HitZone.Legs, damaged.Zone);
             Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);
+        }
+
+        // -- app-8dv / app-dw0z: the per-zone hit instrument. The counters
+        // measure HITS; HeadshotKills, which the epic already had, measures a
+        // subset of KILLS. Conflating the two is the defect this task exists to
+        // remove (lesson 687). --
+
+        [Test]
+        public void AHeadHitRaisesHeadHits_ButNotHeadshotKills_WhenTheMobSurvives()   // test 30
+        {
+            // M261's witness. The two counters told apart directly: a head hit
+            // on a mob that SURVIVED. Today the statistics know nothing at all
+            // about this shot -- HeadshotKills stays 0 because nothing died,
+            // and there was no other place for the hit to be recorded.
+            var cfg = Range();
+            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            // The balance premise this fixture rests on, asserted as a PROPERTY
+            // rather than trusted: one head hit must leave this mob alive, or
+            // the test would be measuring a kill and not a hit.
+            Assert.Less(cfg.Weapon.Damage * chaserHead.DamageMult, cfg.Chaser.MaxHp,
+                "премисса: один хедшот обязан оставить чейзера живым");
+
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
+            float headBand = HeadBandOf(cfg.Chaser.Parts);
+            TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
+
+            w.ClearEvents();
+            w.Tick(default);
+
+            Assert.AreEqual(HitZone.Head, Blow(w, SimEventKind.ProjectileHit).Zone,
+                "премисса: выстрел обязан разрешиться в голову");
+            Assert.AreEqual(1, w.MobCount, "премисса: моб обязан пережить попадание");
+            Assert.AreEqual(1, w.StatsAt(0).HeadHits, "попадание в голову не сосчитано");
+            Assert.AreEqual(0, w.StatsAt(0).HeadshotKills,
+                "добивания не было — счётчик убийств молчит");
+        }
+
+        [Test]
+        public void HeadshotKills_NeverExceedHeadHits()   // test 31, M267 -- an invariant
+        {
+            // No finishing blow to the head can fail to be a hit to the head.
+            // ⛔ THE FIXTURE MUST CONTAIN A HEADSHOT KILL, or `0 <= X` holds on
+            // every implementation and M267 outlives its own witness. The
+            // shortest scenario is the gunner, who dies to a single head hit.
+            var cfg = Range();
+            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
+                "премисса: хедшот обязан убивать ганнера с одного выстрела");
+
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(TargetX, 0f)));
+            float headBand = HeadBandOf(cfg.Gunner.Parts);
+            TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
+
+            w.ClearEvents();
+            w.Tick(default);
+
+            // The premise that makes the invariant below non-vacuous, and it is
+            // asserted rather than assumed: without a real headshot kill on the
+            // board the comparison is 0 <= 0 and witnesses nothing.
+            Assert.AreEqual(0, w.MobCount, "премисса: ганнер обязан умереть");
+            Assert.AreEqual(1, w.StatsAt(0).HeadshotKills,
+                "премисса: добивание в голову обязано быть сосчитано");
+            Assert.LessOrEqual(w.StatsAt(0).HeadshotKills, w.StatsAt(0).HeadHits,
+                "добиваний в голову больше, чем попаданий в голову");
+        }
+
+        [Test]
+        public void TheThreeZonesSumToShotsHit_IncludingAShooterWhoDiedInFlight()   // test 32, M262
+        {
+            // ⭐ THE MAIN ARGUMENT FOR INCREMENTING INSIDE IncrementShotsHit:
+            // the `if (_players[index].Alive)` guard already lives there, and a
+            // counter lifted out of it would part company with ShotsHit at
+            // exactly one shooter -- the one who died while his round was still
+            // in the air.
+            // ⛔⛔ THE FIXTURE IS LOAD-BEARING AND ITS CONDITION IS A PROPERTY,
+            // NOT A LITERAL: the shooter MUST die mid-flight, or the sum
+            // balances on the mutant too. Two shots, therefore: the first lands
+            // while he is alive (so the sum is over something), the second while
+            // he is dead (so the guard is what the sum is testing).
+            var cfg = Range();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(FlightX, 0f)));
+            HitPart chaserTorso = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 2];
+            float bodyBand = 0.5f * (chaserTorso.Bottom + chaserTorso.Top);
+            // Premise: the mob has to outlive BOTH rounds, or the second one has
+            // no target left to land on.
+            Assert.Less(2f * cfg.Weapon.Damage * chaserTorso.DamageMult, cfg.Chaser.MaxHp,
+                "премисса: два попадания в корпус обязаны оставить чейзера живым");
+
+            // Round one, fired and landed by a living shooter.
+            TestWorlds.FireAimed3D(w, float2.zero, bodyBand, new float2(FlightX, 0f), bodyBand);
+            TestWorlds.RunUntilProjectilesDie(w);
+            Assert.AreEqual(1, w.StatsAt(0).ShotsHit,
+                "премисса: первый выстрел обязан попасть при живом стрелке");
+
+            // Round two: fired, then the shooter dies while it is still flying.
+            float hpBeforeSecond = w.Mobs[0].Hp;
+            TestWorlds.FireAimed3D(w, float2.zero, bodyBand, new float2(FlightX, 0f), bodyBand);
+            w.Tick(default);
+            Assert.Greater(w.ProjectileCount, 0,
+                "премисса: снаряд обязан быть ещё в полёте, иначе стрелок умрёт после попадания");
+            w.KillPlayerNoDamage(0);
+            Assert.IsFalse(w.Player.Alive, "премисса: стрелок обязан быть мёртв до попадания");
+            TestWorlds.RunUntilProjectilesDie(w);
+            Assert.Less(w.Mobs[0].Hp, hpBeforeSecond,
+                "премисса: посмертный выстрел обязан долететь и попасть");
+            Assert.AreEqual(1, w.StatsAt(0).ShotsHit,
+                "премисса: попадание мёртвого стрелка не засчитывается в ShotsHit");
+
+            var s = w.StatsAt(0);
+            Assert.AreEqual(s.ShotsHit, s.HeadHits + s.BodyHits + s.LegHits,
+                "сумма зон разошлась со ShotsHit — счётчик вынесен из-под гарда Alive");
+        }
+
+        [Test]
+        public void TheZoneCountersRideTheEndOfMatchMessage()   // test 33, M268
+        {
+            // The end-of-match results and the server log are the only places
+            // the owner will ever see these numbers: on the networked backend
+            // HasMatchStats is false, and the milestone runs on the networked
+            // stand. So the counters have to survive the wire, not merely exist
+            // in the simulation.
+            var ended = new MatchEndedNet { HeadHits = 5, BodyHits = 7, LegHits = 3 };
+            MatchStats personal = FinalStats.PersonalFrom(in ended);
+            Assert.AreEqual(5, personal.HeadHits, "попадания в голову не доехали до итогов матча");
+            Assert.AreEqual(7, personal.BodyHits, "попадания в корпус не доехали до итогов матча");
+            Assert.AreEqual(3, personal.LegHits, "попадания по ногам не доехали до итогов матча");
         }
     }
 }

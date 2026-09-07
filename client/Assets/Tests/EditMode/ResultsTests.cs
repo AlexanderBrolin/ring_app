@@ -407,6 +407,12 @@ namespace Ring.Simulation.Tests
                 Kills = 11, HeadshotKills = 12, ShotsFired = 13, ShotsHit = 14,
                 DashesUsed = 15, SlidesUsed = 16, DeathTick = 17, DamageTaken = 18.5f,
                 AmmoSpent = 19, CellsPicked = 20,
+                // app-8dv / app-dw0z: distinct values, like every field above
+                // -- 21 and 22 belong to survivedSeconds/creditsTotal below,
+                // so the zone counters start at 23 and a column printed from
+                // the wrong field reads as the wrong number rather than as a
+                // coincidence.
+                HeadHits = 23, BodyHits = 24, LegHits = 25,
             };
 
             string line = MatchSummaryLog.PlayerLine(slot: 1, playerId: "dev-1a2b3c4d",
@@ -426,6 +432,13 @@ namespace Ring.Simulation.Tests
             Assert.That(line, Does.Contain("headshotKills=12"));
             Assert.That(line, Does.Contain("shotsFired=13"));
             Assert.That(line, Does.Contain("shotsHit=14"));
+            // app-8dv / app-dw0z: the zone breakdown is a column of this row
+            // like any other, and this test's own doc is why it is pinned here
+            // -- "every column it promises has to be on it". Added in the task
+            // that adds the columns, or they would ship guarded by nothing.
+            Assert.That(line, Does.Contain("headHits=23"));
+            Assert.That(line, Does.Contain("bodyHits=24"));
+            Assert.That(line, Does.Contain("legHits=25"));
             Assert.That(line, Does.Contain("dashesUsed=15"));
             Assert.That(line, Does.Contain("slidesUsed=16"));
             Assert.That(line, Does.Contain("deathTick=17"));
@@ -537,6 +550,13 @@ namespace Ring.Simulation.Tests
             {
                 "Kills", "HeadshotKills", "ShotsFired", "ShotsHit", "DamageTaken",
                 "DashesUsed", "SlidesUsed", "DeathTick", "AmmoSpent", "CellsPicked", "Loot",
+                // app-8dv / app-dw0z: hits by zone are a FINER reading of
+                // "what a shot was worth" than ShotsHit above, so Р270 covers
+                // them a fortiori -- where a raid may not learn a member's
+                // accuracy, it certainly may not learn where he lands his
+                // rounds. Named here in the task that introduces them, which
+                // is what this list's own doc asks of every new counter.
+                "HeadHits", "BodyHits", "LegHits",
             };
             string[] present = typeof(MatchResultsNet).GetFields().Select(f => f.Name).ToArray();
 

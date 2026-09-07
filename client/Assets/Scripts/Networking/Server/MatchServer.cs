@@ -1868,6 +1868,14 @@ namespace Ring.Networking.Server
                 CellsPicked = stats.CellsPicked,
                 SurvivedSeconds = summary.SurvivedSeconds[slot],
 
+                // app-8dv / app-dw0z: this player's hits by zone, off the same
+                // `stats` slot the accuracy pair above comes from -- MatchStats
+                // is their home and this method is their reader, exactly as for
+                // AmmoSpent/CellsPicked.
+                HeadHits = stats.HeadHits,
+                BodyHits = stats.BodyHits,
+                LegHits = stats.LegHits,
+
                 WavesCleared = world.WavesCleared,
                 MobSpawnsSkipped = world.MobSpawnsSkipped,
                 ProjectileSpawnsSkipped = world.ProjectileSpawnsSkipped,

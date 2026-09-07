@@ -738,6 +738,19 @@ namespace Ring.Simulation.Core
         /// them — AmmoMax clamping makes AmmoSpent unrecoverable after the
         /// fact from AmmoStart, refills and the surviving Ammo.
         public int AmmoSpent, CellsPicked;
+
+        /// app-8dv / app-dw0z: hits BY ZONE -- and they count HITS, which is
+        /// exactly what HeadshotKills above does NOT (it counts the subset of
+        /// KILLS whose finishing blow landed in the head -- see its own doc a
+        /// few lines up). The distinction is the whole reason this task
+        /// exists: the owner reported headshots the statistics could not show,
+        /// and the counter that looked like the answer was answering another
+        /// question (lesson 687).
+        ///
+        /// HitZone.None IS UNREACHABLE for a game round and is recorded as
+        /// such: HitZones.Resolve hands back a real zone only together with
+        /// `true`, and the NoOwner paths never reach the counter.
+        public int HeadHits, BodyHits, LegHits;
     }
 
     /// World-scoped match counters (Stage 2 Task 5) — counted once for the whole

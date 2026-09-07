@@ -1316,10 +1316,18 @@ namespace Ring.Server
             var sb = new StringBuilder(256);
             sb.AppendFormat(CultureInfo.InvariantCulture,
                 "player[{0}] playerId={1} result={2} kills={3} headshotKills={4} shotsFired={5} " +
-                "shotsHit={6} dashesUsed={7} slidesUsed={8} deathTick={9} damageTaken={10:F1} " +
-                "ammoSpent={11} cellsPicked={12} survivedSeconds={13} creditsTotal={14} loot=[",
+                // app-8dv / app-dw0z: the zone breakdown rides immediately
+                // after shotsHit, which is the number it decomposes -- an
+                // operator reading the row sees the whole and its parts
+                // together. On the networked backend HasMatchStats is false,
+                // so this row is the ONLY place these counters are ever read
+                // at the milestone.
+                "shotsHit={6} headHits={7} bodyHits={8} legHits={9} " +
+                "dashesUsed={10} slidesUsed={11} deathTick={12} damageTaken={13:F1} " +
+                "ammoSpent={14} cellsPicked={15} survivedSeconds={16} creditsTotal={17} loot=[",
                 slot, playerId, outcome, stats.Kills, stats.HeadshotKills, stats.ShotsFired,
-                stats.ShotsHit, stats.DashesUsed, stats.SlidesUsed, stats.DeathTick,
+                stats.ShotsHit, stats.HeadHits, stats.BodyHits, stats.LegHits,
+                stats.DashesUsed, stats.SlidesUsed, stats.DeathTick,
                 stats.DamageTaken, stats.AmmoSpent, stats.CellsPicked, survivedSeconds,
                 creditsTotal);
 

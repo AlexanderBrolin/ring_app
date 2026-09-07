@@ -281,6 +281,22 @@ namespace Ring.Simulation.Tests
             //   38 x 2 = 76, 10 x 2 = 20, 7 x 3 = 21,
             //   5 + 13 + 15 + 5 + 2 + 5 = 45          -> 158 -> 162.
             //
+            // app-8dv / app-dw0z: MatchStats grew from 10 fields to 13 --
+            // HeadHits, BodyHits and LegHits, this collector's hits BY ZONE
+            // (SimStates.cs' own field doc, and see HeadshotKills right above
+            // it for the counter they are NOT), folded into HashStats after
+            // the economy pair, in declaration order. Re-derived one more time
+            // from fresh typeof(X).GetFields() readings of ALL NINE structs
+            // rather than adjusted from 162, and this time the recount came
+            // back agreeing with the receipt in every other line: PlayerState
+            // 38, WaveState 7, WorldStats 5, MobState 13, ProjectileState 15,
+            // PickupState 5, MatchState 2, ContainerState 5. So only the
+            // MatchStats line and the two sums move -- and it moves by SIX,
+            // not three, because it carries the "x 2 players" multiplier the
+            // mob and projectile lines do not:
+            //   38 x 2 = 76, 13 x 2 = 26, 7 x 3 = 21,
+            //   5 + 13 + 15 + 5 + 2 + 5 = 45          -> 162 -> 168.
+            //
             // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST -- SAID OF
             // Т24, whose paragraph it closes. (Т28's own paragraph was inserted
             // above it and left this one reading as if it described Т28, which

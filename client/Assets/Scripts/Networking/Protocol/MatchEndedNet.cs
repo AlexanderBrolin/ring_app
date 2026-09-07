@@ -73,6 +73,15 @@ namespace Ring.Networking.Protocol
         public int CellsPicked;
         public int SurvivedSeconds;
 
+        // app-8dv / app-dw0z: this player's own hits BY ZONE. Flat fields for
+        // the reason the type's own doc gives, and carried for the reason the
+        // task exists: the results screen and the server log are the only
+        // places the owner ever sees these numbers, and on the networked
+        // backend HasMatchStats is false.
+        public int HeadHits;
+        public int BodyHits;
+        public int LegHits;
+
         // World-scoped, identical in every copy of this message (WorldStats).
         public int WavesCleared;
         public int MobSpawnsSkipped;

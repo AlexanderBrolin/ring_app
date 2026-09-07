@@ -70,6 +70,12 @@ namespace Ring.Presentation.Net
             DamageTaken = ended.DamageTaken,
             AmmoSpent = ended.AmmoSpent,
             CellsPicked = ended.CellsPicked,
+            // app-8dv / app-dw0z: hits by zone, carried back for the same
+            // reason as every line above -- the results screen prints
+            // MatchStats, not the wire message.
+            HeadHits = ended.HeadHits,
+            BodyHits = ended.BodyHits,
+            LegHits = ended.LegHits,
         };
 
         /// The world-scoped half, identical in every copy of the message.
