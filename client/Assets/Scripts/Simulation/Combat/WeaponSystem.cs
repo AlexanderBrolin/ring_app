@@ -43,23 +43,36 @@ namespace Ring.Simulation.Combat
         /// ONE CORE, TWO SINKS (Stage 2 Task 30, C-1/I5). `worldOrNull` is the
         /// shot's sink: the authoritative world for `Update` below, and `null`
         /// for `AdvanceNoSpawn`, the seam a predicting client drives its own copy
-        /// of PlayerState through. A null sink skips EXACTLY the two things a
-        /// client must never own — the projectile itself (together with the whole
-        /// shot geometry, none of which writes to `p`) and the shooter's
-        /// ShotsFired tally — and executes every other line, in the same order,
-        /// on the same values. ⚠ THAT LIST WAS THREE UNTIL app-8dv: the spread
-        /// DRAW used to be the middle item, and it is gone because there is no
-        /// draw any more. The angle is now a pure function of state both sides
-        /// hold (SprayPattern), so it is no longer something one side owns and
-        /// the other must be denied — it is computed by the same code from the
-        /// same numbers wherever the geometry runs. This is one body rather
-        /// than two on purpose: the overshoot comes off FireCooldown BEFORE the
-        /// increment, the cone comes off RecoilOffset BEFORE this shot
-        /// accumulates into it, and the loop admits more than one shot per tick,
-        /// so a second implementation of that bookkeeping would diverge on every
-        /// single shot and reconciliation would be correcting the client for the
-        /// whole length of a held trigger. Any reordering here moves the golden
-        /// replay hash.
+        /// of PlayerState through.
+        ///
+        /// ⭐ THE RULE IS ABOUT OWNING AN OUTCOME, NOT ABOUT KNOWING A NUMBER,
+        /// and it is stated that way so it stops needing a rewrite every time a
+        /// line moves. A null sink skips every line that DECIDES something — the
+        /// round with the catch-up that walks it, and the shooter's own stats
+        /// (ShotsFired beside that spawn, AmmoSpent in the loop below) — and
+        /// executes everything else, in the same order, on the same values.
+        /// Those are the two the client must never own, in the words
+        /// PlayerPrediction's own doc names them by.
+        /// ⚠ THAT SKIP LIST HAS SHRUNK TWICE UNDER app-8dv, and both times
+        /// because the thing that left it stopped being a decision. First the
+        /// spread DRAW: there is no draw any more, the angle is a pure function
+        /// of state both sides hold (SprayPattern), so it is not something one
+        /// side owns and the other must be denied. Then, in T3, the shot's whole
+        /// GEOMETRY: `ShotGeometry.Solve` is called from the loop below OUTSIDE
+        /// the sink's guard, once per iteration, by both paths. It writes
+        /// nothing, spawns nothing and credits nobody — a predicting client that
+        /// works out where its own round would go has decided no game outcome
+        /// (CR 3), and it needs that answer to draw its own shot at all. The
+        /// call is single and hoisted on purpose (ruling 291): a second call on
+        /// the client sink would be one number with two homes.
+        ///
+        /// This is one body rather than two on purpose: the overshoot comes off
+        /// FireCooldown BEFORE the increment, the cone comes off RecoilOffset
+        /// BEFORE this shot accumulates into it, and the loop admits more than
+        /// one shot per tick, so a second implementation of that bookkeeping
+        /// would diverge on every single shot and reconciliation would be
+        /// correcting the client for the whole length of a held trigger. Any
+        /// reordering here moves the golden replay hash.
         ///
         /// Two fire modes (spec §3.2 v5, Task 15) share every line of that
         /// bookkeeping — including recoil accumulation — and part ways only on the
@@ -70,8 +83,9 @@ namespace Ring.Simulation.Combat
         /// and only when the cone is actually open, so perfectly settled
         /// recoil-free aim is still a pinpoint shot — now because the cone it
         /// would be placed in has zero width, not because a random draw was
-        /// skipped. That whole split lives in SpawnShot below, since it is the
-        /// sink's business and not the bookkeeping's.
+        /// skipped. That whole split lives in ShotGeometry since app-8dv T3,
+        /// because it is neither the bookkeeping's business nor the sink's: it
+        /// is geometry, and both sinks ask the same question of it.
         static void Advance(ref PlayerState p, in SimInput input, in SimConfig cfg,
             SimulationWorld worldOrNull, byte ownerIndex)
         {
@@ -123,13 +137,19 @@ namespace Ring.Simulation.Combat
                 // positive to zero and must pick a different interval for the
                 // shot that does.
                 float interval = IntervalFor(in p, in weapon);
+                // The overshoot is read off FireCooldown as it stands NOW —
+                // before the increment at the bottom of this iteration — so it
+                // must be computed HERE, inside the loop, and not hoisted above
+                // it. What DID move out (app-8dv T3) is the guard, not the loop:
+                // the geometry is solved once per iteration on BOTH paths, and
+                // only its use is the sink's privilege — see this method's own
+                // "ONE CORE, TWO SINKS" paragraph for why that is not a game
+                // outcome leaking to a client.
+                ShotSolution s = ShotGeometry.Solve(in p, in input, in cfg,
+                    math.min(-p.FireCooldown, dt));
                 if (worldOrNull != null)
                 {
-                    // The overshoot is read off FireCooldown as it stands NOW —
-                    // before the increment at the bottom of this iteration — so
-                    // it must be computed here, at the call, and not hoisted.
-                    SpawnShot(worldOrNull, in p, in input, in cfg, ownerIndex,
-                        math.min(-p.FireCooldown, dt));
+                    SpawnShot(worldOrNull, in cfg, ownerIndex, in s);
                 }
                 // Stage 3 Task 2 (spec Р225): spent in this ONE shared body —
                 // Update (server) and AdvanceNoSpawn (prediction) both run it, so
@@ -332,88 +352,29 @@ namespace Ring.Simulation.Combat
         /// ShotsFired tally, and, since app-88jb
         /// Т27, the catch-up that spends the input half of his rewind depth on
         /// the round (the call at the bottom carries its own reasoning).
-        /// Lifted out of the former loop body of Update verbatim; `p` is
-        /// passed `in` precisely because not one line here writes to it, which
-        /// is what makes skipping the whole call on the prediction path
-        /// incapable of moving the golden hash — the compiler holds that
-        /// claim, not a comment.
+        /// It reads "spawn it, credit it, catch it up", and that is the whole of
+        /// it: since app-8dv T3 the geometry it used to work out first lives in
+        /// ShotGeometry.Solve, which the loop above calls once per iteration and
+        /// hands down here as `s`.
         ///
-        /// The one thing that changed place is `stats.ShotsFired++`, which the
-        /// old loop body ran just AFTER the recoil accumulation instead of just
-        /// before it. The two writes touch different memory and neither reads the
-        /// other, so nothing observable is reordered; what MUST keep its place is
-        /// the cone, which reads p.RecoilOffset BEFORE this tick's shot
-        /// accumulates into it — and it does, because this whole call still
-        /// precedes that accumulation.
-        static void SpawnShot(SimulationWorld w, in PlayerState p, in SimInput input,
-            in SimConfig cfg, byte ownerIndex, float overshoot)
+        /// ⚠ THE PLAYER IS NOT A PARAMETER ANY MORE, and its absence is the
+        /// point rather than a tidy-up: not one line of the old body wrote to
+        /// `p` — that is why it was passed `in` — and every line that so much as
+        /// READ it went to ShotGeometry with the geometry. What is left needs the
+        /// world, the config's weapon numbers and the solution. The compiler
+        /// holds that claim, not this comment.
+        ///
+        /// The one thing that changed place back in Т27 is `stats.ShotsFired++`,
+        /// which the original loop body ran just AFTER the recoil accumulation
+        /// instead of just before it. The two writes touch different memory and
+        /// neither reads the other, so nothing observable is reordered; what MUST
+        /// keep its place is the cone, which reads p.RecoilOffset BEFORE this
+        /// tick's shot accumulates into it — and it does, because `Solve` is
+        /// called from the same place in the loop this call used to occupy.
+        static void SpawnShot(SimulationWorld w, in SimConfig cfg, byte ownerIndex,
+            in ShotSolution s)
         {
             var weapon = cfg.Weapon;
-            // Task 15 (QC21): the fire branch reads the hero half of the config too
-            // — muzzle heights (standing / mid-slide) and the aim-settle window.
-            var hero = cfg.Hero;
-
-            float muzzleH = p.SlideTimer > 0f ? hero.SlideMuzzleHeight : hero.MuzzleHeight;
-            float a; float3 vel3;
-            if (input.AimHeld)
-            {
-                // Aimed fire (Task 15): the round is a full 3D vector from the
-                // muzzle to the aimed point, and the base cone shrinks as the
-                // aim settles — but recoil never leaves it (D15: a spray is
-                // never a laser, however settled the aim is).
-                float settle = p.AimSettleTimer / hero.AimSettleSeconds;   // [0..1]
-                a = p.RecoilOffset + weapon.SpreadRad * (1f - settle);
-                float2 baseDir2 = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
-                float3 target3 = new float3(input.AimPoint, input.AimHeight);
-                float3 muzzle3 = new float3(p.Pos + baseDir2 * weapon.MuzzleOffset, muzzleH);
-                vel3 = math.normalizesafe(target3 - muzzle3, new float3(baseDir2, 0f))
-                    * weapon.ProjectileSpeed;
-            }
-            else
-            {
-                // Hip fire: the flat Phase-1 geometry, widened by movement.
-                a = Spread.HipRadians(in weapon, in p, in hero);
-                float2 dir2 = math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f));
-                vel3 = new float3(dir2 * weapon.ProjectileSpeed, 0f);
-            }
-            if (a > 0f)   // both modes, one expression — and only when there is a cone
-            {
-                // ⚠ THE SEED TAKES THE PRE-INCREMENT ShotOrdinal, while the
-                // shot's key in the journal (T4) is the POST-increment one.
-                // These are two different numbers with two different jobs and
-                // must not be confused: a seed needs only uniqueness, a key
-                // needs zero left free as a sentinel.
-                //
-                // ⭐ THE AIM POINT COMES FROM `input`, NOT FROM `p`. On the live
-                // path the two are identical -- both sides pin p.AimPoint to
-                // input.AimPoint before the weapon phase -- but SpawnShot
-                // already reads input.AimPoint for the direction in both
-                // branches above, and a test calling the geometry with pre-tick
-                // state would get (0,0) out of a fresh world's `p` and be red on
-                // correct code. One source, one number.
-                float2 spray = SprayPattern.Draw(p.BurstShots, p.ShotOrdinal, input.AimPoint,
-                    a, in weapon);
-                // Rotation around the VERTICAL axis only (K10) for the horizontal
-                // half, and the renormalize keeps |vel3| at exactly
-                // ProjectileSpeed.
-                float2 rotated = Geometry.Rotate(vel3.xy, spray.x);
-                // The vertical half is a SHIFT, not a rotation, and in aimed fire
-                // it decays as cos^2(theta): the gain in elevation angle is
-                // atan(tan(theta) + tan(p)) - theta. Against a gunner's head at
-                // 20 m that is x0.98, against a chaser at point blank x0.82, and
-                // "into the floor" down to x0.5.
-                vel3 = math.normalizesafe(
-                    new float3(rotated, vel3.z + math.length(rotated) * math.tan(spray.y)), vel3)
-                    * weapon.ProjectileSpeed;
-            }
-            // K9: the fractional-remainder pre-advance walks the round along its
-            // OWN line — horizontally by its horizontal speed, vertically by its
-            // climb rate — so an aimed shot still passes through the aimed point.
-            float2 dir2D = math.normalizesafe(vel3.xy,
-                math.normalizesafe(input.AimPoint - p.Pos, new float2(1f, 0f)));
-            float horizSpeed = math.length(vel3.xy);
-            float2 spawnPos = p.Pos + dir2D * (weapon.MuzzleOffset + overshoot * horizSpeed);
-            float height = muzzleH + overshoot * vel3.z;
             // ownerIndex (Stage 2 Task 7): this firing player's own index —
             // drives per-shooter ShotsHit/Kills credit (SimulationWorld.DamageMob).
             // ownerEntityId (Stage 3 Task 5): a player owns no MOB entity id —
@@ -424,17 +385,10 @@ namespace Ring.Simulation.Combat
             // half of this shooter's own depth, handed over AT THE SPAWN
             // because the catch-up below runs on the very next line and its
             // steps are the round's first ones — see SpawnProjectile's own doc.
-            // The cast is safe by the same domain RewindSplit states for both
-            // halves: `input` is the SANITIZED input, so `RewindTicks` is
-            // already inside [0, Arena.RewindCapTicks], and the builder caps
-            // that at 6.
+            // The cast is safe by the domain RewindSplit states for both halves,
+            // and ShotGeometry.Solve — the one place either half is worked out
+            // since app-8dv T3 — restates it beside the call that produces them.
             //
-            // app-88jb Т32 (coordinator Ruling 291): the INPUT half is worked
-            // out ONCE, here, and spent twice — once as this round's birth-tick
-            // step count and once as the catch-up bound below. Two calls would
-            // be one number with two homes (rule 2), and the two would have to
-            // be read together by anyone checking either.
-            int inputTicks = RewindSplit.InputTicks(input.RewindTicks, in cfg.Arena);
             // `birthSteps` (Т32): the catch-up steps below PLUS the one
             // ordinary step ProjectileSystem.Update gives every live round in
             // the tick it was born in — the weapon phase runs before the
@@ -442,11 +396,15 @@ namespace Ring.Simulation.Combat
             // after this call returns. It is known BEFORE the spawn, which is
             // what lets it ride out on the ProjectileFired event this call
             // emits, without moving a single emit (see SimEvent.BirthSteps).
-            int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, spawnPos,
-                vel3.xy, height, vel3.z,
+            // ⚠ `s.Vel` RATHER THAN `s.Dir * s.HorizSpeed`: the product is a
+            // different float from the velocity for about a third of all
+            // directions, and this field lands in the replay digest — the
+            // measurement is written out beside ShotSolution.Vel.
+            int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, s.SpawnPos,
+                s.Vel, s.Height, s.VelZ,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime,
-                (byte)RewindSplit.PictureTicks(input.RewindTicks, in cfg.Arena),
-                birthSteps: inputTicks + 1);
+                (byte)s.PictureTicks,
+                birthSteps: s.BirthSteps);
             w.StatsRef(ownerIndex).ShotsFired++;
             // app-88jb Т27 (spec §3.6, owner decision Н24/Р407): the round is
             // born at the muzzle IN THE PRESENT and is then cranked forward by
@@ -472,20 +430,23 @@ namespace Ring.Simulation.Combat
             // reading it unconditionally would crank somebody ELSE's round on a
             // full array, which is a wrong outcome rather than a lost one.
             //
-            // THE DEPTH NEEDS NO BOUND OF ITS OWN HERE: `input` is the
-            // SANITIZED input — SimulationWorld.TickAll hands Update its
-            // _sanitizedInputs entry, and SimInputSanitizer.Sanitize is where
-            // Arena.RewindCapTicks is applied to it — so what arrives is
-            // already inside the arena's domain.
+            // THE DEPTH NEEDS NO BOUND OF ITS OWN HERE: the input reaching
+            // ShotGeometry.Solve is the SANITIZED one — SimulationWorld.TickAll
+            // hands Update its _sanitizedInputs entry, and
+            // SimInputSanitizer.Sanitize is where Arena.RewindCapTicks is
+            // applied to it — so what arrives is already inside the arena's
+            // domain, and `s.InputTicks` with it.
             //
             // ⚠ AND THIS IS UNREACHABLE FROM THE PREDICTION PATH BY
             // CONSTRUCTION, which is CRITICAL RULE 3's point here: SpawnShot
             // runs only under `worldOrNull != null`, so AdvanceNoSpawn — the
             // seam a predicting client drives — gains no call from this and
-            // still decides no game outcome.
+            // still decides no game outcome. ⚠ Since app-8dv T3 the client DOES
+            // reach the arithmetic that produced `s`; what it still cannot reach
+            // is this — the round, the tally and the catch-up.
             if (projectileId >= 0)
             {
-                ProjectileSystem.CatchUp(w, w.ProjectileCount - 1, inputTicks);
+                ProjectileSystem.CatchUp(w, w.ProjectileCount - 1, s.InputTicks);
             }
         }
     }

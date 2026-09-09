@@ -1039,7 +1039,7 @@ namespace Ring.Simulation.Tests
         ///
         /// EVERY NUMBER IS DERIVED, NONE IS READ OFF A RUN. The muzzle is
         /// MuzzleOffset plus the first shot's whole tick of fire-cooldown
-        /// overshoot (WeaponSystem.SpawnShot); the contact is where the
+        /// overshoot (`ShotGeometry.Solve`); the contact is where the
         /// solver's padded circle -- the target's own radius plus the round's
         /// -- meets the line; and the step is ProjectileSpeed * TickDt because
         /// these fixtures fire from the HIP (no AimHeld), which leaves VelZ at

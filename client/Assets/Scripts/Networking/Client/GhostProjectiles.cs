@@ -18,8 +18,9 @@ namespace Ring.Networking.Client
     ///
     /// NO FLIGHT MATH LIVES HERE, ON PURPOSE. Task 35's whole job is
     /// deciding WHICH tracer exists and for how long, never WHERE it flies —
-    /// geometry (position, velocity, the aim/spread draw `WeaponSystem.
-    /// SpawnShot` owns) is Ф9's job (the renderer), and this class never
+    /// geometry (position, velocity, the cone and the spray pattern inside it,
+    /// all of which `ShotGeometry.Solve` owns since app-8dv T3) is Ф9's job
+    /// (the renderer), and this class never
     /// reads a single field of `PlayerState`/`SimInput`/`WeaponSimConfig`
     /// beyond what the gate itself consumes. The one "trajectory" parameter
     /// this class stores is the predicted BIRTH TICK (brief §2.2: opaque

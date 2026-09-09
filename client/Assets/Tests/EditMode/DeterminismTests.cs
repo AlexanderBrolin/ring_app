@@ -1578,8 +1578,9 @@ namespace Ring.Simulation.Tests
             //       a TEST file has every reason to assume the fixture, and a
             //       reviewer of this very re-pin did.
             //   (6) `math.sin` AND `math.tan` ON THE PATH TO HASHED STATE (T1,
-            //       inside `SprayPattern.Draw` and the pitch shift of
-            //       WeaponSystem.SpawnShot). This breaks no rule of this
+            //       inside `SprayPattern.Draw` and the pitch shift beside it,
+            //       which app-8dv T3 moved on to `ShotGeometry.Solve` together
+            //       with the rest of the geometry). This breaks no rule of this
             //       simulation, and the reason stands a few lines away in the
             //       same method: `Geometry.Rotate` already calls sin/cos on the
             //       very same shot. ⚠ THIS CAUSE DOES NOT MOVE THE CONSTANTS ON
@@ -1941,8 +1942,8 @@ namespace Ring.Simulation.Tests
             int dashRicochetCount = 0;
             int headshotProjectileHits = 0;
             // A ProjectileFired of the collector's OWN in a tick whose input held
-            // Aim — i.e. the AimHeld branch of WeaponSystem.SpawnShot really
-            // spawned a round.
+            // Aim — i.e. the AimHeld branch of the shot's geometry
+            // (`ShotGeometry.Solve` since app-8dv T3) really spawned a round.
             //   ⚠ IT USED TO READ `round.VelZ != 0f`, AND app-8dv T1 MADE THAT A
             // TAUTOLOGY. The spray pattern gives essentially every shot a
             // vertical component of its own (`SprayPattern.Draw`'s pitch half,

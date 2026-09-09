@@ -1035,13 +1035,14 @@ namespace Ring.Simulation.Tests
                 // and the prediction write them through ONE shared body,
                 // `WeaponSystem`'s `Advance`, which `Update` and
                 // `AdvanceNoSpawn` both run. There is no second writer on either
-                // side: `SpawnShot` cannot touch them (it takes `p` by `in`),
-                // and nothing outside the weapon phase mentions them.
+                // side: `SpawnShot` cannot touch them — since app-8dv T3 it
+                // does not take the player at all, and before that it took it
+                // by `in` — and nothing outside the weapon phase mentions them.
                 // ⚠ Predicted, NOT Mixed, and the difference is checkable rather
                 // than a matter of taste: Mixed would mean a server-only path
                 // also writes the field, and here the server-only path is
-                // exactly `SpawnShot`, the one body the compiler forbids from
-                // writing to `p` at all.
+                // exactly `SpawnShot`, the one body that has no `p` to write
+                // to in the first place.
                 //
                 // `WeaponTests.TheClientAndTheServerAgreeOnTheShotCounters` is
                 // the behavioral witness of the same claim, tick by tick; this

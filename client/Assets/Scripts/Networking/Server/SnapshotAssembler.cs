@@ -1028,7 +1028,8 @@ namespace Ring.Networking.Server
             // app-88jb Т32 (coordinator Ruling 291): the birth-step count is
             // FORWARDED, never recomputed. The world is the only place that
             // knows how many steps this round took before its tick ended — the
-            // shooter's own input lag decides it (WeaponSystem.SpawnShot) — and
+            // shooter's own input lag decides it (ShotGeometry.Solve works the
+            // count out, WeaponSystem.SpawnShot spends it) — and
             // the capture above holds the round's end-of-tick STATE, not its
             // history. Unlike the velocity triple, therefore, it has no
             // fallback to approximate from AND NEEDS NONE FOR A SIMPLER REASON

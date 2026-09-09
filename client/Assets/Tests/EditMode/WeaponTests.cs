@@ -567,7 +567,8 @@ namespace Ring.Simulation.Tests
         // (round 2's finding, two reviewers independently, checked against the
         // package source). `math.normalizesafe` returns NOT zero but a
         // fallback: it selects the default value unless the length clears
-        // FLT_MIN_NORMAL, and both branches of `SpawnShot` hand it a non-zero
+        // FLT_MIN_NORMAL, and both branches of the geometry (`ShotGeometry.
+        // Solve` since app-8dv T3) hand it a non-zero
         // fallback (`new float2(1f, 0f)`). ⇒ `vel3.xy` is NEVER zeroed,
         // and firing "at one's own feet" leaves along +X and goes through the
         // pattern in full. A test written to the letter of the spec would be
