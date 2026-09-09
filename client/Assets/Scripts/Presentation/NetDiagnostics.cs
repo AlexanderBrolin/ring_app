@@ -172,6 +172,18 @@ namespace Ring.Presentation
         /// agreed to.
         public int UnconfirmedGhosts;
 
+        /// Predicted shots that never became a trail (app-8dv T5,
+        /// `PredictedShotLog.OverflowDroppedShots`): the journal was full when
+        /// the shot was written, or the frame's own spawn budget ran out
+        /// before the record's turn.
+        /// ⭐ THIS IS THE COUNTER THAT MEASURES OWN-SHOT PREDICTION, and
+        /// `UnconfirmedGhosts` beside it is NOT: that one counts predictions
+        /// the world refused, so its zero reads the same whether everything
+        /// was confirmed or nothing was ever predicted (lesson 687). This one
+        /// is about shots that were recorded and then lost on the way to the
+        /// screen, so a rising number names a real loss of picture.
+        public int DroppedPredictedShots;
+
         /// Committed, undischarged frames waiting in the ring, and how many
         /// the ring holds (`SnapshotQueue.Count`/`Depth`). Occupancy is not a
         /// fault: this is the interpolation buffer doing its job, and a

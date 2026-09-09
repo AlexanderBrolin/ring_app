@@ -428,6 +428,48 @@ namespace Ring.Simulation.Tests
             Assert.Greater(stats.UnconfirmedGhosts, 0,
                 "fixture premise: the measured loop must have actually expired unconfirmed "
                 + "ghosts through Advance's real branch, not just an empty-queue no-op.");
+
+            // app-8dv T5: THE UNGATED ENTRANCE GETS ITS OWN MEASURED WINDOW
+            // (spec §3.4, finding M1₃). The loop above pins the GATED member,
+            // and the entrance the journal actually drives is a different
+            // method -- an allocation added to it would pass unnoticed here.
+            // A second registry rather than a second arm of the loop above:
+            // that one's arithmetic (`i % 2`, capacity 4, confirmTicks 2) is
+            // balanced so its expiry branch runs, and adding a third spawn per
+            // iteration would exhaust the table instead.
+            var ownStats = new NetStats();
+            var ownGhosts = new GhostProjectiles(4, 2, RoomyMaxTrackTicks, ownStats);
+            uint ownTick = 0;
+            for (int i = 0; i < 32; i++)
+            {
+                ownTick++;
+                bool spawned = ownGhosts.TrySpawnPredictedShot(ownTick, out _);
+                if (spawned && i % 2 == 0)
+                {
+                    ownGhosts.TryConfirm(serverId: i, tick: ownTick, out _);
+                    ownGhosts.TryTranslateEnd(i, out _);
+                }
+                ownGhosts.Advance(ownTick);
+            }
+
+            Assert.That(() =>
+            {
+                for (int i = 0; i < 1000; i++)
+                {
+                    ownTick++;
+                    bool spawned = ownGhosts.TrySpawnPredictedShot(ownTick, out _);
+                    if (spawned && i % 2 == 0)
+                    {
+                        ownGhosts.TryConfirm(serverId: i, tick: ownTick, out _);
+                        ownGhosts.TryTranslateEnd(i, out _);
+                    }
+                    ownGhosts.Advance(ownTick);
+                }
+            }, Is.Not.AllocatingGCMemory());
+
+            Assert.Greater(ownStats.UnconfirmedGhosts, 0,
+                "fixture premise: the ungated loop must have expired unconfirmed ghosts too, "
+                + "not merely spawned and translated them in the same tick.");
         }
 
         [Test]
@@ -688,6 +730,93 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(zeroCapacity.TrySpawnFromPrediction(in p, in input, in weapon,
                 predictedTick: 300, out int firstEverInZeroCap));
             Assert.Less(firstEverInZeroCap, 0);
+        }
+
+        // ---- app-8dv T5: the entrance the journal uses, and the pairing it reads ----
+
+        /// THE GATE IS THE WHOLE DIFFERENCE, and it is why the entrance is a
+        /// new member rather than a relaxed old one (spec §3.4, plan Step 3).
+        /// `TrySpawnFromPrediction` asks `WeaponSystem.WouldFireThisTick`,
+        /// which reads `FireCooldown` -- and the journal writes its record
+        /// INSIDE the predicted tick, AFTER `Advance` has already charged that
+        /// cooldown. So on the state a drained record actually describes, the
+        /// gate is shut and the old entrance answers `false` forever: the
+        /// ghost would never be born at all, which is the first of the four
+        /// reasons the spec's v2 approach was abandoned.
+        ///
+        /// ⚠ THE FIXTURE PROVES THE PREMISE RATHER THAN ASSUMING IT: the same
+        /// `PlayerState` is offered to both entrances in the same fixture, so
+        /// a reader can see that what changed is the gate and not the state.
+        [Test]
+        public void TrySpawnPredictedShot_NeedsNoGate_BecauseTheShotAlreadyHappened()
+        {
+            var stats = new NetStats();
+            var ghosts = new GhostProjectiles(4, 5, RoomyMaxTrackTicks, stats);
+            var weapon = Weapon();
+            var input = Firing();
+
+            // The state a journal record is written from: the shot has just
+            // been fired this tick, so the cooldown is charged a full
+            // FireInterval forward.
+            var afterTheShot = Alive();
+            afterTheShot.FireCooldown = weapon.FireInterval;
+
+            Assert.IsFalse(ghosts.TrySpawnFromPrediction(in afterTheShot, in input, in weapon,
+                    predictedTick: 500, out _),
+                "fixture premise: on the post-shot state the gated entrance refuses -- which "
+                + "is exactly why polling the gate from the frame could never work");
+
+            Assert.IsTrue(ghosts.TrySpawnPredictedShot(predictedTick: 500, out int ghostId),
+                "the ungated entrance is told a shot HAPPENED, so it has nothing to decide");
+            Assert.AreEqual(-1, ghostId,
+                "and it mints from the same counter as the gated one -- FirstGhostId, "
+                + "counting down");
+
+            // It is the same registry, not a parallel one: the ghost just
+            // born is the one Confirm pairs and Advance ages.
+            Assert.IsTrue(ghosts.TryConfirm(serverId: 7, tick: 501, out int pairedId));
+            Assert.AreEqual(ghostId, pairedId);
+        }
+
+        /// M249's witness, and the shape the whole route hangs on: `TryConfirm`
+        /// hands back WHICH ghost it paired, because the caller has to adopt
+        /// that ghost's trail by id. `Confirm` keeps its old signature and
+        /// becomes a wrapper over this -- `.Confirm(` is called 22 times in
+        /// this file with named arguments, and an `out` parameter would break
+        /// every one of them, while a compile error is not a RED (332/498/630).
+        ///
+        /// BOTH REFUSALS ARE HERE, because the caller's fallback depends on
+        /// telling them apart from a success: an empty queue (nothing was
+        /// predicted, or it already gasped) and a duplicate server id. On
+        /// either, the shot must still get an ordinary trail, so the answer
+        /// has to be a value rather than a silent no-op.
+        [Test]
+        public void TryConfirm_HandsBackThePairedGhost_AndRefusesByValue()
+        {
+            var stats = new NetStats();
+            var ghosts = new GhostProjectiles(4, 5, RoomyMaxTrackTicks, stats);
+
+            Assert.IsFalse(ghosts.TryConfirm(serverId: 11, tick: 600, out int onEmpty),
+                "an empty queue confirms nothing -- the shot falls back to the ordinary path");
+            Assert.AreEqual(0, onEmpty, "and the id is left at 0 on a refusal");
+
+            Assert.IsTrue(ghosts.TrySpawnPredictedShot(predictedTick: 600, out int oldest));
+            Assert.IsTrue(ghosts.TrySpawnPredictedShot(predictedTick: 601, out int younger));
+
+            Assert.IsTrue(ghosts.TryConfirm(serverId: 11, tick: 602, out int paired));
+            Assert.AreEqual(oldest, paired,
+                "matching is positional FIFO: the OLDEST unconfirmed ghost is the one paired");
+
+            Assert.IsFalse(ghosts.TryConfirm(serverId: 11, tick: 603, out int onDuplicate),
+                "a duplicate server id is refused rather than eating the next ghost in line");
+            Assert.AreEqual(0, onDuplicate);
+
+            // And the wrapper still routes into the same machinery: the
+            // younger ghost is what the plain Confirm pairs next.
+            ghosts.Confirm(serverId: 12, tick: 604);
+            Assert.IsTrue(ghosts.TryTranslateEnd(12, out int translated));
+            Assert.AreEqual(younger, translated,
+                "Confirm is a thin wrapper over TryConfirm, not a second mechanism");
         }
     }
 }

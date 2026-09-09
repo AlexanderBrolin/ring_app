@@ -80,17 +80,26 @@ namespace Ring.Simulation.Combat
         int _count;
         uint _tick;
 
-        /// Shots refused because the log was full when they were written. The
-        /// log's OWN counter, the same shape as
-        /// `ClientEventQueue.OverflowDroppedEvents` -- a public field rather
-        /// than a property, exactly like that neighbor.
+        /// Shots that never became a trail. The log's OWN counter, the same
+        /// shape as `ClientEventQueue.OverflowDroppedEvents` -- a public field
+        /// rather than a property, exactly like that neighbor.
         /// ⛔ `Reset` DOES NOT CLEAR IT, and that is the neighbor's rule word
         /// for word: a per-connection health counter that cleared itself on
         /// every restart would hide precisely the pattern it exists to surface.
-        /// ⚠ NOBODY READS IT YET, AND UNTIL T5 IT MEANS NOTHING: T4 gives the
-        /// log a writer but no drain, so in a live match the buffer fills once
-        /// and then counts every further shot. The number becomes diagnostic
-        /// the moment the frame starts draining, and not before.
+        ///
+        /// TWO WAYS TO BE LOST, ONE COUNTER, AND THE SHARED HOME IS THE POINT
+        /// (app-8dv T5). `Record` below adds to it when the log was full at
+        /// the moment of writing; the frame's drain adds to it when its own
+        /// per-frame spawn budget ran out before a record's turn. Both are the
+        /// same fact for anybody reading it -- "a predicted shot was recorded
+        /// and never reached the screen" -- and splitting them would be two
+        /// entries about one event from two homes, which rule 2 refuses. The
+        /// dev overlay shows it as `DroppedPredictedShots`.
+        ///
+        /// ⭐ AND IT, NOT `UnconfirmedGhosts`, IS WHAT MEASURES THIS FEATURE
+        /// (lesson 687): that counter counts predictions the world refused, so
+        /// its zero reads identically whether every shot was confirmed or
+        /// nothing was ever predicted at all.
         public int OverflowDroppedShots;
 
         public PredictedShotLog(int capacity = DefaultCapacity)
@@ -107,6 +116,8 @@ namespace Ring.Simulation.Combat
             _tick = localTick;
         }
 
+        /// Refused and counted when the buffer is full -- the refusal is a
+        /// value, never an exception (Р82).
         /// ⚠ `internal`: only `Ring.Simulation` may state that a shot happened.
         /// A public `Record` would let Presentation FABRICATE one, and
         /// `WeaponSystem`'s own header keeps the opposite discipline about

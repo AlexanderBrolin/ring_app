@@ -1054,6 +1054,13 @@ namespace Ring.Presentation.Net
                 DroppedSnapshots = _snapshots.OverflowDroppedSnapshots,
                 FramesMissingEntities = _framesMissingEntities,
                 UnconfirmedGhosts = _stats.UnconfirmedGhosts,
+                // app-8dv T5. Read from the JOURNAL rather than mirrored into
+                // `NetStats`: that class's own doc closes its field list
+                // ("nothing beyond the plan's own field list"), and the
+                // neighboring `ClientEventQueue.OverflowDroppedEvents` states
+                // the same rule for the same shape of fact — it is a fact
+                // ABOUT THIS OBJECT, which the dev overlay reads from here.
+                DroppedPredictedShots = _shotLog.OverflowDroppedShots,
                 SnapshotQueueCount = _snapshots.Count,
                 SnapshotQueueDepth = _snapshots.Depth,
                 EventQueueCount = _events.Count,
@@ -1543,6 +1550,25 @@ namespace Ring.Presentation.Net
             // instead holds the pose actually on screen: the frame the pair
             // resolves again is the one that moves the picture, which is what
             // the interpolation buffer exists to make ordinary.
+            // THE PREDICTED TICK IS NEEDED ABOVE THE BRANCH SINCE app-8dv T5,
+            // because it now has TWO consumers and one of them must run on a
+            // frame the render pair could not resolve. Its account — why the
+            // tracers run on this clock, and why the depth is the JUDGE'S
+            // rather than the one this client measured — is the paragraph
+            // inside the branch, where the tracer half spends it.
+            int predictedTick = RewindDepthMeter.DrawTickFor(
+                renderTick, _rewindDepth, _cfg.Arena.RewindCapTicks);
+
+            // ⛔ UNCONDITIONALLY, AND BEFORE THE BRANCH (app-8dv T5, spec §3.4).
+            // Putting this inside `if (ResolveRenderPair(...))` would repeat, on
+            // this client's own SHOTS, the very defect app-5fh/app-0t6 fixed for
+            // its own BODY: a hole in the snapshot ring would stop the local
+            // prediction dead and then dump it forward when the hole closed.
+            // The journal is drained every frame, so a starved ring costs the
+            // picture nothing — and a shot fired during one is born on time
+            // rather than in a batch afterwards, against the frame's own cap.
+            DrainPredictedShots(predictedTick);
+
             if (ResolveRenderPair(renderTick))
             {
                 _alpha = _clock.Phase;
@@ -1584,8 +1610,11 @@ namespace Ring.Presentation.Net
                 // it is NOT is an argument for putting the tracers back on the
                 // render clock: there they lag their own shooter instead, which
                 // is the artifact that has a body's own hand on it.
-                int predictedTick = RewindDepthMeter.DrawTickFor(
-                    renderTick, _rewindDepth, _cfg.Arena.RewindCapTicks);
+                //
+                // ⚠ THE TICK ITSELF IS COMPUTED ABOVE THIS BRANCH since
+                // app-8dv T5 -- the journal drain needs the same number on a
+                // frame that resolved no pair -- and this paragraph stays here,
+                // where the picture actually spends it.
 
                 // ONCE PER FRAME AND BEFORE BOTH WRITES, which is the cache's
                 // own rule (`TracerProjectiles.StepTo`): `WriteInto` mutates
@@ -1628,9 +1657,26 @@ namespace Ring.Presentation.Net
 
             // Р67: ghosts age against the PREDICTED tick, never the render
             // tick — they are the client's own rounds, born in the prediction
-            // domain. The expired ids the call hands back still have no consumer
-            // even now that the tracer views exist (see `Curr`).
-            _ghosts.Advance(_nm.TimeManager.LocalTick);
+            // domain.
+            //
+            // AND SINCE app-8dv T5 THE EXPIRED IDS HAVE THEIR CONSUMER. A ghost
+            // that gasped is a shot the server never confirmed within
+            // `GhostConfirmTicks` — 400 ms at the shipped numbers — so the
+            // trail drawn for it is a picture of a round that did not happen.
+            // Left alone it would not vanish for another 1.4 s: no
+            // `ProjectileEnded` will ever name a ghost id, so the trail would
+            // stand until its own lifetime plus `LostEndSlackTicks` ran out.
+            // Retiring it on the PREDICTED tick is what makes it disappear on
+            // the frame the prediction was withdrawn, not a second later.
+            var expired = _ghosts.Advance(_nm.TimeManager.LocalTick);
+            for (int i = 0; i < expired.Length; i++)
+            {
+                // The answer is the fact this line would otherwise have to
+                // restate — `Retire` already reports whether such a track was
+                // there — and there is nothing to do with it: a ghost whose
+                // trail the table already pruned is ordinary traffic.
+                _tracers.Retire(expired[i], predictedTick);
+            }
 
             // bd `app-03et`: stamp this body's own position with the newest
             // world tick BEFORE the drain, so a blow delivered on this very
@@ -2819,8 +2865,10 @@ namespace Ring.Presentation.Net
                 // calls below reach a live FishNet object. Keeping them here
                 // is what leaves the decode a pure function a unit test can
                 // reach.
-                RouteToGhosts((SnapshotEventKind)record.Kind, in p);
-                RouteToTracers(originTick, (SnapshotEventKind)record.Kind, in p, in decoded);
+                OwnShotRoute ownShotRoute = RouteToGhosts((SnapshotEventKind)record.Kind,
+                    in p, out int adoptedGhostId);
+                RouteToTracers(originTick, (SnapshotEventKind)record.Kind, in p, in decoded,
+                    ownShotRoute, adoptedGhostId);
                 RouteOwnDeath(in decoded);
 
                 // The answer is deliberately not read: a refused event is one
@@ -2959,6 +3007,109 @@ namespace Ring.Presentation.Net
             if (_controller != null) _controller.NotifyOwnDeath();
         }
 
+        /// EVERY SHOT THE PREDICTED TICK WROTE DOWN, TURNED INTO A TRAIL
+        /// (app-8dv T5, spec §3.4, Р451/ruling 319). The journal is written
+        /// inside `PlayerPredictionCore.Predict`, where the shot actually
+        /// happens and where its geometry — cone, burst counter, overshoot —
+        /// is the geometry that fired it; this is where the frame collects
+        /// what it wrote.
+        ///
+        /// ⛔ WHY THE FRAME CANNOT SIMPLY ASK THE WEAPON INSTEAD, in one
+        /// sentence per reason, because the question WILL be asked again: the
+        /// spawn gate reads `FireCooldown`, which this tick has already
+        /// charged, so it answers `false` forever; the cone has already been
+        /// widened by the recoil of the very shot being drawn; `overshoot` is
+        /// read inside `Advance`'s own loop and is gone by the time a frame
+        /// runs, worth up to 1.75 m of muzzle offset; and a shot counter
+        /// stepped BACK by a reconcile makes the delta negative.
+        ///
+        /// TWO CLOCKS, AND THE CONVERSION IS A FORMULA RATHER THAN AN
+        /// INTENTION (finding C4₃). A record is stamped with FishNet's
+        /// `LocalTick`; a trail is born on the world's predicted tick; the two
+        /// counters are unrelated (finding Н-11 — the world's restarts per
+        /// match, FishNet's is monotonic for the connection). So what crosses
+        /// between them is the AGE of the record, measured at the moment of
+        /// the drain, and every record of the frame gets its own birth tick
+        /// instead of all of them sharing one — which is worth 1 to 3 ticks,
+        /// i.e. 1.75 to 5 m of trail, exactly the precision `overshoot` was
+        /// closed for.
+        void DrainPredictedShots(int predictedTick)
+        {
+            System.ReadOnlySpan<PredictedShot> pending = _shotLog.Drain();
+            if (pending.Length == 0) return;
+
+            // The frame's own ceiling (Р468). `renderTick` can jump and
+            // `FireInterval` is tunable down to 0.01 s, so a frame can find
+            // far more records waiting than a frame should spend trails on.
+            // What it refuses is counted where every other refusal of this
+            // journal is counted — the log's own field, not a second one.
+            int budget = OwnShotPolicy.SpawnBudgetFor(pending.Length,
+                _net.TracerCatchUpBudget);
+            _shotLog.OverflowDroppedShots += pending.Length - budget;
+
+            uint localTick = _nm.TimeManager.LocalTick;
+            uint seqTick = 0;
+            int seqInTick = 0;
+            bool hasSeqTick = false;
+
+            for (int i = 0; i < budget; i++)
+            {
+                ref readonly PredictedShot record = ref pending[i];
+
+                // WHICH RECORD THIS IS WITHIN ITS OWN TICK, because one tick
+                // can carry more than one shot (`Advance`'s loop fires again
+                // whenever `FireInterval` is shorter than `TickDt`) and the
+                // claim is keyed by the PAIR. Records of one tick arrive
+                // consecutively, so the running counter is the whole
+                // bookkeeping.
+                if (hasSeqTick && record.LocalTick == seqTick)
+                {
+                    seqInTick++;
+                }
+                else
+                {
+                    seqTick = record.LocalTick;
+                    seqInTick = 0;
+                    hasSeqTick = true;
+                }
+
+                // FishNet replays the replicate queue after every state packet
+                // — roughly thirty times a second — and a replay re-writes the
+                // records of the ticks it re-runs. Without this the same shot
+                // would grow a trail per replay, and the tracer's own
+                // duplicate guard could not help: every replay's ghost is
+                // handed a NEW ghost id.
+                if (!_spawnedShotKeys.TryClaim(record.LocalTick, seqInTick)) continue;
+
+                // ⚠ THE GHOST IS BORN IN FISHNET'S DOMAIN, THE TRAIL IN THE
+                // WORLD'S (Р67): `Advance` ages ghosts against
+                // `TimeManager.LocalTick`, which is what this hands it, while
+                // the trail is drawn on the predicted tick the picture runs on.
+                if (!_ghosts.TrySpawnPredictedShot(localTick, out int ghostId)) continue;
+
+                // `int - uint` is `long` in C#, and unsigned subtraction would
+                // WRAP for a record written by a replay of a tick ahead of the
+                // current one. Both edges are closed explicitly rather than
+                // reasoned about.
+                long age = (long)localTick - record.LocalTick;
+                if (age < 0) age = 0;
+                int spawnTick = predictedTick - (int)age;
+
+                // NINE PARAMETERS AND NOT ONE EXPRESSION AMONG THEM (ruling
+                // 306). The solution is what `ShotGeometry` worked out inside
+                // the firing tick; `radius`/`ttl` come from the config exactly
+                // as they do for a round off the wire, because neither travels
+                // on it. ⛔ `Dir` and `HorizSpeed` rather than `Vel`: that
+                // struct's own doc records that rebuilding one from the others
+                // reddened two golden hashes.
+                ref readonly ShotSolution shot = ref record.Solution;
+                _tracers.TrySpawn(ghostId, spawnTick, shot.SpawnPos, shot.Height,
+                    shot.Dir, shot.HorizSpeed, shot.VelZ,
+                    _cfg.Weapon.ProjectileRadius, _cfg.Weapon.ProjectileLifetime,
+                    ProjectileOwner.Player, LocalPlayerIndex, shot.BirthSteps);
+            }
+        }
+
         /// The two wire events the ghost registry answers to, and nothing else.
         ///
         /// `Confirm` IS GATED ON THE OWNER, AND THE GATE IS LOAD-BEARING.
@@ -2986,26 +3137,43 @@ namespace Ring.Presentation.Net
         /// measurement) to start reading the parameter without a signature
         /// change — and such a consumer would subtract it from a prediction
         /// tick. A zero it can see is nothing; a world tick it cannot tell from
-        /// a prediction tick is a plausible wrong number. Opening the
-        /// prediction seams (Task 44d) did not change this: what is missing is
-        /// not access to `TimeManager.LocalTick` — the render frame reads it
-        /// already — but a ghost BORN in the prediction domain to measure
-        /// against, and `TrySpawnFromPrediction` still has no caller (see the
-        /// task's report). The tick to pass is the one that spawn records.
-        void RouteToGhosts(SnapshotEventKind kind, in SnapshotEventPayload p)
+        /// a prediction tick is a plausible wrong number.
+        /// ⚠ AN EARLIER WORDING CLOSED THIS PARAGRAPH WITH "a ghost BORN in
+        /// the prediction domain [is what is missing], and
+        /// `TrySpawnFromPrediction` still has no caller", AND app-8dv T5 MADE
+        /// THAT FALSE: predicted ghosts are born now, by `DrainPredictedShots`
+        /// above, through the ungated entrance and on `TimeManager.LocalTick`.
+        /// What did NOT change is the reason a zero is passed from HERE: this
+        /// path holds only the frame's WORLD tick, off the wire, and the two
+        /// counters still have no fixed offset between them.
+        ///
+        /// SINCE app-8dv T5 IT ALSO ANSWERS WHAT THE TRACER HALF MUST DO with
+        /// the same record, because only this side can know whether a
+        /// prediction was paired. The answer is a VALUE from `OwnShotPolicy`
+        /// rather than a flag decided inline: the mutations that live on this
+        /// decision would have no EditMode witness anywhere in this class.
+        OwnShotRoute RouteToGhosts(SnapshotEventKind kind, in SnapshotEventPayload p,
+            out int ghostId)
         {
+            ghostId = 0;
             switch (kind)
             {
                 case SnapshotEventKind.ProjectileSpawned:
-                    if (p.PlayerIndex == LocalPlayerIndex)
-                    {
-                        _ghosts.Confirm(p.Id, 0u);
-                    }
-                    break;
+                {
+                    bool isOwnShot = p.PlayerIndex == LocalPlayerIndex;
+                    // THE OWNER GATE SHORT-CIRCUITS THE PAIRING, which is the
+                    // load-bearing half described above: matching is
+                    // positional, so asking the registry about a stranger's
+                    // round would pair that stranger with this client's oldest
+                    // unconfirmed ghost.
+                    bool paired = isOwnShot && _ghosts.TryConfirm(p.Id, 0u, out ghostId);
+                    return OwnShotPolicy.RouteOwnSpawn(isOwnShot, paired);
+                }
                 case SnapshotEventKind.ProjectileEnded:
                     _ghosts.TryTranslateEnd(p.Id, out int _);
                     break;
             }
+            return OwnShotRoute.Ignore;
         }
 
         /// bd `app-s0u` — the tracer half of the SAME records, kept in its own
@@ -3041,13 +3209,37 @@ namespace Ring.Presentation.Net
         /// `ProjectileIds.NoOwner` for a mob's round — the same sentinel the
         /// simulation uses — so the question is answered by the wire rather
         /// than guessed.
+        ///
+        /// ⭐ SINCE app-8dv T5 IT IS TOLD WHAT THE GHOST HALF DECIDED, and it
+        /// has to be: a round this client PREDICTED already has a trail on
+        /// screen, so growing a second one here would draw the same bullet
+        /// twice. `route` is the answer `RouteToGhosts` returned for this very
+        /// record, and `ghostId` names the trail to adopt when it is
+        /// `AdoptGhost`.
         void RouteToTracers(uint eventTick, SnapshotEventKind kind, in SnapshotEventPayload p,
-            in SimEvent decoded)
+            in SimEvent decoded, OwnShotRoute route, int ghostId)
         {
             switch (kind)
             {
                 case SnapshotEventKind.ProjectileSpawned:
                 {
+                    // THE ADOPTION WRITES A KEY AND STOPS (rulings 320/325).
+                    // The trail has been flying since the tick this client
+                    // predicted the shot; the event describes that same birth
+                    // but arrives `RTT/2 + buffer` later, so spawning again --
+                    // or re-seeding from the envelope -- would teleport the
+                    // round back to the muzzle and cut the trail (Р67).
+                    // ⚠ The other two routes both fall through to the ordinary
+                    // path below, and they mean different things: `Ignore` is
+                    // somebody else's round, `SpawnPlainly` is this client's own
+                    // shot whose prediction gasped or never happened. Neither
+                    // has a trail to adopt, and both must have one drawn.
+                    if (route == OwnShotRoute.AdoptGhost)
+                    {
+                        _tracers.Adopt(ghostId, p.Id);
+                        break;
+                    }
+
                     bool byPlayer = p.PlayerIndex != ProjectileIds.NoOwner;
                     float radius = byPlayer
                         ? _cfg.Weapon.ProjectileRadius

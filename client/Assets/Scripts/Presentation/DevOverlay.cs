@@ -291,6 +291,7 @@ namespace Ring.Presentation
             DrawIntCounter("DroppedSnapshots", _net.DroppedSnapshots);
             DrawIntCounter("FramesMissingEntities", _net.FramesMissingEntities);
             DrawIntCounter("UnconfirmedGhosts", _net.UnconfirmedGhosts);
+            DrawIntCounter("DroppedPredictedShots", _net.DroppedPredictedShots);
 
             // Occupancy, not loss — never red. A snapshot ring sitting at zero
             // is a buffer absorbing nothing, which is the unhealthy reading of

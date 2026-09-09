@@ -152,6 +152,31 @@ namespace Ring.Networking.Client
         struct Track
         {
             public int Id;
+
+            /// THE SECOND KEY (app-8dv T5, spec §3.4, rulings 320/321/325).
+            /// A round this client PREDICTED is born under a ghost id, long
+            /// before the server names it; when `ProjectileSpawned` finally
+            /// arrives, the same round acquires the authority's own code, and
+            /// every later word about it — a ricochet, an ending — arrives
+            /// under that code alone. So the round answers to two keys at
+            /// once, and `Adopt` is what writes the second.
+            ///
+            /// ⛔ NOT A REMAP, AND THE DIFFERENCE IS THE WHOLE OF Р67: `Id`
+            /// above never changes, because a renderer keys its view off it
+            /// and a swap would read as retire-and-rent. This field is added
+            /// beside it, not instead of it.
+            ///
+            /// ⚠ WHY THE PAIRING IS NOT LOOKED UP THROUGH `GhostProjectiles`
+            /// INSTEAD (the registry does hold ghost-id ↔ server-id). Because
+            /// that pairing lives exactly as long as the GHOST does:
+            /// `TryTranslateEnd` frees the slot on `ProjectileEnded`, and
+            /// `Advance` frees confirmed ghosts past `maxTrackTicks`. A trail
+            /// lives by its own calendar — to `EndTick`, and past a lost
+            /// ending by `LostEndSlackTicks` on top of its lifetime. Keying
+            /// the lookup on somebody else's lifetime means handing the right
+            /// to forget the key to an object with a different clock.
+            public int ServerId;
+
             public int SpawnTick;
             public int EndTick;
             public float2 SpawnPos;
@@ -246,6 +271,33 @@ namespace Ring.Networking.Client
         /// either way, and two fields that must agree are two fields that can
         /// disagree.
         const int NoEnd = int.MaxValue;
+
+        /// `ServerId` while no `ProjectileSpawned` has named this round yet
+        /// (app-8dv T5, spec §3.4).
+        ///
+        /// ⛔ IT CANNOT BE ZERO, because zero is a LEGAL server code: the wire
+        /// truncates projectile ids to `u16` (`SnapshotEventPayload.Id`'s own
+        /// doc), so round 65536 arrives as 0. And a track is zeroed with
+        /// `= default` by both `Reset` and `Prune`, which is exactly why the
+        /// sentinel is written in `TrySpawn`'s initializer rather than left to
+        /// the struct's own zero.
+        ///
+        /// ⛔⛔ AND IT CANNOT BE −1 EITHER, WHICH IS THE HALF THAT IS EASY TO
+        /// GET WRONG. The primary key of a predicted trail is a GHOST id, and
+        /// `GhostProjectiles.FirstGhostId` IS −1 — the very first predicted
+        /// shot of a match carries it. `IndexOf` searches both keys, so a
+        /// sentinel of −1 would make every unadopted trail answer to the first
+        /// ghost's id. The two domains have to be disjoint, and `int.MinValue`
+        /// is outside both: ghost ids count DOWN from −1 (never reaching it in
+        /// a match's worth of shots) and server codes are non-negative.
+        ///
+        /// ⚠ ITS NAME IS NOT `NoServerId`, AND THE REASON IS READABILITY
+        /// RATHER THAN A COLLISION: `GhostProjectiles` has a private constant
+        /// by that name for its own, different fact ("this ghost is not
+        /// CONFIRMED yet"). Two different facts under one name in one
+        /// namespace is an invitation to a bug; this one says what it means —
+        /// the trail has not been ADOPTED.
+        const int NoAdoptedServerId = int.MinValue;
 
         /// How long past its own lifetime a round is kept when no
         /// `ProjectileEnded` ever arrives for it. NOT AN OUTCOME AND NOT A
@@ -407,6 +459,11 @@ namespace Ring.Networking.Client
             _live[_count] = new Track
             {
                 Id = serverId,
+                // WRITTEN HERE AND NOWHERE ELSE, because the struct's own zero
+                // is a legal server code (see `NoAdoptedServerId`): `Reset` and
+                // `Prune` clear tracks with `= default`, so a sentinel left to
+                // the initializer's silence would be the code of round 65536.
+                ServerId = NoAdoptedServerId,
                 Owner = owner,
                 OwnerIndex = ownerIndex,
                 SpawnTick = spawnTick,
@@ -420,6 +477,36 @@ namespace Ring.Networking.Client
             };
             SeatOnBirth(ref _live[_count]);
             _count++;
+            return true;
+        }
+
+        /// THE SERVER HAS NAMED A ROUND THIS CLIENT ALREADY DREW (app-8dv T5,
+        /// spec §3.4, rulings 320/325). The trail born under `ghostId` acquires
+        /// the authority's own code as a SECOND key, so every later word about
+        /// the round — a ricochet, an ending, an owner lookup — finds it.
+        ///
+        /// ⛔⛔ IT WRITES THE KEY AND NOTHING ELSE, AND THE TEMPTATION IS TO DO
+        /// MORE. The spawn event carries the round's authoritative birth point,
+        /// and re-seeding the birth half from it looks like an upgrade: the
+        /// server's numbers replacing a prediction's. It is the opposite. The
+        /// trail has been flying since the tick the shot was predicted; the
+        /// event describes that same birth, but it arrives `RTT/2 + buffer`
+        /// later, so re-seeding would put the round back at the muzzle and cut
+        /// the trail it has drawn — precisely the teleport Р67 forbids and
+        /// precisely what `GhostProjectiles`' own header says `Confirm` must
+        /// never do to a ghost's id.
+        ///
+        /// Answers whether such a trail was tracked at all. A refusal is a
+        /// value, like every other on this path: this runs inside FishNet's
+        /// batched parse, where a throw abandons every message behind it in
+        /// the same datagram (Р82/195). A ghost whose trail has already been
+        /// pruned is ordinary traffic, not an error.
+        public bool Adopt(int ghostId, int serverId)
+        {
+            int index = IndexOf(ghostId);
+            if (index < 0) return false;
+
+            _live[index].ServerId = serverId;
             return true;
         }
 
@@ -878,6 +965,10 @@ namespace Ring.Networking.Client
         /// along with everything else — see `SeatOnBirth`, which is what makes
         /// the struct's zero safe by naming every cache field explicitly at
         /// every spawn.
+        /// ⚠ `ServerId` IS THE ONE FIELD THAT ZERO IS NOT SAFE FOR (app-8dv
+        /// T5), and it is safe here for a different reason: `TrySpawn`'s
+        /// initializer writes its sentinel at every birth, so a slot cleared
+        /// to zero is a slot nothing reads until a spawn fills it again.
         public void Reset()
         {
             for (int i = 0; i < _count; i++) _live[i] = default;
@@ -906,6 +997,11 @@ namespace Ring.Networking.Client
         /// re-run starts before any of this round's bounces happened, so a
         /// counter left standing would spend a budget the re-run has not used
         /// yet and refuse a reflection the server already granted.
+        /// ⛔ `ServerId` IS NOT IN THIS LIST AND MUST NOT BE (app-8dv T5): it
+        /// is a KEY, not a cache reading. Throwing the cache away re-runs
+        /// where the round IS; it does not un-say what the server named it.
+        /// Clearing it here would make an adopted round unfindable by the code
+        /// its own ricochet and ending arrive under.
         static void SeatOnBirth(ref Track t)
         {
             t.CacheTick = t.SpawnTick;
@@ -992,10 +1088,26 @@ namespace Ring.Networking.Client
             return tick - t.SpawnTick > lifetimeTicks + LostEndSlackTicks;
         }
 
-        int IndexOf(int serverId)
+        /// A round is found by EITHER of its keys (app-8dv T5, spec §3.4).
+        /// The primary one is what it was born under — a server code for
+        /// somebody else's round, a ghost id for one this client predicted —
+        /// and the second is what `Adopt` wrote when the server finally named
+        /// a predicted round. Five callers read this: `TrySpawn`'s duplicate
+        /// guard, `Retire`, `OnRicochet`, `TryGetOwner`, and `RestoreShooter`
+        /// through the last of them.
+        ///
+        /// ⚠ THE SECOND KEY IS ONLY COMPARED WHEN IT HAS BEEN WRITTEN. An
+        /// unadopted track carries `NoAdoptedServerId`, and skipping the
+        /// comparison for it costs nothing while making the sentinel's job
+        /// impossible to get wrong twice: no caller can ever match by handing
+        /// this method the sentinel's own value.
+        int IndexOf(int key)
         {
             for (int i = 0; i < _count; i++)
-                if (_live[i].Id == serverId) return i;
+            {
+                if (_live[i].Id == key) return i;
+                if (_live[i].ServerId != NoAdoptedServerId && _live[i].ServerId == key) return i;
+            }
             return -1;
         }
     }

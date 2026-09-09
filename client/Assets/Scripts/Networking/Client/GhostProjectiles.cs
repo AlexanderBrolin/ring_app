@@ -28,9 +28,25 @@ namespace Ring.Networking.Client
     /// storage, at minimum the birth tick) — everything a ghost's own
     /// lifecycle (`Advance` below) needs, and nothing a renderer would need
     /// to relitigate.
+    /// ⚠ AND THAT IS STILL TRUE AFTER app-8dv T5, WHICH IS WORTH SAYING
+    /// BECAUSE THE PARAGRAPH ABOVE NOW READS LIKE A BAN ON WHAT WAS DONE.
+    /// A predicted shot's geometry does exist by then — `ShotGeometry` worked
+    /// it out inside the tick that fired, and `PredictedShotLog` carries it —
+    /// but it arrives at `TracerProjectiles` and never passes through here.
+    /// This class still stores one number per ghost and still computes no
+    /// position at all; what changed is who ELSE knows the geometry, not what
+    /// this registry does with it.
     ///
     /// THE SPAWN GATE IS `WeaponSystem.WouldFireThisTick` (fix-round 1,
-    /// finding I-1 — supersedes the original decision 0a text below).
+    /// finding I-1 — supersedes the original decision 0a text below), AND
+    /// SINCE app-8dv T5 THAT SENTENCE IS ABOUT THE `internal`
+    /// `TrySpawnFromPrediction` ALONE. The production entrance is
+    /// `TrySpawnPredictedShot`, which has no gate on purpose: it is told that
+    /// a shot happened rather than asked whether one would, and on the
+    /// post-shot state the gate would refuse every time (that member's own
+    /// doc carries the account). What follows is why the GATED member gates
+    /// the way it does, and it is kept because the fixtures that pin the gate
+    /// are still here:
     /// `CanFire` alone is coarser than "a shot fires this tick": it never
     /// reads `FireCooldown`, so gating a per-tick spawn on it alone fires on
     /// EVERY tick the trigger stays held — measured, a 3.6x over-spawn
@@ -42,7 +58,7 @@ namespace Ring.Networking.Client
     /// AFTER movement, BEFORE this tick's weapon phase).
     ///
     /// GHOST IDS ARE NEGATIVE AND NEVER REMAPPED (Р67, plan finding C-2). The
-    /// id handed back by `TrySpawnFromPrediction` is the ONLY id this ghost
+    /// id handed back by either spawn entrance is the ONLY id this ghost
     /// is ever known by, from spawn to `TryTranslateEnd`. `Confirm` records
     /// which SERVER id belongs to which ghost internally and never surfaces
     /// it, and never touches the ghost's own id — a consumer keying a view
@@ -140,11 +156,13 @@ namespace Ring.Networking.Client
     /// small — dozens, not thousands).
     ///
     /// A SPAWN THAT FINDS NO FREE SLOT REFUSES SILENTLY (Р82), exactly like a
-    /// gate refusal — `TrySpawnFromPrediction` returns `false` either way,
+    /// gate refusal — both spawn entrances return `false` either way,
     /// and the caller cannot and need not distinguish "the weapon wouldn't
     /// fire" from "every record slot is already in use" (pinned by
     /// `TrySpawnFromPrediction_CapacityExhaustedRefusesSilently`, fix-round
-    /// 1 M-4). In production `capacity` is sized off the arena's own
+    /// 1 M-4). ⚠ For the ungated entrance only the second half of that
+    /// sentence can ever happen, which is not a gap in the pinning but the
+    /// point of the entrance. In production `capacity` is sized off the arena's own
     /// projectile cap (task-35-brief §2.2) and `maxTrackTicks` reclaims any
     /// slot an end event never frees (I-3), so exhaustion is a defensive
     /// floor, not an expected path.
@@ -172,7 +190,7 @@ namespace Ring.Networking.Client
         /// `serverId` can never accidentally match an unconfirmed slot.
         const int NoServerId = -1;
 
-        /// The first id `TrySpawnFromPrediction` ever hands out, from a
+        /// The first id either spawn entrance ever hands out, from a
         /// fresh instance or immediately after `Reset` — pinned as a named
         /// constant because `Reset_ForgetsEverything` asserts this exact
         /// value, not merely "some negative number".
@@ -190,8 +208,8 @@ namespace Ring.Networking.Client
 
         /// Circular FIFO of slot indices, oldest-unconfirmed at `_queueHead`.
         /// Birth order and insertion order coincide (a slot enters at the
-        /// tail the moment `TrySpawnFromPrediction` creates it and leaves
-        /// only via `Confirm` or expiry in `Advance`), so the front is
+        /// tail the moment `TrySpawnPredictedShot` creates it and leaves
+        /// only via `TryConfirm` or expiry in `Advance`), so the front is
         /// always both "the oldest still-unconfirmed ghost" (what `Confirm`
         /// needs) and "the next one due to expire" (what `Advance` needs) —
         /// one structure answers both questions.
@@ -262,11 +280,45 @@ namespace Ring.Networking.Client
         /// tell them apart, see the class doc). No flight math, no spread
         /// draw: the class doc explains why `predicted`/`input`/`weapon`
         /// exist only to feed the gate.
-        public bool TrySpawnFromPrediction(in PlayerState predicted, in SimInput input,
+        ///
+        /// ⛔ `internal` SINCE app-8dv T5, AND THAT IS A NARROWING RATHER THAN
+        /// A DEPRECATION (spec §3.4, finding I3₃). It never had a production
+        /// caller and now never will: the frame cannot ask this question at
+        /// all, because a drained journal record describes a tick whose weapon
+        /// phase has ALREADY charged `FireCooldown`, so the gate reads shut on
+        /// exactly the state the record was written from. Left public it would
+        /// be a loaded gun — a member whose honest answer is "always false,
+        /// after every shot" — so it stays for the three fixtures that pin the
+        /// gate itself (`Ghost_SpawnGateIsWouldFireThisTick` and its
+        /// neighbors), reachable through this assembly's
+        /// `InternalsVisibleTo("Ring.Simulation.Tests")`.
+        internal bool TrySpawnFromPrediction(in PlayerState predicted, in SimInput input,
             in WeaponSimConfig weapon, uint predictedTick, out int ghostId)
         {
             ghostId = 0;
             if (!WeaponSystem.WouldFireThisTick(in predicted, in input, in weapon)) return false;
+
+            return TrySpawnPredictedShot(predictedTick, out ghostId);
+        }
+
+        /// THE ENTRANCE THE JOURNAL USES, AND IT HAS NO GATE BECAUSE THERE IS
+        /// NOTHING LEFT TO DECIDE (app-8dv T5, spec §3.4, Р451/ruling 319).
+        /// The caller is draining a record the predicted tick already wrote:
+        /// the shot HAPPENED, its geometry was worked out inside the tick that
+        /// fired it, and this class is being told about it rather than asked.
+        /// Asking `WouldFireThisTick` here would refuse every single time —
+        /// see the gated member above for why — which is the first of the four
+        /// reasons the spec abandoned polling the gate from the frame.
+        ///
+        /// The one refusal left is the honest one: no free slot (Р82), with
+        /// `ghostId` at 0, exactly as the gated entrance answers.
+        ///
+        /// ⚠ `predictedTick` IS THE CALLER'S OWN PREDICTION CLOCK, never the
+        /// render clock (Р67): `Advance` ages every record against the same
+        /// domain, and the backend feeds it `TimeManager.LocalTick`.
+        public bool TrySpawnPredictedShot(uint predictedTick, out int ghostId)
+        {
+            ghostId = 0;
 
             int slot = FreeSlotIndex();
             if (slot < 0) return false;
@@ -281,6 +333,39 @@ namespace Ring.Networking.Client
             EnqueueUnconfirmed(slot);
 
             ghostId = id;
+            return true;
+        }
+
+        /// `Confirm`, plus the one thing the tracer registry needs and the old
+        /// signature had no room for: WHICH ghost was paired (app-8dv T5, spec
+        /// §3.4, finding I2₃). The caller adopts that ghost's trail by id, so
+        /// a `void` answer would leave it guessing.
+        ///
+        /// ⚠ A NEW MEMBER BESIDE THE OLD ONE, NOT A CHANGED SIGNATURE.
+        /// `.Confirm(` is called 22 times in `GhostProjectileTests`, every one
+        /// of them with named arguments; an added `out` parameter would break
+        /// all 22 at once, and a compile error is not a RED (332/498/630).
+        /// `Confirm` below is now a thin wrapper over this — one mechanism,
+        /// two spellings, rather than two mechanisms.
+        ///
+        /// BOTH REFUSALS ANSWER `false` WITH `ghostId` AT 0, and the caller
+        /// needs that answer rather than a silent no-op: an unpaired shot must
+        /// still get an ordinary trail, or this client's own round would be
+        /// invisible. The two are a duplicate `serverId` and an empty queue —
+        /// see `Confirm`'s doc, which owns the full account of both.
+        public bool TryConfirm(int serverId, uint tick, out int ghostId)
+        {
+            ghostId = 0;
+            if (serverId < 0) return false;
+
+            for (int i = 0; i < _capacity; i++)
+                if (_occupied[i] && _serverId[i] == serverId) return false;
+
+            if (_queueCount == 0) return false;
+
+            int slot = DequeueUnconfirmedFront();
+            _serverId[slot] = serverId;
+            ghostId = _ghostId[slot];
             return true;
         }
 
@@ -308,26 +393,22 @@ namespace Ring.Networking.Client
         ///     KNOWN LIMIT paragraph covers the one case this does NOT fully
         ///     close: a non-empty queue at the time the stray confirmation
         ///     arrives).
-        public void Confirm(int serverId, uint tick)
-        {
-            if (serverId < 0) return;
-
-            for (int i = 0; i < _capacity; i++)
-                if (_occupied[i] && _serverId[i] == serverId) return;
-
-            if (_queueCount == 0) return;
-
-            int slot = DequeueUnconfirmedFront();
-            _serverId[slot] = serverId;
-        }
+        ///
+        /// ⚠ SINCE app-8dv T5 THE MECHANISM LIVES IN `TryConfirm` ABOVE and
+        /// this is its wrapper — the account of the pairing and of both
+        /// refusals stays here because this is the name the fixtures call and
+        /// the one a reader looks up. The only difference is that the wrapper
+        /// discards the paired ghost's id, which is exactly what a caller with
+        /// no trail to adopt has always done with it.
+        public void Confirm(int serverId, uint tick) => TryConfirm(serverId, tick, out _);
 
         /// For a CONFIRMED `serverId`, hands back the ghost's own id and
         /// frees the record (an end event is terminal — Task 44 routes it
         /// once). An unknown `serverId` (never confirmed, already
         /// translated, freed early by the `maxTrackTicks` ceiling, or
         /// negative) refuses without throwing, `ghostId` left at 0 on that
-        /// path too (fix-round 1, M-8 — same discipline as
-        /// `TrySpawnFromPrediction`'s refusal).
+        /// path too (fix-round 1, M-8 — same discipline as the spawn
+        /// entrances' own refusal).
         public bool TryTranslateEnd(int serverId, out int ghostId)
         {
             ghostId = 0;

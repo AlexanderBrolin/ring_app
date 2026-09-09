@@ -399,5 +399,158 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, tracers.WriteInto(small, SpawnTick),
                 "a destination smaller than the table is filled to its own length, not past it");
         }
+
+        // ---- app-8dv T5: the second key, and the trail that outlives its ghost ----
+
+        /// The first ghost id a fresh registry hands out (`GhostProjectiles.
+        /// FirstGhostId`), spelled here rather than borrowed because that
+        /// constant is private to its own class -- and it is the exact value
+        /// that makes -1 unusable as this file's sentinel.
+        const int FirstGhostId = -1;
+
+        /// M250's witness (spec §3.4, rulings 320/325, Р67). `Adopt` writes the
+        /// SECOND KEY AND NOTHING ELSE.
+        ///
+        /// ⛔ THE HALF THAT MUST NOT HAPPEN IS THE EXPENSIVE ONE. Re-seeding
+        /// the birth half from the server's own spawn envelope would look like
+        /// an improvement -- the authority's numbers replacing a prediction's --
+        /// and it would teleport the trail back to the muzzle by
+        /// `(RTT/2 + buffer) x ProjectileSpeed`, cutting the very trail this
+        /// task exists to draw. So the fixture pins BOTH halves: the second key
+        /// answers, and the round has not moved.
+        [Test]
+        public void Adopt_WritesTheSecondKeyOnly_AndTheTrailDoesNotJumpBack()
+        {
+            const int serverId = 77;
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, new float2(3f, 0f), 1f,
+                    dir, 10f, 0f, 0.1f, 2f, ProjectileOwner.Player, ownerIndex: 1),
+                "fixture premise: a predicted trail, keyed by its ghost id");
+
+            var before = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(before, SpawnTick + 2));
+
+            Assert.IsTrue(tracers.Adopt(FirstGhostId, serverId),
+                "the ghost this round was born as is the one the server has now named");
+
+            var after = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(after, SpawnTick + 2));
+            Assert.AreEqual(before[0].Pos.x, after[0].Pos.x, 1e-6f,
+                "adoption is a key, not a re-seed: moving the birth half would teleport the "
+                + "trail back to the muzzle, which is the artifact Р67 forbids");
+            Assert.AreEqual(before[0].Height, after[0].Height, 1e-6f);
+
+            Assert.AreEqual(FirstGhostId, after[0].Id,
+                "and the PRIMARY id never changes -- the renderer keys its view off it, and a "
+                + "remap would read as retire-and-rent");
+
+            Assert.IsTrue(tracers.TryGetOwner(serverId, out _, out byte adoptedOwner),
+                "the round is now findable by the server's code as well");
+            Assert.AreEqual(1, adoptedOwner);
+            Assert.IsTrue(tracers.TryGetOwner(FirstGhostId, out _, out _),
+                "and still findable by its own, because both keys are live at once");
+
+            Assert.IsFalse(tracers.Adopt(ghostId: -99, serverId: 5),
+                "a ghost this table never tracked is a refusal by value, not a throw: this "
+                + "runs inside FishNet's batched parse (Р82/195)");
+        }
+
+        /// M251's witness. The second key's sentinel is `int.MinValue`, and
+        /// BOTH halves of that choice are pinned here.
+        ///
+        /// ⛔ ZERO IS A LEGAL SERVER CODE: the wire truncates projectile ids to
+        /// `u16`, so round 65536 arrives as 0. Tracks are zeroed with
+        /// `= default` by `Reset`/`Prune`, so a sentinel forgotten in the
+        /// spawn initializer would silently BE that legal code -- and the
+        /// duplicate guard would then refuse the real round 0 because an
+        /// unadopted trail was already claiming to be it.
+        [Test]
+        public void AnUnadoptedTrail_DoesNotClaimTheLegalServerCodeZero()
+        {
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                    10f, 0f, 0.1f, 2f),
+                "fixture premise: one predicted trail, never adopted");
+
+            Assert.IsFalse(tracers.TryGetOwner(0, out _, out _),
+                "an unadopted trail answers to no server code at all -- least of all to the "
+                + "one a truncated id lands on");
+
+            Assert.IsTrue(tracers.TrySpawn(0, SpawnTick, new float2(1f, 0f), 1f, dir,
+                    10f, 0f, 0.1f, 2f),
+                "so the real round 0 is accepted: the duplicate guard has nothing to trip on");
+            Assert.AreEqual(2, tracers.Count);
+        }
+
+        /// M252's witness, and it is deliberately NOT the neighbor's fixture:
+        /// `ADuplicateIdIsRefused_NotTrackedTwice` pins the guard on the
+        /// PRIMARY key, which a lookup by first key alone already satisfies.
+        /// Only a lookup that reads BOTH keys refuses this one (lesson 706:
+        /// the criterion for a new test is that a mutant separates it from its
+        /// neighbor, and M252 is that mutant).
+        [Test]
+        public void TheDuplicateGuardSeesTheAdoptedServerCode_NotOnlyThePrimaryKey()
+        {
+            const int serverId = 5;
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                10f, 0f, 0.1f, 2f));
+            Assert.IsTrue(tracers.Adopt(FirstGhostId, serverId));
+
+            Assert.IsFalse(tracers.TrySpawn(serverId, SpawnTick + 2, new float2(9f, 0f), 1f,
+                    dir, 10f, 0f, 0.1f, 2f),
+                "the server's own spawn event for a round already drawn as a ghost must not "
+                + "grow a SECOND trail beside it");
+            Assert.AreEqual(1, tracers.Count, "one round is one trail, under either of its keys");
+        }
+
+        /// M253's witness. An expired ghost's trail is retired BY THE GHOST ID
+        /// -- and the number this buys is the whole point of giving
+        /// `GhostProjectiles.Advance`'s expired ids a consumer at all.
+        ///
+        /// A predicted trail the server never confirms is a shot that did not
+        /// happen. Its ghost gasps after `GhostConfirmTicks` (12 ticks, 400 ms
+        /// at the shipped tick rate). Without a consumer for that id, the trail
+        /// itself answers to nothing: no `ProjectileEnded` will ever name it,
+        /// so it stands until its own lifetime plus the lost-end slack runs
+        /// out. The fixture pins the far end as a MEASURED premise rather than
+        /// a literal: at a full lifetime's worth of ticks the trail is still
+        /// being drawn.
+        [Test]
+        public void AnExpiredGhostsTrail_IsRetiredByItsGhostId_NotLeftToOutliveItsOwnLifetime()
+        {
+            const int ghostConfirmTicks = 12;      // NetConfig.GhostConfirmTicks' C# default
+            float ttl = TableCfg.Weapon.ProjectileLifetime;
+            int fullLifetimeTicks = (int)math.ceil(ttl / SimulationWorld.TickDt);
+
+            var untouched = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(untouched.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                10f, 0f, 0.1f, ttl));
+
+            untouched.Prune(SpawnTick + ghostConfirmTicks);
+            Assert.AreEqual(1, untouched.Count,
+                "fixture premise: the ghost's own expiry means nothing to the trail -- "
+                + "nothing here ages by it");
+            untouched.Prune(SpawnTick + fullLifetimeTicks);
+            Assert.AreEqual(1, untouched.Count,
+                "and a whole lifetime later it is STILL drawn, because a lost ending is kept "
+                + "for the slack on top of it -- which is the 1.4 s of phantom trail this "
+                + "test exists against");
+
+            var retired = NewTable(4);
+            Assert.IsTrue(retired.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                10f, 0f, 0.1f, ttl));
+            Assert.IsTrue(retired.Retire(FirstGhostId, SpawnTick + ghostConfirmTicks),
+                "the expired ghost's id names its own trail: Retire already answers whether "
+                + "a track was there, which is why no wrapper is written around it");
+            retired.Prune(SpawnTick + ghostConfirmTicks);
+            Assert.AreEqual(0, retired.Count,
+                "and the trail goes with the ghost, at 400 ms rather than at the end of a "
+                + "lifetime the round never had");
+        }
     }
 }

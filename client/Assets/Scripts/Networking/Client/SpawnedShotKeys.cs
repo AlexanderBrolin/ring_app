@@ -4,9 +4,10 @@ namespace Ring.Networking.Client
     /// of which predicted shots already grew a trail, so that FishNet's replay
     /// of the same ticks does not grow a second one.
     ///
-    /// ⚠ NO PRODUCTION CALLER YET, AND SAYING SO BEATS IMPLYING ONE: the type
-    /// and its per-match seam land in T4, the backend that claims keys lands in
-    /// T5. Until then `TryClaim` is exercised by tests alone.
+    /// THE CALLER IS THE FRAME'S DRAIN (`NetworkSimBackend.
+    /// DrainPredictedShots`, app-8dv T5), which claims one key per record
+    /// before it grows a trail for it and skips the record when the claim is
+    /// refused.
     ///
     /// ⛔ NOT THE SAME BOOKKEEPING THE LATCH KEEPS (spec §3.5, finding C2₃).
     /// This one answers "has a TRAIL been born" and will be written by the
