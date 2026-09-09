@@ -233,16 +233,17 @@ namespace Ring.Presentation.Net
         /// same reason.
         readonly NetStats _stats = new NetStats();
 
-        // The seven per-match seams, plus the two objects that own their reset
+        // The ten per-match seams, plus the two objects that own their reset
         // and their epoch. All built by the first `Restart`, because the
-        // facade does not hand `SimConfig` over until then and four of the
-        // eight cannot be built without it: `SnapshotQueue` (the arena sizes
+        // facade does not hand `SimConfig` over until then and four of them
+        // cannot be built without it: `SnapshotQueue` (the arena sizes
         // its ring of `RenderSnapshot`s), `EventDedup`, `GhostProjectiles`
         // (the projectile cap) and `StalePolicy` (the player cap). Of the
         // other four, `ClientEventQueue` is sized from `NetTimings`/
         // `NetConfig`, `ClientMatchLink` needs the config's HASH and its
         // roster size rather than its dimensions, and `RenderClock` and
-        // `ClientMatchReset` are sized from nothing at all — they are built
+        // `ClientMatchReset` are sized from nothing at all — as are the two
+        // app-8dv seams, `PredictedShotLog` and `SpawnedShotKeys`. They are built
         // here because the objects they are handed are, not because a number
         // of the config reaches them.
         SnapshotQueue _snapshots;
@@ -3732,11 +3733,14 @@ namespace Ring.Presentation.Net
                 {
                     _controller = controller;
                     _controller.Configure(in _cfg);
-                    // app-8dv T4: a seam of its own rather than two more
-                    // parameters on `Configure` -- `MatchServer` calls
+                    // app-8dv T4: a seam of its own rather than one more
+                    // parameter on `Configure` -- `MatchServer` calls
                     // `Configure` too, and a server neither needs a journal of
                     // predicted shots nor may hold one.
-                    _controller.AttachShotLog(_shotLog, _spawnedShotKeys);
+                    // ⚠ ONLY THE JOURNAL GOES: `_spawnedShotKeys` is read in the
+                    // frame that draws the trails, which is this class's own
+                    // business, so the core is handed no reference to it.
+                    _controller.AttachShotLog(_shotLog);
                     return;
                 }
             }

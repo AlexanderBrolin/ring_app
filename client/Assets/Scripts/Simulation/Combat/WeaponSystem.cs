@@ -40,10 +40,17 @@ namespace Ring.Simulation.Combat
         /// fractional remainder carries into the next shot (no rounding drift) —
         /// possibly firing more than once per tick if dt outpaces the interval.
         ///
-        /// ONE CORE, TWO SINKS (Stage 2 Task 30, C-1/I5). `worldOrNull` is the
-        /// shot's sink: the authoritative world for `Update` below, and `null`
-        /// for `AdvanceNoSpawn`, the seam a predicting client drives its own copy
-        /// of PlayerState through.
+        /// ONE CORE, TWO PATHS, ONE SINK EACH (Stage 2 Task 30, C-1/I5;
+        /// renamed from "TWO SINKS" in app-8dv T4, when the second sink stopped
+        /// being `null`). The two paths are `Update` below, the authoritative
+        /// server tick, and `AdvanceNoSpawn`, the seam a predicting client
+        /// drives its own copy of PlayerState through. Each has exactly one
+        /// sink and never the other's: the server's is `worldOrNull` — the
+        /// round, the tally, the catch-up; the client's is `logOrNull` — the
+        /// journal, which records what already happened and decides nothing.
+        /// ⛔ NEITHER PATH EVER HAS BOTH, and that is routing rather than
+        /// hope: on a listen server `RouteReplicate` answers `RecordForServer`
+        /// and `Predict` is never called at all.
         ///
         /// ⭐ THE RULE IS ABOUT OWNING AN OUTCOME, NOT ABOUT KNOWING A NUMBER,
         /// and it is stated that way so it stops needing a rewrite every time a
@@ -67,13 +74,10 @@ namespace Ring.Simulation.Combat
         /// the sink's guard, once per iteration, by both paths. It writes
         /// nothing, spawns nothing and credits nobody — a predicting client that
         /// works out where its own round would go has decided no game outcome
-        /// (CR 3). ⚠ ON THE PREDICTION PATH THE ANSWER IS COMPUTED AND DROPPED
-        /// UNTIL T4 GIVES IT A SINK, and that is deliberate rather than waste
-        /// left lying about: the client needs this very answer to draw its own
-        /// shot, and the call is placed here — single, hoisted, ruling 291 —
-        /// so that when the second sink arrives it reads a number that already
-        /// exists instead of computing a second one. The price meanwhile is one
-        /// sin/cos, one tan and two normalizes per predicted shot.
+        /// (CR 3). ⭐ SINCE T4 THAT ANSWER HAS A SINK OF ITS OWN — the journal,
+        /// written a few lines below — and the hoist of T3 is what makes it ONE
+        /// call rather than two (ruling 291). Between T3 and T4 the prediction
+        /// path computed the answer and dropped it; that window is closed.
         ///
         /// This is one body rather than two on purpose: the overshoot comes off
         /// FireCooldown BEFORE the increment, the cone comes off RecoilOffset

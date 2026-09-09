@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Networking;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
@@ -59,6 +60,39 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(2, shots.Length, "переполнение вытеснило старожила вместо отказа новичку");
             Assert.AreEqual(1, shots[0].Key, "вытеснён старожил, а отказать полагалось новичку");
             Assert.AreEqual(2, log.OverflowDroppedShots, "отказы не сосчитаны");
+        }
+
+        /// The default capacity is the number the production caller gets, and
+        /// nothing else in the tree pins it: every fixture above asks for a
+        /// capacity of its own, so a mutant that halved this constant would pass
+        /// all of them (review finding). Sixteen is a CHOSEN number -- the
+        /// constant's own doc says so and says why -- and this test pins the
+        /// choice rather than deriving it.
+        [Test]
+        public void DefaultCapacity_HoldsSixteenAndRefusesTheSeventeenth()
+        {
+            var log = new PredictedShotLog();
+            log.BeginTick(1u);
+            for (int i = 0; i < PredictedShotLog.DefaultCapacity + 1; i++) log.Record(i + 1, Marker(i));
+
+            Assert.AreEqual(16, PredictedShotLog.DefaultCapacity, "ёмкость по умолчанию сменилась");
+            Assert.AreEqual(16, log.Drain().Length, "журнал удержал не свою ёмкость");
+            Assert.AreEqual(1, log.OverflowDroppedShots, "семнадцатая запись прошла без отказа");
+        }
+
+        /// The floor under the constructor's argument, which no production call
+        /// reaches (the backend takes the default) and which therefore has no
+        /// other witness. The neighbor `OwnDamageLane` carries the same line for
+        /// the same reason.
+        [Test]
+        public void AnImpossibleCapacityStillHoldsOneRecord()
+        {
+            var log = new PredictedShotLog(capacity: 0);
+            log.BeginTick(1u);
+            log.Record(1, Marker(1f));
+
+            Assert.AreEqual(1, log.Drain().Length, "журнал нулевой ёмкости потерял запись");
+            Assert.AreEqual(0, log.OverflowDroppedShots, "отказа не было, а счётчик вырос");
         }
 
         [Test]
@@ -179,6 +213,46 @@ namespace Ring.Simulation.Tests
                 "клиент и сервер разошлись в угле — посев, конус или overshoot считаются по-разному");
             Assert.AreEqual(serverShot.BirthSteps, record.Solution.BirthSteps,
                 "клиент и сервер разошлись в числе догоняющих шагов");
+        }
+
+        /// ⭐ THE PRODUCTION WIRING, WHICH NOTHING ELSE WITNESSES (review
+        /// finding). Everything above drives `PlayerPrediction.Step` directly and
+        /// hands it a journal by hand; in a live match the journal arrives by a
+        /// different route entirely -- the backend builds it, `AttachShotLog`
+        /// hands it to the core, and the core stamps it with the FishNet tick
+        /// `PerformReplicate` was given. Three separate links, none of them
+        /// covered: a mutant that emptied `AttachShotLog`, or passed the journal
+        /// no tick, or stamped a constant, passed every other test in this tree.
+        ///
+        /// ⚠ THE JOURNAL IS PRE-STAMPED WITH A FOREIGN TICK ON PURPOSE, so the
+        /// assertion below cannot pass by accident: if `Predict` failed to stamp
+        /// its own, the record would carry 7 instead of 100.
+        [Test]
+        public void TheCoreStampsTheJournalWithTheTickItWasGiven()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var alive = new PlayerState
+            {
+                Hp = cfg.Hero.MaxHp,
+                Stamina = cfg.Hero.StaminaMax,
+                Alive = true,
+            };
+            var core = new PlayerPredictionCore();
+            core.BeginReconcile(4242u, in alive);
+            core.FinishReconcile();
+
+            var log = new PredictedShotLog();
+            core.AttachShotLog(log);
+            log.BeginTick(7u);
+
+            core.Predict(TestWorlds.HipFire(), in cfg, 100u);
+
+            var shots = log.Drain();
+            Assert.AreEqual(1, shots.Length,
+                "журнал не доехал до ядра — предсказанный выстрел не записан");
+            Assert.AreEqual(100u, shots[0].LocalTick,
+                "ядро не проставило тик, который получило от PerformReplicate");
+            Assert.AreEqual(1, shots[0].Key, "первый выстрел матча обязан получить ключ 1");
         }
     }
 }

@@ -1,7 +1,7 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Ring.Simulation.Tests")]
 // Stage 2 Task 44d: the network backend's own assembly. `PlayerNetworkController`'s
-// mutators (`Configure`, `SetPendingInput`, `NotifyOwnDeath`, and since app-88jb
-// `app-njmi` `SetVisibleBodies`) are `internal`
+// mutators (`Configure`, `SetPendingInput`, `NotifyOwnDeath`, since app-88jb
+// `app-njmi` `SetVisibleBodies`, and since app-8dv T4 `AttachShotLog`) are `internal`
 // on purpose — that is what keeps Р34 structural, since the only route from a raw
 // sample into prediction then runs through `ReplicateData`, which quantizes. The
 // caller they were written FOR has always been the network backend (that class's

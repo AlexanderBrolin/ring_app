@@ -42,6 +42,13 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(keys.TryClaim(100u, 0), "первый выстрел тика отказан");
             Assert.IsTrue(keys.TryClaim(100u, 1),
                 "второй выстрел того же тика проглочен — дедуп смотрит только на тик");
+            // ⚠ AND THE OTHER HALF OF THE PAIR'S CONTRACT (review finding): the
+            // REPLAY of that second shot must still be refused. Without this
+            // line the mutant that never stores `seqInTick` survives -- it lets
+            // the first claim of every sequence number through, which is exactly
+            // the duplicate-trail-per-reconcile this class exists against.
+            Assert.IsFalse(keys.TryClaim(100u, 1),
+                "реплей второго выстрела тика родил ещё один след");
         }
 
         /// A replay re-runs ticks that are not newer than the mark, which is

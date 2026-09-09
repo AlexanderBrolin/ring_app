@@ -4,12 +4,17 @@ namespace Ring.Networking.Client
     /// of which predicted shots already grew a trail, so that FishNet's replay
     /// of the same ticks does not grow a second one.
     ///
+    /// ⚠ NO PRODUCTION CALLER YET, AND SAYING SO BEATS IMPLYING ONE: the type
+    /// and its per-match seam land in T4, the backend that claims keys lands in
+    /// T5. Until then `TryClaim` is exercised by tests alone.
+    ///
     /// ⛔ NOT THE SAME BOOKKEEPING THE LATCH KEEPS (spec §3.5, finding C2₃).
-    /// This one answers "has a TRAIL been born" and is written by the backend
-    /// AFTER the tick; the latch's answers "has the ACT been shown" and is
-    /// written in the frame BEFORE it. One home would mean a muzzle grant marks
-    /// a shot before the log has recorded it -- and the predicted trail would
-    /// then never appear at all.
+    /// This one answers "has a TRAIL been born" and will be written by the
+    /// backend AFTER the tick; the latch's own record answers "has the ACT been
+    /// shown"
+    /// and is written in the frame BEFORE it. One home would mean a muzzle grant
+    /// marks a shot before the log has recorded it -- and the predicted trail
+    /// would then never appear at all.
     ///
     /// ⛔⛔ THE KEY IS THE FISHNET TICK, NOT `ShotOrdinal`, AND THAT CANCELS THE
     /// `BeginReconcile` SEAM THE SPEC ASKED FOR (deviation 9 of the plan;
@@ -33,19 +38,29 @@ namespace Ring.Networking.Client
     /// matters here.
     ///
     /// ⭐ THE TICK FITS EXACTLY, AND THE SHAPE IS THE NEIGHBOR'S.
-    /// `TimeManager.LocalTick` is monotonic for the process, unlike
-    /// `ShotOrdinal`, which `BeginReconcile` steps BACKWARD by assigning the
-    /// authoritative state whole; and a replay re-runs the SAME ticks, so a
-    /// repeat is refused by construction while a shot that a correction moved
-    /// onto a different tick is born as a new one. The form is
-    /// `EventDedup.TryAcceptState`'s high-water mark, widened to a PAIR because
-    /// `Advance`'s loop can fire twice in one tick (`FireInterval` shorter than
-    /// `TickDt`), and compared lexicographically.
+    /// `TimeManager.LocalTick` rises monotonically FOR A CONNECTION -- read
+    /// off the package source rather than assumed: `TimeManager` zeroes both
+    /// `LocalTick` and `Tick` whenever the local client leaves `Started` and
+    /// this process is not also the server. That is exactly the lifetime this
+    /// object has, since `ClientMatchReset` is built once per connection.
+    /// `ShotOrdinal`, by contrast, steps BACKWARD inside a connection, every
+    /// time `BeginReconcile` assigns the authoritative state whole. A replay
+    /// re-runs the SAME ticks, so a repeat is refused by construction, while a
+    /// shot a correction moved onto a different tick is born as a new one. The
+    /// form is `EventDedup.TryAcceptState`'s high-water mark, widened to a PAIR
+    /// because `Advance`'s loop can fire twice in one tick (`FireInterval`
+    /// shorter than `TickDt`), and compared lexicographically.
     ///
-    /// ⚠ THE `_hasApplied` FLAG ITS NEIGHBOR IS FORCED TO KEEP IS NOT NEEDED
-    /// HERE: there tick 0 is a legal key, here a record stamped 0 is
-    /// unreachable -- the log only ever writes under the tick `Predict`
-    /// received from `PerformReplicate`.
+    /// ⚠ TICK 0 IS REACHABLE IN PRINCIPLE, AND THIS CLASS REFUSES IT -- said
+    /// plainly because the first draft of this doc claimed the opposite.
+    /// `TimeManager` increments `LocalTick` AFTER its tick callbacks, so the
+    /// first tick of a session carries 0. What keeps such a record from ever
+    /// reaching here is not arithmetic but spawn order: the player object is
+    /// not spawned and `Configure` has not run when that tick passes, so no
+    /// replicate is built. The neighbor's `_hasApplied` flag is therefore
+    /// still not needed, but the reason is an ordering rather than an
+    /// impossibility -- and if that ordering ever changes, the symptom is one
+    /// swallowed first trail, not a wrong outcome.
     public sealed class SpawnedShotKeys
     {
         uint _tick;

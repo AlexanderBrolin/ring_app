@@ -64,7 +64,15 @@ namespace Ring.Simulation.Combat
         /// derive it from (`CorrectionWindowSamples` is a median's sample
         /// count, `TracerCatchUpBudget` measures something else). At 60 fps a
         /// ~30/s state rate means at most one replay per frame over a 4-6 tick
-        /// window; sixteen is that, twice over. The ceiling is not silent:
+        /// window -- seven ticks' worth of records, and sixteen leaves better
+        /// than twice that at the shipped `FireInterval` of 0.12 s, where a
+        /// tick carries at most one shot.
+        /// ⛔ IT DOES NOT COVER THE WHOLE LEGAL RANGE OF THAT FIELD, and the
+        /// gap is named rather than papered over: `WeaponConfig.FireInterval`
+        /// admits 0.01 s, at which `Advance`'s loop fires three times per tick
+        /// and seven ticks would want twenty-one records. Such a config would
+        /// overflow this log every frame -- refusing, counting, and costing
+        /// predicted trails rather than correctness. The ceiling is not silent:
         /// past it the log refuses and counts.
         public const int DefaultCapacity = 16;
 
@@ -79,6 +87,10 @@ namespace Ring.Simulation.Combat
         /// ⛔ `Reset` DOES NOT CLEAR IT, and that is the neighbor's rule word
         /// for word: a per-connection health counter that cleared itself on
         /// every restart would hide precisely the pattern it exists to surface.
+        /// ⚠ NOBODY READS IT YET, AND UNTIL T5 IT MEANS NOTHING: T4 gives the
+        /// log a writer but no drain, so in a live match the buffer fills once
+        /// and then counts every further shot. The number becomes diagnostic
+        /// the moment the frame starts draining, and not before.
         public int OverflowDroppedShots;
 
         public PredictedShotLog(int capacity = DefaultCapacity)

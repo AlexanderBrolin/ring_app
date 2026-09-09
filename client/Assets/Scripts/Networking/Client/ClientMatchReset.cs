@@ -55,9 +55,11 @@ namespace Ring.Networking.Client
     ///     previous match's death or hit surfacing minutes into a world it
     ///     never happened in — and until then it sits occupying capacity the
     ///     new match's own events are refused at (`OverflowDroppedEvents`).
-    ///     This one does not merely lose a guarantee, it INVENTS events: the
-    ///     only seam of the eight that fails by producing something rather than
-    ///     by refusing.
+    ///     This one does not merely lose a guarantee, it INVENTS events: one
+    ///     of the TWO seams of the ten that fail by producing rather than by
+    ///     refusing. The other is the ninth (`PredictedShotLog`, app-8dv T4),
+    ///     which produces a SHOT — a round predicted in the match that ended,
+    ///     drawn into the one that followed.
     /// Ten call sites spread across a receiver would be ten chances to
     /// forget one; one call site is one.
     ///
@@ -87,10 +89,11 @@ namespace Ring.Networking.Client
     /// review A-5: this class doc still counted seven seams and three
     /// epochless ones after the eighth arrived in Т32б — recount below, and
     /// again in app-8dv T4, where both new seams are epochless too).
-    /// `GhostProjectiles.Reset`/`StalePolicy.Reset`/`ClientEventQueue.Reset`
-    /// and the two app-8dv seams track no epoch at all — their reset is total
-    /// by construction, which is why none of them has an epoch-shaped seam to
-    /// pass one to.
+    /// `GhostProjectiles.Reset`, `StalePolicy.Reset`, `ClientEventQueue.Reset`,
+    /// `TracerProjectiles.Reset`, `EntityStaleTrackers.ResetAll` and the two
+    /// app-8dv seams — seven named, and seven is the count — track no epoch at
+    /// all: their reset is total by construction, which is why none of them has
+    /// an epoch-shaped seam to pass one to.
     ///
     /// A RESET AT THE SAME EPOCH IS A FULL RESET, NOT A NO-OP. That is
     /// `SnapshotQueue`'s own documented contract ("`Reset` IS A FULL RESET

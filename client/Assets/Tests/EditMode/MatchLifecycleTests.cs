@@ -18,8 +18,10 @@ namespace Ring.Simulation.Tests
 {
     /// Stage 2 Task 40 (spec §3.10, §3.11, §6k Р163/Р164; plan Т40): the
     /// match's own life cycle — the epoch it is minted under, the two ways it
-    /// can end, and the SEVEN client-side seams a restart has to clear (five in
-    /// Task 40; `ClientEventQueue` joined them in Task 44b, by the two-places
+    /// can end, and the TEN client-side seams a restart has to clear (five in
+    /// Task 40; `ClientEventQueue` joined them in Task 44b, `TracerProjectiles`
+    /// and `EntityStaleTrackers` after it, and `PredictedShotLog` with
+    /// `SpawnedShotKeys` in app-8dv T4 — every one of them by the two-places
     /// rule `ClientMatchReset`'s own doc states).
     ///
     /// FIVE SUBJECTS, ONE FILE, BECAUSE THEY ARE ONE CONTRACT.
@@ -59,8 +61,8 @@ namespace Ring.Simulation.Tests
     /// and this file. The completeness of the set is contractual, not
     /// something the type system holds up: nothing in C# can say "these are
     /// all the objects a restart must clear". The mutation wave of each task
-    /// (one removed call per seam) is what pins the current seven
-    /// mechanically; a seventh inherits the same obligation.
+    /// (one removed call per seam) is what pins the current ten
+    /// mechanically; an eleventh would inherit the same obligation.
     ///
     /// FIXTURES ARE HAND-BUILT (Р56 — the asset owns the game's numbers, the
     /// fixture owns the test's), with the two existing Simulation-side
@@ -373,7 +375,8 @@ namespace Ring.Simulation.Tests
         }
 
         // ------------------------------------------------------------------
-        // The five restart seams (§2.5, §6k Р164).
+        // The restart seams (§2.5, §6k Р164) — five when this region was
+        // written, ten today, one test each.
         // ------------------------------------------------------------------
 
         [Test]
@@ -636,8 +639,11 @@ namespace Ring.Simulation.Tests
             // events" among what a full client reset must clear, as its own
             // item beside the set of seen (epoch, tick, seq)).
             //
-            // This seam fails in the OPPOSITE direction from the other five: a
-            // forgotten Reset here does not refuse anything, it PRODUCES.
+            // This seam fails in the OPPOSITE direction from the five that came
+            // before it: a forgotten Reset here does not refuse anything, it
+            // PRODUCES. ⚠ It is no longer alone in that — the ninth seam
+            // (`PredictedShotLog`, app-8dv T4) fails the same way, with a shot
+            // instead of an event.
             // Records are keyed by ABSOLUTE tick and the restarted match
             // replays its ticks from zero, so a leftover record is handed out
             // again the moment the NEW match's render clock reaches that same
