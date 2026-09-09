@@ -31,6 +31,26 @@ namespace Ring.Networking.Protocol
     /// steps records by their declared length and never consults the catalog
     /// of kinds at all.
     ///
+    /// THE ONE NARROWING OF THAT RULE, and it is narrow on purpose (app-8dv
+    /// T9, ADR-002 A29): a bump is NOT required when the same commit also
+    /// moves `SimConfigHash`. The handshake compares BOTH numbers, so a peer
+    /// built one commit earlier is refused on the hash instead of the
+    /// version, and refused is refused — it never reaches the point where a
+    /// record's length matters. Note this is the mirror of the 4 -> 5 entry
+    /// below, not a contradiction of it: there the hash did NOT move (a wider
+    /// payload alone leaves it alone), which is exactly why the bump had to
+    /// carry the break by itself.
+    /// WHERE THIS APPLIES TODAY, so the exception is not read as a license:
+    /// `MatchEndedNet` grew by three ints in app-8dv (HeadHits/BodyHits/
+    /// LegHits), and `Current` stays 5 because the same epic put five spray
+    /// pattern fields into `SimConfigHash` (WeaponConfig, T1), so every
+    /// pre-T1 build is turned away at the handshake.
+    /// EDITING `MatchEndedNet` WITHOUT EDITING `SimConfig` STILL EARNS A BUMP.
+    /// The exception rides on the hash moving, not on the message being a
+    /// summary; drop that condition and the rule reads "lengths may change
+    /// freely", which is the reading the 4 -> 5 entry below already paid for
+    /// once, in a whole match with no bullets.
+    ///
     /// HISTORY — one line per break, so the reason is here and not in a log:
     ///   1 → 2 (Stage 2 Task 44a): the DOMAIN of `ProjectileEndKind` grew by
     ///   `HitPlayer` = 4 inside the existing `ProjectileEnded` block. That is
