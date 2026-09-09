@@ -31,25 +31,27 @@ namespace Ring.Networking.Protocol
     /// steps records by their declared length and never consults the catalog
     /// of kinds at all.
     ///
-    /// THE ONE NARROWING OF THAT RULE, and it is narrow on purpose (app-8dv
-    /// T9, ADR-002 A29): a bump is NOT required when the same commit also
-    /// moves `SimConfigHash`. The handshake compares BOTH numbers, so a peer
-    /// built one commit earlier is refused on the hash instead of the
-    /// version, and refused is refused — it never reaches the point where a
-    /// record's length matters. Note this is the mirror of the 4 -> 5 entry
-    /// below, not a contradiction of it: there the hash did NOT move (a wider
-    /// payload alone leaves it alone), which is exactly why the bump had to
-    /// carry the break by itself.
-    /// WHERE THIS APPLIES TODAY, so the exception is not read as a license:
-    /// `MatchEndedNet` grew by three ints in app-8dv (HeadHits/BodyHits/
-    /// LegHits), and `Current` stays 5 because the same epic put five spray
-    /// pattern fields into `SimConfigHash` (WeaponConfig, T1), so every
-    /// pre-T1 build is turned away at the handshake.
-    /// EDITING `MatchEndedNet` WITHOUT EDITING `SimConfig` STILL EARNS A BUMP.
-    /// The exception rides on the hash moving, not on the message being a
-    /// summary; drop that condition and the rule reads "lengths may change
-    /// freely", which is the reading the 4 -> 5 entry below already paid for
-    /// once, in a whole match with no bullets.
+    /// WHAT THE RULE COVERS, AND WHAT IT DOES NOT (app-8dv T9, ADR-002 A29).
+    /// Everything above is about the SNAPSHOT: block kinds, event kinds, the
+    /// records `SnapshotBlocks` steps by their declared length. Two messages
+    /// this project grows do NOT live there — `MatchEndedNet` (an
+    /// `IBroadcast`) and `ReconcileData` (an `IReconcileData`) — and neither
+    /// has a kind tag, a declared record length, or a `MalformedLength` path
+    /// at all. Their compatibility is held by `SimConfigHash` instead: the
+    /// handshake compares BOTH numbers, so a peer whose balance numbers differ
+    /// is turned away before either message is ever read.
+    /// ⚠ THE EXCEPTION IS AN UNRELEASED WINDOW, NOT A COMMIT. Say it that way
+    /// or it is wrong: the hash and the message can move in DIFFERENT commits,
+    /// and a build cut between them would carry the new hash with the old
+    /// message, pass the handshake and break on the message. What makes the
+    /// exception safe is that no build was cut between them — the same
+    /// argument the "2 → 3, SECOND REASON" entry makes below, since a version
+    /// is a promise to PEERS and there was no peer.
+    /// EDITING EITHER MESSAGE OUTSIDE SUCH A WINDOW STILL EARNS A BUMP —
+    /// once a build is out, or when `SimConfigHash` does not move at all.
+    /// Drop that condition and the rule reads "lengths may change freely",
+    /// which is the reading the 4 → 5 entry below already paid for once, in a
+    /// whole match with no bullets.
     ///
     /// HISTORY — one line per break, so the reason is here and not in a log:
     ///   1 → 2 (Stage 2 Task 44a): the DOMAIN of `ProjectileEndKind` grew by
@@ -181,6 +183,19 @@ namespace Ring.Networking.Protocol
     ///   handshake refuses a peer built one commit earlier, which is precisely
     ///   what the bump is for, and the lag gate of phase Ф4 runs against a
     ///   dev-server image built from here on.
+    ///
+    ///   5, AND WHY NO 6 (app-8dv, spec §3.7) — an entry for a break that did
+    ///   NOT happen, kept here so the next reader finds the precedent where
+    ///   the others are. Two messages grew: `MatchEndedNet` 3 ints wider
+    ///   (HeadHits/BodyHits/LegHits) and `ReconcileData` 2 ints wider (its
+    ///   `PlayerState` gained BurstShots and ShotOrdinal). Neither is a
+    ///   snapshot kind, so the rule above does not reach them; what parts
+    ///   peers here is `SimConfigHash`, which moved in the same unreleased
+    ///   window when five spray-pattern fields entered WeaponConfig.
+    ///   ⚠ MEASURED, NOT ASSUMED: the hash moved in an earlier commit than the
+    ///   messages, so the claim rests on no build having been cut between them
+    ///   — and none was; every dev-server image that exists predates the hash
+    ///   change. Cut one there and this entry would have to become a bump.
     public static class ProtocolVersion
     {
         public const byte Current = 5;
