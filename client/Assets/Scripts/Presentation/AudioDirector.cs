@@ -151,9 +151,30 @@ namespace Ring.Presentation
         // its sole SimEventRouter subscriber) — direct subscription, same shape
         // as the deleted PracticeTargets' pattern. This object's own Awake above
         // always runs before its own OnEnable, so `_voices` is never null here.
-        void OnEnable() => _runner.WorldRestarted += StopAll;
+        void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
 
-        void OnDisable() => _runner.WorldRestarted -= StopAll;
+        void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
+
+        /// A match restart, both halves of it (app-8dv T6): the previous run's
+        /// voices are cut, and the shot latch forgets which rounds it already
+        /// showed -- the new match starts its ordinals at 1 again, so a latch
+        /// still holding the old ones would swallow the first rounds of the new
+        /// match without a sound.
+        ///
+        /// ⛔ NOT WRITTEN AS `_latch.Reset()` INSIDE `StopAll`, deliberately.
+        /// That method names what it does -- it stops voices -- and it is
+        /// public; today it has one caller, but a name that lies the moment
+        /// somebody else calls it is a defect waiting its turn. The shape here
+        /// is the neighbor's: `DeathOverlayController.HandleWorldRestarted`.
+        /// ⚠ THE DASH LATCH IS NOT RESET, and that is the old decision left
+        /// standing: its state is a window a fraction of a second wide, and the
+        /// restart zeroes every `PlayerState`, so the first dash of the new
+        /// match gets a genuine rising edge anyway.
+        void HandleWorldRestarted()
+        {
+            StopAll();
+            _latch.Reset();
+        }
 
         /// Cuts every currently-playing voice short (Task 24 spec Interfaces):
         /// a match restart shouldn't leave the previous run's gunfire/death
@@ -241,22 +262,34 @@ namespace Ring.Presentation
             // of the shared gate AND nothing already waiting for its event (see
             // `ImmediatePredictionLatch`). Evaluated every frame this method
             // reaches, because the edge is a function of the previous frame.
-            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
+            // app-8dv T6: the shot's own identity, read ONCE so the grant and
+            // the marking below can never name different rounds.
+            int shotKey = _runner.PredictedShotKey;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime, shotKey))
+                return;
 
             float2 muzzlePos = _runner.RenderMuzzleSimPos(_runner.RenderCurr.Player.AimPoint);
 
             if (PlayClip(_shotClip, SimEventKind.ProjectileFired, muzzlePos))
-                _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
+                _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds, shotKey);
             // PlayClip returning false (MinSfxInterval/VoicesPerSfx gated the
             // predicted attempt out) leaves the latch unarmed — the real event
             // still gets its own ordinary chance at HandleEvent below instead of
             // being wrongly suppressed for a sound that never actually played.
-            // Fix-round 1 (G-4): the EDGE is spent either way, and with a single
-            // outstanding prediction that costs nothing — an unarmed latch has
-            // no record for the arriving event to consume, so the shot is heard
-            // once, from the event. It could only have lost a sound while the
-            // latch held a QUEUE of predictions, where one shot's event could
-            // consume a record another shot had left behind.
+            // Fix-round 1 (G-4): the EDGE is spent either way, and an unarmed
+            // latch has no record for the arriving event to consume, so the
+            // shot is heard once, from the event.
+            // ⭐⭐ THAT PARAGRAPH USED TO END WITH A WARNING — "it could only
+            // have lost a sound while the latch held a QUEUE of predictions,
+            // where one shot's event could consume a record another shot had
+            // left behind" — AND app-8dv T6 BUILT EXACTLY THAT QUEUE. The
+            // warning was right, which is why the queue does not work the way
+            // it feared: a grant lays down a record, the SHOWING marks it, and
+            // `TryConsume` skips unmarked records entirely. The gated-out
+            // voice above leaves an unmarked record, so this shot's own event
+            // still plays it. The rule has its own test
+            // (`AnUnmarkedRecordIsNotConsumed_SoNoShotLosesItsFeedback`) and
+            // its own mutation, because a comment is not a guarantee.
         }
 
         /// bd `app-g21`: the dash sound, in the frame this client's own dash

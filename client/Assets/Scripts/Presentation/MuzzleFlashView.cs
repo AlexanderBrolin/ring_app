@@ -174,6 +174,20 @@ namespace Ring.Presentation
 
         ParticleSystem _particles;
         readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
+
+        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
+        // its sole SimEventRouter subscriber) — direct subscription, the same
+        // shape every other Presentation registry uses. app-8dv T6 is what
+        // gives this view a reason to have these at all: its latch now
+        // remembers WHICH rounds it showed, and a new match starts numbering
+        // them again from 1.
+        void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
+
+        void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
+
+        /// A fresh match: forget the rounds of the previous one, or its first
+        /// shots would be refused as already shown.
+        void HandleWorldRestarted() => _latch.Reset();
         readonly PendingBurst[] _pending = new PendingBurst[PendingCapacity];
         int _pendingCount;
 
@@ -233,7 +247,10 @@ namespace Ring.Presentation
         void PredictBurst()
         {
             if (!_gameFeel.ImmediateMuzzleFeedback) return;
-            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime)) return;
+            // app-8dv T6: the shot's own identity, read ONCE for both calls.
+            int shotKey = _runner.PredictedShotKey;
+            if (!_latch.ShouldPredict(_runner.WouldFireThisFrame, Time.unscaledTime, shotKey))
+                return;
 
             RenderSnapshot curr = _runner.RenderCurr;
             // No doll yet (the opening frames of a match), or none any more
@@ -248,7 +265,7 @@ namespace Ring.Presentation
             dir.Normalize();
 
             EmitBurst(muzzle, dir);
-            _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds);
+            _latch.Arm(Time.unscaledTime, _runner.ImmediatePredictionWindowSeconds, shotKey);
         }
 
         /// Called by `SimEventRouter` for every event in this tick-flush's buffer

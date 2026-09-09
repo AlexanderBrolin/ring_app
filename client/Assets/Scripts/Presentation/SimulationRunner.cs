@@ -483,6 +483,28 @@ namespace Ring.Presentation
         public bool WouldFireThisFrame => Ready
             && WeaponSystem.WouldFireThisTick(RenderCurr.Player, LastFrameInput, Config.Weapon);
 
+        /// WHICH SHOT the gate above is about to grant (app-8dv T6, Р470,
+        /// ruling 327) — the identity two components need to agree on, in the
+        /// one place that already exists so their decisions "can never drift
+        /// apart", right beside the gate itself.
+        ///
+        /// IT IS THE POST-INCREMENT ORDINAL, i.e. `+ 1`, because
+        /// `WeaponSystem` raises the counter AFTER the shot it fires: the round
+        /// this frame is predicting has not happened yet, so its number is one
+        /// past the last one that did. The first round of a match is therefore
+        /// 1, never 0 — which is what leaves 0 free as
+        /// `ImmediatePredictionLatch.NoKey`.
+        ///
+        /// THE VALUE IS AVAILABLE HERE AND NOWHERE CHEAPER: `BlendOwnPlayer`
+        /// copies the WHOLE predicted `PlayerState` into the render pair (only
+        /// the position is interpolated), so `RenderCurr.Player` carries this
+        /// client's own predicted counters rather than the authoritative ones
+        /// lagging behind them.
+        /// `Ready` leads for the same reason it leads above: before the first
+        /// restart the state is `default`, and a zeroed counter would hand out
+        /// the sentinel as if it were a real key.
+        public int PredictedShotKey => Ready ? RenderCurr.Player.ShotOrdinal + 1 : 0;
+
         /// Whether this client's own player is inside a dash right now (bd
         /// `app-g21`) — the single source of truth for the two PREDICTED dash
         /// cosmetics, `PersistentPropsDirector`'s floor mark and
@@ -830,12 +852,19 @@ namespace Ring.Presentation
         public event System.Action TicksFlushed;
 
         /// A fresh match has begun and everything Presentation remembers about
-        /// the previous one must go — nine registries listen for it:
+        /// the previous one must go — ELEVEN registries listen for it:
         /// `AudioDirector`, `DeathOverlayController`, `DevOverlay`,
         /// `GameFeelDirector`, `GreyboxBuilder`, `HudController`,
-        /// `PauseController`, `PersistentPropsDirector`, `ViewRegistry`
+        /// `InventoryWindowController`, `MuzzleFlashView`, `PauseController`,
+        /// `PersistentPropsDirector`, `ViewRegistry`
         /// (the `WorldRestarted +=` sites under `Assets/Scripts/`, all of them
         /// in `Presentation`).
+        /// ⚠ THE COUNT WAS WRONG BEFORE app-8dv T6 AND THE LIST WAS SHORT BY
+        /// TWO, which is the shape of defect this project keeps paying for: it
+        /// said "nine" while `InventoryWindowController` had been subscribing
+        /// unlisted, and T6 added `MuzzleFlashView` as the eleventh. A comment
+        /// that lies about the code is worse than no comment — the number is
+        /// re-counted by sweep whenever this list is touched.
         ///
         /// TWO RAISE SITES AS OF TASK 44d, AND BOTH MEAN THE SAME THING. The
         /// first is `Restart` below, for a match this facade started, and it
