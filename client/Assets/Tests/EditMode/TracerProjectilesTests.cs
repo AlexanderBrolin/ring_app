@@ -1,7 +1,9 @@
 using NUnit.Framework;
+using Ring.Data;
 using Ring.Networking.Client;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
+using UnityEngine;
 
 namespace Ring.Simulation.Tests
 {
@@ -456,6 +458,47 @@ namespace Ring.Simulation.Tests
                 + "runs inside FishNet's batched parse (Р82/195)");
         }
 
+        /// THE HALF THE FIXTURE ABOVE CANNOT SEE, AND THE REVIEW THAT FOUND IT
+        /// IS THE REASON THIS EXISTS. That test asserts "adoption is a key, not
+        /// a re-seed" while every track in it still stands on its birth tick —
+        /// so `SeatOnBirth` inside `Adopt` would be a no-op there and the
+        /// mutant would live. The round below has a cache that genuinely LEFT
+        /// its birth: an authoritative ricochet seats it twenty meters down
+        /// range, and re-seeding would fling the trail back to the muzzle,
+        /// which is the artifact Р67 forbids by name.
+        [Test]
+        public void AdoptDoesNotReseedACacheThatHasMoved_TheTrailStaysWhereTheServerPutIt()
+        {
+            const int serverId = 77;
+            const int contactTick = SpawnTick + 4;
+            var contact = new float2(20f, 0f);
+
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                    10f, 0f, 0.1f, 2f),
+                "fixture premise: a predicted trail born at the muzzle, at the origin");
+
+            Assert.IsTrue(tracers.OnRicochet(FirstGhostId, contactTick, contact,
+                    new float2(-1f, 0f), 1f),
+                "fixture premise: the server says this round bounced, and the cache is "
+                + "seated on the contact it names");
+
+            var before = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(before, contactTick));
+            Assert.Greater(before[0].Pos.x, 15f,
+                "fixture premise: the cache really has left the birth point — without this "
+                + "the closed form answers the same from either seat and the test is blind");
+
+            Assert.IsTrue(tracers.Adopt(FirstGhostId, serverId));
+
+            var after = new ProjectileState[4];
+            Assert.AreEqual(1, tracers.WriteInto(after, contactTick));
+            Assert.AreEqual(before[0].Pos.x, after[0].Pos.x, 1e-6f,
+                "adoption writes a key: a round twenty meters down range must not be flung "
+                + "back to the muzzle by the server merely naming it");
+        }
+
         /// M251's witness. The second key's sentinel is `int.MinValue`, and
         /// BOTH halves of that choice are pinned here.
         ///
@@ -482,6 +525,58 @@ namespace Ring.Simulation.Tests
                     10f, 0f, 0.1f, 2f),
                 "so the real round 0 is accepted: the duplicate guard has nothing to trip on");
             Assert.AreEqual(2, tracers.Count);
+        }
+
+        /// THE OTHER SIDE OF THE SAME SENTINEL, and the fixture above does not
+        /// cover it (review finding): a sentinel of ZERO is separated from the
+        /// shipped one by exactly one input — a trail ADOPTED under the legal
+        /// server code 0, the round `u16` truncation lands on. With a zero
+        /// sentinel `IndexOf` skips the second key of that very track, and the
+        /// round the server has already named becomes unfindable by the code
+        /// its own ending will arrive under.
+        [Test]
+        public void ATrailAdoptedUnderServerCodeZero_IsStillFoundByIt()
+        {
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                10f, 0f, 0.1f, 2f));
+            Assert.IsTrue(tracers.Adopt(FirstGhostId, serverId: 0),
+                "zero is a legal server code, not an absence");
+
+            Assert.IsTrue(tracers.Retire(0, SpawnTick + 3),
+                "and the ending that arrives under that code must find the round it "
+                + "belongs to");
+            Assert.IsTrue(tracers.TryGetOwner(0, out _, out _),
+                "as must every other lookup keyed by the server's own code");
+        }
+
+        /// `Adopt` KEEPS THE GUARD `TrySpawn` KEEPS, and for the same reason:
+        /// the wire truncates ids to `u16`, so two rounds 65536 apart arrive
+        /// under one code. Without it, adopting a code another live track
+        /// already answers to would leave TWO tracks replying to it, and the
+        /// ending meant for one would retire the other -- `IndexOf` hands back
+        /// whichever comes first.
+        [Test]
+        public void AdoptRefusesAServerCodeAnotherLiveTrailAlreadyAnswersTo()
+        {
+            const int contested = 5;
+            var tracers = NewTable(4);
+            var dir = new float2(1f, 0f);
+            Assert.IsTrue(tracers.TrySpawn(contested, SpawnTick, new float2(9f, 0f), 1f, dir,
+                    10f, 0f, 0.1f, 2f),
+                "fixture premise: somebody else's round already holds this code");
+            Assert.IsTrue(tracers.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,
+                10f, 0f, 0.1f, 2f));
+
+            Assert.IsFalse(tracers.Adopt(FirstGhostId, contested),
+                "one live code is one round, whichever key it arrived under");
+
+            Assert.IsTrue(tracers.Retire(contested, SpawnTick + 2),
+                "and the code still names the round that held it first");
+            var scratch = new ProjectileState[4];
+            Assert.AreEqual(2, tracers.WriteInto(scratch, SpawnTick),
+                "the predicted trail is untouched by the refusal -- it keeps its own key");
         }
 
         /// M252's witness, and it is deliberately NOT the neighbor's fixture:
@@ -522,9 +617,24 @@ namespace Ring.Simulation.Tests
         [Test]
         public void AnExpiredGhostsTrail_IsRetiredByItsGhostId_NotLeftToOutliveItsOwnLifetime()
         {
-            const int ghostConfirmTicks = 12;      // NetConfig.GhostConfirmTicks' C# default
+            // The ghost's confirmation window, in ticks, read off the shipped
+            // config rather than copied as a literal (307/308).
+            int ghostConfirmTicks = ScriptableObject.CreateInstance<NetConfig>().GhostConfirmTicks;
             float ttl = TableCfg.Weapon.ProjectileLifetime;
             int fullLifetimeTicks = (int)math.ceil(ttl / SimulationWorld.TickDt);
+            // ⛔ THE SLACK IS PINNED AS A NUMBER, NOT READ OFF THE CONSTANT IT
+            // GUARDS, and the first draft of this test got that wrong in a way
+            // worth recording: computing the boundary from
+            // `TracerProjectiles.LostEndSlackTicks` made the expectation move
+            // WITH the mutant, so widening the slack to 800 passed unnoticed
+            // (lesson 428 -- an expectation derived from the value under test
+            // is not an expectation). The shipped number is asserted as a
+            // premise instead, so a deliberate change to it fails HERE, with a
+            // message that says which number moved.
+            const int shippedLostEndSlackTicks = 8;
+            Assert.AreEqual(shippedLostEndSlackTicks, TracerProjectiles.LostEndSlackTicks,
+                "fixture premise: the lost-end slack this test's boundaries are drawn from");
+            int lastDrawnAge = fullLifetimeTicks + shippedLostEndSlackTicks;
 
             var untouched = NewTable(4);
             var dir = new float2(1f, 0f);
@@ -535,11 +645,14 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(1, untouched.Count,
                 "fixture premise: the ghost's own expiry means nothing to the trail -- "
                 + "nothing here ages by it");
-            untouched.Prune(SpawnTick + fullLifetimeTicks);
+            untouched.Prune(SpawnTick + lastDrawnAge);
             Assert.AreEqual(1, untouched.Count,
-                "and a whole lifetime later it is STILL drawn, because a lost ending is kept "
-                + "for the slack on top of it -- which is the 1.4 s of phantom trail this "
-                + "test exists against");
+                "and a whole lifetime plus the lost-end slack later it is STILL drawn -- "
+                + "which is the phantom trail this test exists against");
+            untouched.Prune(SpawnTick + lastDrawnAge + 1);
+            Assert.AreEqual(0, untouched.Count,
+                "one tick past that it finally goes, and pinning BOTH sides is what stops a "
+                + "wider window from passing unnoticed");
 
             var retired = NewTable(4);
             Assert.IsTrue(retired.TrySpawn(FirstGhostId, SpawnTick, float2.zero, 1f, dir,

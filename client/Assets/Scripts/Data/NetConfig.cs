@@ -418,6 +418,20 @@ namespace Ring.Data
         // predecessor's own field comment stops mentioning the mechanism once
         // the marker leaves it, so exactly one field in this class ever claims
         // to be it.
+        // ⚠ A SECOND CONSUMER SINCE app-8dv T5, AND IT READS THE NUMBER IN A
+        // DIFFERENT UNIT — said here because the paragraphs above spend three
+        // sentences insisting the budget is PER ROUND rather than per frame.
+        // `NetworkSimBackend.DrainPredictedShots` uses it as the cap on how
+        // many PREDICTED TRAILS one frame may bring to life, which is per
+        // frame by construction (Р468). The two readings share a number
+        // deliberately: both bound the same thing — how much drawing work one
+        // frame of this client's picture may cost — and the alternative was a
+        // second knob nobody would know how to tune against this one.
+        // ⛔ THE COROLLARY IS A TUNING TRAP, so it is written down: lowering
+        // this to 1 for the smoothest catch-up ALSO limits the owner to one
+        // predicted trail per frame, and the shots beyond it are counted in
+        // `PredictedShotLog.OverflowDroppedShots` (the dev overlay's
+        // `DroppedPredictedShots`) rather than drawn.
         [Range(1, 90)] public int TracerCatchUpBudget = 8; // sync-marker key — keep LAST
 
 #if UNITY_EDITOR

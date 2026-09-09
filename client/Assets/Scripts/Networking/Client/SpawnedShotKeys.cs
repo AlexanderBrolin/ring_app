@@ -10,9 +10,8 @@ namespace Ring.Networking.Client
     /// refused.
     ///
     /// ⛔ NOT THE SAME BOOKKEEPING THE LATCH KEEPS (spec §3.5, finding C2₃).
-    /// This one answers "has a TRAIL been born" and will be written by the
-    /// backend AFTER the tick; the latch's own record answers "has the ACT been
-    /// shown"
+    /// This one answers "has a TRAIL been born" and is written by the backend
+    /// AFTER the tick; the latch's own record answers "has the ACT been shown"
     /// and is written in the frame BEFORE it. One home would mean a muzzle grant
     /// marks a shot before the log has recorded it -- and the predicted trail
     /// would then never appear at all.

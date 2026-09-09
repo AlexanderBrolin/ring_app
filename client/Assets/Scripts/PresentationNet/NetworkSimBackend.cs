@@ -1550,6 +1550,7 @@ namespace Ring.Presentation.Net
             // instead holds the pose actually on screen: the frame the pair
             // resolves again is the one that moves the picture, which is what
             // the interpolation buffer exists to make ordinary.
+
             // THE PREDICTED TICK IS NEEDED ABOVE THE BRANCH SINCE app-8dv T5,
             // because it now has TWO consumers and one of them must run on a
             // frame the render pair could not resolve. Its account — why the
@@ -3043,35 +3044,41 @@ namespace Ring.Presentation.Net
             // far more records waiting than a frame should spend trails on.
             // What it refuses is counted where every other refusal of this
             // journal is counted — the log's own field, not a second one.
+            //
+            // ⛔ IT BOUNDS BIRTHS, NOT ITERATIONS, AND THE DIFFERENCE IS A
+            // WHOLE VOLLEY (review finding). A replay re-writes the records of
+            // the ticks it re-runs, and those come FIRST in the span — FishNet
+            // walks `T-k..T-1` before the current tick. Spending the budget on
+            // loop passes would therefore spend it all on repeats the claim
+            // below refuses anyway, and drop the tail, which is where the
+            // genuinely new shots are. Measured on the numbers this log's own
+            // doc names (`FireInterval 0.01`, a 5-tick replay): fifteen records
+            // waiting, eight passes, all eight refused as repeats, and the
+            // three real shots of the newest tick counted as lost.
             int budget = OwnShotPolicy.SpawnBudgetFor(pending.Length,
                 _net.TracerCatchUpBudget);
-            _shotLog.OverflowDroppedShots += pending.Length - budget;
 
             uint localTick = _nm.TimeManager.LocalTick;
-            uint seqTick = 0;
-            int seqInTick = 0;
-            bool hasSeqTick = false;
+            int born = 0;
+            int prevSeqInTick = 0;
 
-            for (int i = 0; i < budget; i++)
+            for (int i = 0; i < pending.Length; i++)
             {
                 ref readonly PredictedShot record = ref pending[i];
 
                 // WHICH RECORD THIS IS WITHIN ITS OWN TICK, because one tick
                 // can carry more than one shot (`Advance`'s loop fires again
                 // whenever `FireInterval` is shorter than `TickDt`) and the
-                // claim is keyed by the PAIR. Records of one tick arrive
-                // consecutively, so the running counter is the whole
-                // bookkeeping.
-                if (hasSeqTick && record.LocalTick == seqTick)
-                {
-                    seqInTick++;
-                }
-                else
-                {
-                    seqTick = record.LocalTick;
-                    seqInTick = 0;
-                    hasSeqTick = true;
-                }
+                // claim is keyed by the PAIR. Measured against the PREVIOUS
+                // record rather than against a remembered tick: records of one
+                // tick arrive consecutively, so that is the whole bookkeeping —
+                // and it needs no "have I seen a tick yet" flag, which would
+                // exist solely for the reachable-in-principle tick zero
+                // (`SpawnedShotKeys`' own doc).
+                int seqInTick = i > 0 && pending[i - 1].LocalTick == record.LocalTick
+                    ? prevSeqInTick + 1
+                    : 0;
+                prevSeqInTick = seqInTick;
 
                 // FishNet replays the replicate queue after every state packet
                 // — roughly thirty times a second — and a replay re-writes the
@@ -3079,13 +3086,25 @@ namespace Ring.Presentation.Net
                 // would grow a trail per replay, and the tracer's own
                 // duplicate guard could not help: every replay's ghost is
                 // handed a NEW ghost id.
+                // ⚠ A REFUSED CLAIM IS NOT A LOST PICTURE and is deliberately
+                // NOT counted: the trail it would have grown is already on
+                // screen. Only what the BUDGET turns away is a loss.
                 if (!_spawnedShotKeys.TryClaim(record.LocalTick, seqInTick)) continue;
+
+                if (born >= budget)
+                {
+                    _shotLog.OverflowDroppedShots++;
+                    continue;
+                }
 
                 // ⚠ THE GHOST IS BORN IN FISHNET'S DOMAIN, THE TRAIL IN THE
                 // WORLD'S (Р67): `Advance` ages ghosts against
-                // `TimeManager.LocalTick`, which is what this hands it, while
-                // the trail is drawn on the predicted tick the picture runs on.
-                if (!_ghosts.TrySpawnPredictedShot(localTick, out int ghostId)) continue;
+                // `TimeManager.LocalTick`, and the record carries its own tick
+                // in that very domain — so a record written three ticks ago
+                // gets a ghost three ticks old rather than a brand-new one with
+                // a full 400 ms window it has no right to.
+                if (!_ghosts.TrySpawnPredictedShot(record.LocalTick, out int ghostId)) continue;
+                born++;
 
                 // `int - uint` is `long` in C#, and unsigned subtraction would
                 // WRAP for a record written by a replay of a tick ahead of the
@@ -3234,11 +3253,14 @@ namespace Ring.Presentation.Net
                     // somebody else's round, `SpawnPlainly` is this client's own
                     // shot whose prediction gasped or never happened. Neither
                     // has a trail to adopt, and both must have one drawn.
-                    if (route == OwnShotRoute.AdoptGhost)
-                    {
-                        _tracers.Adopt(ghostId, p.Id);
-                        break;
-                    }
+                    // ⚠ AND SO DOES A REFUSED ADOPTION (review finding): the
+                    // ghost was paired, but its trail is gone — the table was
+                    // full when the journal drained it, or `Prune` has already
+                    // dropped it. `Adopt` answers that by value, and ignoring
+                    // the answer would leave this client's own round with no
+                    // trail at all, which is the exact outcome `SpawnPlainly`
+                    // exists to prevent.
+                    if (route == OwnShotRoute.AdoptGhost && _tracers.Adopt(ghostId, p.Id)) break;
 
                     bool byPlayer = p.PlayerIndex != ProjectileIds.NoOwner;
                     float radius = byPlayer

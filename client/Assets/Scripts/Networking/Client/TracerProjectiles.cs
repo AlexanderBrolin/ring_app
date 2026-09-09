@@ -4,9 +4,11 @@ using Unity.Mathematics;
 
 namespace Ring.Networking.Client
 {
-    /// The client's own copy of the rounds the SERVER has in flight, rebuilt
-    /// from `ProjectileSpawned` and retired by `ProjectileEnded` (bd `app-s0u`,
-    /// owner decision variant "б"). Without it a networked client sees a muzzle
+    /// The client's own copy of the rounds in flight, rebuilt from
+    /// `ProjectileSpawned` and retired by `ProjectileEnded` (bd `app-s0u`,
+    /// owner decision variant "б") — and, since app-8dv T5, ALSO the rounds
+    /// this client PREDICTED, born from its own journal before the server has
+    /// said anything about them and adopted (never re-seeded) when it does. Without it a networked client sees a muzzle
     /// flash, hears the shot and watches the hit, but never sees the bullet:
     /// the snapshot carries no projectile block at all (`SnapshotBlockKind` has
     /// five kinds and none of them is Projectiles), while `RenderSnapshot` has
@@ -91,8 +93,16 @@ namespace Ring.Networking.Client
     /// WHAT IT DELIBERATELY DOES NOT DO: decide any outcome (CR 3). It never
     /// tests a hit and never ends a round on its own `Ttl` — a client that
     /// retired its own tracer on a locally computed lifetime would be deciding
-    /// where a bullet stopped. Every ending arrives from the server as
-    /// `ProjectileEnded`.
+    /// where a bullet stopped. Every ending of a SERVER round arrives from the
+    /// server as `ProjectileEnded`.
+    /// ⚠ SINCE app-8dv T5 ONE ENDING DOES NOT, AND IT IS NOT AN EXCEPTION TO
+    /// THE RULE BUT A CASE THE RULE NEVER COVERED: a trail born from this
+    /// client's own prediction, whose ghost then expired unconfirmed, is
+    /// retired by the frame (`NetworkSimBackend`'s consumer of expired ghost
+    /// ids). Nothing is being decided about a round — the client is
+    /// WITHDRAWING A PICTURE IT DREW ITSELF, of a shot the server never
+    /// acknowledged. The distinction is the whole of CR 3: an outcome is the
+    /// server's, a prediction is the client's to take back.
     /// ⚠ SINCE Т32 IT DOES CONSULT THE ARENA'S STATIC GEOMETRY, and that is
     /// not a breach of the rule but its enforcement (coordinator Ruling 289).
     /// It asks the geometry in order to STOP DRAWING, never in order to decide
@@ -107,11 +117,17 @@ namespace Ring.Networking.Client
     /// server's alone.
     ///
     /// FIXED TABLE, NO ALLOCATION, REFUSALS RATHER THAN THROWS. The WRITE half
-    /// (`TrySpawn`/`Retire`/`OnRicochet` — the three that are fed by events)
+    /// (`TrySpawn`/`Retire`/`OnRicochet`/`Adopt`) is mostly fed by events and
     /// runs from the snapshot receive path, inside FishNet's batched parsing
     /// loop, where an exception abandons every message behind it in the same
     /// datagram (Р82/195); the FRAME half (`StepTo`/`WriteInto`/`Prune`) runs
-    /// from the render frame. So a full table, an unknown id and an undersized
+    /// from the render frame.
+    /// ⚠ SINCE app-8dv T5 TWO OF THE WRITE MEMBERS ARE ALSO CALLED FROM THE
+    /// FRAME — `TrySpawn` for a trail born out of the prediction journal, and
+    /// `Retire` for one whose ghost expired — so "which half a member belongs
+    /// to" no longer follows from who calls it. The refusal-as-a-value rule
+    /// covers both callers and is the reason nothing had to change: a frame
+    /// has as little use for an exception as a parse loop does. So a full table, an unknown id and an undersized
     /// destination are all VALUES. The table is scanned linearly on purpose,
     /// and the argument is `_count` RATHER THAN THE CEILING — which is the
     /// correction rather than the point. An earlier wording said
@@ -282,14 +298,24 @@ namespace Ring.Networking.Client
         /// sentinel is written in `TrySpawn`'s initializer rather than left to
         /// the struct's own zero.
         ///
-        /// ⛔⛔ AND IT CANNOT BE −1 EITHER, WHICH IS THE HALF THAT IS EASY TO
-        /// GET WRONG. The primary key of a predicted trail is a GHOST id, and
-        /// `GhostProjectiles.FirstGhostId` IS −1 — the very first predicted
-        /// shot of a match carries it. `IndexOf` searches both keys, so a
-        /// sentinel of −1 would make every unadopted trail answer to the first
-        /// ghost's id. The two domains have to be disjoint, and `int.MinValue`
-        /// is outside both: ghost ids count DOWN from −1 (never reaching it in
-        /// a match's worth of shots) and server codes are non-negative.
+        /// ⛔⛔ AND IT IS NOT −1, THOUGH THE FIRST WORDING OF THIS PARAGRAPH
+        /// GAVE THE WRONG REASON FOR THAT AND THE CORRECTION IS WORTH KEEPING
+        /// (review finding). The wrong reason was: "−1 is `GhostProjectiles.
+        /// FirstGhostId`, so every unadopted trail would answer to the first
+        /// ghost's id". It would not — `IndexOf` skips the second key exactly
+        /// when it holds the sentinel, so −1 would behave identically to any
+        /// other reserved value.
+        /// The real reasons are two, and neither leans on that skip:
+        ///   * −1 is a LIVE PRIMARY KEY in this table (the first predicted shot
+        ///     of a match is born under it), so a sentinel sharing the value
+        ///     makes correctness depend on the order of the two comparisons in
+        ///     `IndexOf` and on the skip staying there. `int.MinValue` lies
+        ///     outside BOTH domains — ghost ids count down from −1, server
+        ///     codes are non-negative — so the answer does not change if a
+        ///     later edit reorders or drops the skip;
+        ///   * a value no caller can ever legitimately pass is what makes
+        ///     `Adopt(ghostId, NoAdoptedServerId)` incapable of un-adopting a
+        ///     round by accident.
         ///
         /// ⚠ ITS NAME IS NOT `NoServerId`, AND THE REASON IS READABILITY
         /// RATHER THAN A COLLISION: `GhostProjectiles` has a private constant
@@ -318,7 +344,13 @@ namespace Ring.Networking.Client
         /// ending changed shape rather than size — a bullet parked against a
         /// wall for eight ticks, not a bullet flying through the arena — and
         /// the slot argument above is what still makes the constant necessary.
-        const int LostEndSlackTicks = 8;
+        /// ⚠ `internal` SO A FIXTURE CAN PIN THE FAR END BY EXPRESSION rather
+        /// than by a copied literal (307/308): the visible cost of a lost
+        /// ending is measured in this many ticks, and a test that asserts
+        /// "still drawn / no longer drawn" has to say which side of it it
+        /// stands on. `InternalsVisibleTo("Ring.Simulation.Tests")` is already
+        /// on this assembly.
+        internal const int LostEndSlackTicks = 8;
 
         readonly Track[] _live;
 
@@ -506,6 +538,16 @@ namespace Ring.Networking.Client
             int index = IndexOf(ghostId);
             if (index < 0) return false;
 
+            // THE SAME DUPLICATE GUARD `TrySpawn` KEEPS, AND FOR ITS REASON
+            // (review finding). The wire truncates ids to `u16`, so two rounds
+            // 65536 apart arrive under one code; without this, adopting a code
+            // another live track already answers to would leave TWO tracks
+            // replying to it, and `IndexOf` hands back whichever comes first —
+            // so an ending meant for one round could retire the other.
+            // Refusing keeps the older round drawn correctly, exactly as
+            // `TrySpawn`'s own refusal does.
+            if (IndexOf(serverId) >= 0) return false;
+
             _live[index].ServerId = serverId;
             return true;
         }
@@ -514,6 +556,12 @@ namespace Ring.Networking.Client
         /// `endTick`. The round keeps flying until the clock REACHES that tick,
         /// so the tracer disappears together with the impact that ended it
         /// rather than the moment the datagram arrived.
+        /// ⚠ SINCE app-8dv T5 THERE IS A SECOND CALLER AND A SECOND REASON:
+        /// the frame retires a PREDICTED trail whose ghost expired unconfirmed,
+        /// naming it by its ghost id and ending it on the predicted tick. No
+        /// server word is involved because there is no server round — the
+        /// client is taking back a picture of a shot that was never
+        /// acknowledged (see the class header).
         ///
         /// Answers whether the round was tracked at all, and an unknown id is
         /// ordinary traffic rather than an error. It is NOT, however, the case
