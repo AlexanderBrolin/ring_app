@@ -96,7 +96,7 @@ namespace Ring.Simulation.Combat
         /// because it is neither the bookkeeping's business nor the sink's: it
         /// is geometry, and both sinks ask the same question of it.
         static void Advance(ref PlayerState p, in SimInput input, in SimConfig cfg,
-            SimulationWorld worldOrNull, byte ownerIndex)
+            SimulationWorld worldOrNull, byte ownerIndex, PredictedShotLog logOrNull)
         {
             float dt = SimulationWorld.TickDt;
             var weapon = cfg.Weapon;
@@ -160,6 +160,28 @@ namespace Ring.Simulation.Combat
                 {
                     SpawnShot(worldOrNull, in cfg, ownerIndex, in s);
                 }
+                // app-8dv T4 (Р451, ruling 319): the CLIENT's sink — the fact
+                // of the shot, written where it happens, inside the predicted
+                // tick. It reads the very `s` the authoritative sink above
+                // would have read, from the same point of the same loop, which
+                // is the whole reason the geometry was hoisted in T3: the cone,
+                // the burst counter and the overshoot are the ones this shot
+                // actually left on, not the ones the tick ended with.
+                //
+                // ⚠ THE KEY IS THE POST-INCREMENT ORDINAL, hence the `+ 1`:
+                // both counters rise at the bottom of this loop, so the first
+                // shot of a match is keyed 1 and ZERO stays free as the "no key"
+                // sentinel. Without that, a ring cleared to `default` would read
+                // as "shot 0 already shown" and swallow the first shot of every
+                // new match.
+                //
+                // ⚠ THE TWO SINKS ARE NEVER BOTH LIVE, and that is a fact of
+                // the routing rather than a hope: on a listen server
+                // `RouteReplicate` answers `RecordForServer` and `Predict` is
+                // not called at all. Said out loud because a shot recorded on
+                // both paths would be one number with two homes -- the shape
+                // ruling 291 exists against.
+                logOrNull?.Record(p.ShotOrdinal + 1, in s);
                 // Stage 3 Task 2 (spec Р225): spent in this ONE shared body —
                 // Update (server) and AdvanceNoSpawn (prediction) both run it, so
                 // a predicting client's magazine empties in lockstep with the
@@ -223,18 +245,26 @@ namespace Ring.Simulation.Combat
         /// no-spawn twin below needs that sentinel to be expressible at all.
         internal static void Update(SimulationWorld w, ref PlayerState p, in SimInput input,
             byte ownerIndex)
-            => Advance(ref p, in input, w.Config, w, ownerIndex);
+            => Advance(ref p, in input, w.Config, w, ownerIndex, null);
 
         /// Prediction weapon tick (Stage 2 Task 30, spec §3.9) — the same core
-        /// with the shot sink removed, so a client can advance the weapon's
+        /// with the WORLD's sink removed, so a client can advance the weapon's
         /// hashed state (FireCooldown, RecoilOffset) without ever spawning a
-        /// round, drawing from the world RNG or crediting itself a shot. There is
-        /// no owner to credit on this path, hence ProjectileIds.NoOwner: the
-        /// sentinel is unreachable here by construction (the sink is null), and
-        /// naming it is what keeps that fact readable instead of passing a 0 that
-        /// would look like "player 0".
-        internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg)
-            => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner);
+        /// round or crediting itself a shot. There is no owner to credit on this
+        /// path, hence ProjectileIds.NoOwner: the sentinel is unreachable here by
+        /// construction (the world is null), and naming it is what keeps that
+        /// fact readable instead of passing a 0 that would look like "player 0".
+        ///
+        /// ⭐ SINCE app-8dv T4 THIS PATH HAS A SINK OF ITS OWN, and it is the
+        /// journal — `logOrNull`, the client's record of "I fired", which
+        /// decides nothing and merely writes down what the predicted tick has
+        /// already done. ⚠ NO DEFAULT VALUE, DELIBERATELY, by the same rule
+        /// `PlayerPrediction.Step` states for its own parameters: a defaulted
+        /// null here would read as "this client does not predict its own
+        /// shots", which is a silent breakage rather than a configuration.
+        internal static void AdvanceNoSpawn(ref PlayerState p, in SimInput input, in SimConfig cfg,
+            PredictedShotLog logOrNull)
+            => Advance(ref p, in input, in cfg, null, ProjectileIds.NoOwner, logOrNull);
 
         /// Single home of the FIVE eligibility terms (FireHeld, Alive, dash,
         /// slide, window — Stage 3 Task 20 adds the last) — consumed by

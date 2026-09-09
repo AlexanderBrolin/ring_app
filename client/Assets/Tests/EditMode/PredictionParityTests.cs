@@ -127,7 +127,7 @@ namespace Ring.Simulation.Tests
                 // BodyCollisionTests.PredictionAndServerAgree_WhenTheBodyIsVisible.
                 PlayerPrediction.Step(ref predicted, in sent, in cfg,
                     in Ring.Simulation.Combat.ImpactPulse.None,
-                    System.ReadOnlySpan<PushableBody>.Empty);
+                    System.ReadOnlySpan<PushableBody>.Empty, null);
 
                 AssertPlayerStateBitEqual(world.PlayerAt(0), predicted, in atStart, scenario, tick);
                 observe?.Invoke(tick, world);
@@ -800,7 +800,7 @@ namespace Ring.Simulation.Tests
             // reasons, has nowhere to hide.
             var pulse = new Ring.Simulation.Combat.ImpactPulse(new float2(0.3f, 0f), 0.2f);
             PlayerPrediction.Step(ref predicted, default, in cfg, in pulse,
-                System.ReadOnlySpan<PushableBody>.Empty);
+                System.ReadOnlySpan<PushableBody>.Empty, null);
 
             // The input is `default` — no movement, no trigger — so an idle
             // tick leaves Vel and TiltVel at zero and everything read below

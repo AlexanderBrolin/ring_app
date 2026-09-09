@@ -79,23 +79,35 @@ namespace Ring.Simulation.Core
         /// ⚠ Т22 grew this signature by one more parameter
         /// (`ReadOnlySpan&lt;PushableBody&gt; visibleBodies`, finding Н20), and
         /// every call site got the same treatment a second time.
+        /// ⚠ app-8dv T4 grew it a THIRD time, by `shotLogOrNull` — the client's
+        /// own journal of predicted shots — and every call site was patched
+        /// again. The rule holds hardest for this one: a defaulted null would
+        /// mean "this client does not predict its own shots", which no caller
+        /// would ever choose on purpose and none would notice having chosen.
+        /// ⛔ NULL IS STILL A LEGAL VALUE HERE, and the difference matters: a
+        /// test that examines movement passes null because it is not about
+        /// shots, while the production caller passes the journal the backend
+        /// owns. What the missing default buys is that the choice is always
+        /// written down at the call.
         /// ⚠ AN EARLIER WORDING COUNTED "THREE CALL SITES" AND NO ARRANGEMENT
         /// OF THE TREE EVER MATCHED IT (review of bd `app-njmi`, finding 6):
         /// there is exactly ONE production caller — `PlayerPredictionCore.
-        /// Predict` — and six in tests. The count is dropped rather than
-        /// corrected, because a number like this rots on the next task that
-        /// adds a fixture, and what the paragraph is really saying does not
-        /// need it. ⛔ AND THE ONE PRODUCTION CALLER IS WHY THE RULE MATTERS:
+        /// Predict` — and the rest are tests. ⚠ THE COUNT OF THE TESTS IS
+        /// DELIBERATELY NOT WRITTEN HERE, and app-8dv proved the point twice
+        /// over: a number like this rots on the next task that adds a fixture,
+        /// and this doc's own "six" had already gone stale before T4 came to
+        /// patch the call sites. ⛔ AND THE ONE PRODUCTION CALLER IS WHY THE RULE MATTERS:
         /// it passed `ReadOnlySpan&lt;PushableBody&gt;.Empty` for three sessions
         /// while every fixture passed real bodies, so the client separated off
         /// nothing in a live match and no test could see it (bd `app-njmi`).
         public static void Step(ref PlayerState p, in SimInput rawInput, in SimConfig cfg,
-            in ImpactPulse pulse, System.ReadOnlySpan<PushableBody> visibleBodies)
+            in ImpactPulse pulse, System.ReadOnlySpan<PushableBody> visibleBodies,
+            Combat.PredictedShotLog shotLogOrNull)
         {
             SimInput input = SimInputSanitizer.Sanitize(rawInput, p, cfg);
             p.AimPoint = input.AimPoint;
             PlayerMovementSystem.Update(ref p, in input, in cfg);
-            WeaponSystem.AdvanceNoSpawn(ref p, in input, in cfg);
+            WeaponSystem.AdvanceNoSpawn(ref p, in input, in cfg, shotLogOrNull);
             // app-88jb Т22 (finding Н20/D-C11, owner decision Р442): the client's
             // half of the body separation, run through the SAME
             // BodySeparation.Accumulate the server calls — see that type's doc

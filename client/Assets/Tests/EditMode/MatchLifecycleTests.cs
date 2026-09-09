@@ -11,6 +11,7 @@ using Ring.Simulation.Visibility;
 using Ring.Networking.Protocol;
 using Ring.Networking.Server;
 using Ring.Server;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 
 namespace Ring.Simulation.Tests
@@ -531,6 +532,46 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, tracers.WriteInto(scratch, 0));
         }
 
+        /// The ninth seam (app-8dv T4). This one fails in the same direction as
+        /// the event queue's: a forgotten reset does not refuse anything, it
+        /// PRODUCES -- a shot predicted in the match that just ended is drained
+        /// by the first frame of the new one and drawn there.
+        [Test]
+        public void ResetForEpoch_ClearsShotLog()
+        {
+            var shotLog = new PredictedShotLog();
+            shotLog.BeginTick(400u);
+            shotLog.Record(1, default);
+            Assert.AreEqual(1, shotLog.Drain().Length, "witness: a shot is waiting to be drawn");
+            shotLog.Record(2, default);
+
+            NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(), NewStalePolicy(),
+                shotLog: shotLog).ResetForEpoch(2);
+
+            Assert.AreEqual(0, shotLog.Drain().Length,
+                "выстрел прошлого матча дожил до нового и будет нарисован в нём");
+        }
+
+        /// The tenth seam (app-8dv T4), and it fails in the OPPOSITE direction
+        /// from the ninth: a forgotten reset here does not produce, it REFUSES.
+        /// The marks are keyed by FishNet's tick, which does not restart with
+        /// the match, so the high-water mark of the old match would suppress
+        /// every predicted trail of the new one until play caught up with it.
+        [Test]
+        public void ResetForEpoch_ClearsSpawnedKeys()
+        {
+            var keys = new SpawnedShotKeys();
+            Assert.IsTrue(keys.TryClaim(400u, 0), "witness: the old match drew a trail");
+            Assert.IsFalse(keys.TryClaim(399u, 0),
+                "witness: an earlier tick is refused while the mark stands");
+
+            NewReset(NewDedup(), NewQueue(), new RenderClock(), NewGhosts(), NewStalePolicy(),
+                spawnedShotKeys: keys).ResetForEpoch(2);
+
+            Assert.IsTrue(keys.TryClaim(399u, 0),
+                "метка прошлого матча душит предсказанные следы нового");
+        }
+
 
         [Test]
         public void ResetForEpoch_ClearsGhosts()
@@ -685,38 +726,40 @@ namespace Ring.Simulation.Tests
             var policy = NewStalePolicy();
             var events = NewEventQueue();
 
-            // Eight separate guards, eight separate assertions on the
+            // Ten separate guards, ten separate assertions on the
             // PARAMETER NAME: "something threw" would pass even if one seam's
             // guard covered another's argument, which is precisely the mistake
-            // an eight-argument constructor invites.
+            // a ten-argument constructor invites.
             var tracers = NewTracers(8);
             SimConfig staleCfg = TestConfigs.Default();
             var entityStale = new EntityStaleTrackers(in staleCfg.Arena, 4, 4);
+            var shotLog = new PredictedShotLog();
+            var spawnedKeys = new SpawnedShotKeys();
             Assert.AreEqual("dedup",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(null, queue, clock, ghosts, policy, events, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
             Assert.AreEqual("snapshotQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(dedup, null, clock, ghosts, policy, events, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
             Assert.AreEqual("renderClock",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, null, ghosts, policy, events, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
             Assert.AreEqual("ghosts",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, null, policy, events, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
             Assert.AreEqual("stalePolicy",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, null, events, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
             // The sixth seam (Task 44b), by the same rule as the five above.
             Assert.AreEqual("eventQueue",
                 Assert.Throws<ArgumentNullException>(
-                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers, entityStale)).ParamName);
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, null, tracers, entityStale, shotLog, spawnedKeys)).ParamName);
 
             // The seventh seam (bd `app-s0u`), by the same rule as the six above.
             Assert.AreEqual("tracers",
                 Assert.Throws<ArgumentNullException>(
                     () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, null,
-                        entityStale)).ParamName);
+                        entityStale, shotLog, spawnedKeys)).ParamName);
 
             // The eighth seam (Т32б, bd `app-dut`; widened to every entity
             // class by Т33d, bd `app-tut2`), by the same rule as the seven
@@ -729,13 +772,25 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual("entityStale",
                 Assert.Throws<ArgumentNullException>(
                     () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
-                        null)).ParamName);
+                        null, shotLog, spawnedKeys)).ParamName);
+
+            // The ninth and tenth seams (app-8dv T4), by the same rule as the
+            // eight above: the journal of predicted shots, and the marks of
+            // which of them already grew a trail.
+            Assert.AreEqual("shotLog",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                        entityStale, null, spawnedKeys)).ParamName);
+            Assert.AreEqual("spawnedShotKeys",
+                Assert.Throws<ArgumentNullException>(
+                    () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
+                        entityStale, shotLog, null)).ParamName);
 
             // Positive witness: a fully wired set constructs.
             Assert.DoesNotThrow(
                 () => new ClientMatchReset(dedup, queue, clock, ghosts, policy, events, tracers,
-                    entityStale),
-                "witness: all eight seams present is the legal construction");
+                    entityStale, shotLog, spawnedKeys),
+                "witness: all ten seams present is the legal construction");
         }
 
         // ------------------------------------------------------------------
@@ -967,10 +1022,12 @@ namespace Ring.Simulation.Tests
         /// and only the test that is ABOUT one of those seams has to name it.
         static ClientMatchReset NewReset(EventDedup dedup, SnapshotQueue queue, RenderClock clock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue = null,
-            TracerProjectiles tracers = null, EntityStaleTrackers entityStale = null)
+            TracerProjectiles tracers = null, EntityStaleTrackers entityStale = null,
+            PredictedShotLog shotLog = null, SpawnedShotKeys spawnedShotKeys = null)
             => new ClientMatchReset(dedup, queue, clock, ghosts, stalePolicy,
                 eventQueue ?? NewEventQueue(), tracers ?? NewTracers(8),
-                entityStale ?? DefaultEntityStale());
+                entityStale ?? DefaultEntityStale(), shotLog ?? new PredictedShotLog(),
+                spawnedShotKeys ?? new SpawnedShotKeys());
 
         static EntityStaleTrackers DefaultEntityStale()
         {

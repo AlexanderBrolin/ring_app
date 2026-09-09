@@ -127,6 +127,16 @@ namespace Ring.Networking
             _configured = true;
         }
 
+        /// app-8dv T4: hands the prediction core the journal of predicted shots
+        /// and the memory of which of them already grew a trail. Both are owned
+        /// by the backend rather than by the core -- see the core's own fields
+        /// for the lifetime that decides it.
+        /// ⛔ SEPARATE FROM `Configure`, deliberately: `MatchServer` calls
+        /// `Configure` too, and a server has no use for a journal of PREDICTED
+        /// shots and must not hold one.
+        internal void AttachShotLog(PredictedShotLog log, SpawnedShotKeys keys)
+            => _core.AttachShotLog(log, keys);
+
         /// The latest sampled frame, whole. Called by the backend once per TICK
         /// and not once per frame (Stage 2 app-b3z): twice on a frame that
         /// produces two ticks, and not at all on a frame without one, while the
@@ -272,7 +282,7 @@ namespace Ring.Networking
             if (route == ReplicateRoute.RecordForServer)
                 _core.RecordServerInput(data.GetTick(), in input);
             else
-                _core.Predict(in input, in _cfg);
+                _core.Predict(in input, in _cfg, data.GetTick());
         }
 
         [Reconcile]
@@ -385,6 +395,24 @@ namespace Ring.Networking
         /// printed a permanent zero where that number belonged.
         bool _serverInputPending;
         int _overwrittenServerInputs;
+
+        /// app-8dv T4: the client's own record of "I fired", and the memory of
+        /// which of those records already grew a trail.
+        /// ⛔ NEITHER IS BUILT HERE, AND THE REASON IS A LIFETIME RATHER THAN A
+        /// preference (spec §3.4, finding C5₃): `ClientMatchReset` is built ONCE
+        /// PER CONNECTION, while this core is rebuilt PER MATCH ("a match
+        /// restart spawns NEW objects on the same slots", Р164). A journal owned
+        /// here would be unreachable to the reset's constructor, and after a
+        /// restart that constructor's reference would point at the journal of a
+        /// dead controller -- a seam green in tests and dead in a live match.
+        /// So the backend builds both beside `_ghosts` and hands them over
+        /// through `AttachShotLog`.
+        /// ⚠ BOTH STAY NULL ON A SERVER, and nothing here checks for that: the
+        /// server never reaches `Predict` at all (`RouteReplicate` sends it to
+        /// `RecordForServer`), which is the same reason the two sinks of
+        /// `WeaponSystem.Advance` can never both be live.
+        PredictedShotLog _shotLog;
+        SpawnedShotKeys _spawnedKeys;
 
         /// The latest sampled frame, held WHOLE and unmodified.
         public SimInput PendingInput => _pending;
@@ -657,11 +685,34 @@ namespace Ring.Networking
         /// one from the other). Owner decision Р434 moved the wiring to Ф3 as
         /// bd `app-7du2`, analysis first. Until it lands, this line is
         /// correct as written and is not an omission.
-        internal void Predict(in SimInput decodedInput, in SimConfig cfg)
+        /// app-8dv T4: the backend hands over the journal it owns and the ring
+        /// that remembers what has been drawn.
+        /// ⛔ A SEAM OF ITS OWN RATHER THAN TWO MORE PARAMETERS ON `Configure`:
+        /// `Configure` is also called by `MatchServer`, and a server has no use
+        /// for a journal and must not hold one.
+        internal void AttachShotLog(PredictedShotLog log, SpawnedShotKeys keys)
+        {
+            _shotLog = log;
+            _spawnedKeys = keys;
+        }
+
+        /// `localTick` is FishNet's, and it is REQUIRED rather than defaulted:
+        /// the journal stamps every record with it, and a caller that forgot to
+        /// pass one would silently file its shots under tick zero. The one
+        /// production caller is `PerformReplicate`, where `data.GetTick()` is
+        /// already at hand.
+        internal void Predict(in SimInput decodedInput, in SimConfig cfg, uint localTick)
         {
             if (!IsPredicting) return;
+            // ⚠ STAMPED ONCE PER PREDICTED TICK, HERE, because this is the one
+            // place that HAS a FishNet tick. `Advance` is the shared body of
+            // server and client, and a FishNet tick means nothing on the
+            // server's path -- which is why the stamp does not travel as a
+            // parameter of the write itself.
+            _shotLog?.BeginTick(localTick);
             PlayerPrediction.Step(ref _predicted, in decodedInput, in cfg, in ImpactPulse.None,
-                new System.ReadOnlySpan<PushableBody>(_visibleBodies, 0, _visibleBodyCount));
+                new System.ReadOnlySpan<PushableBody>(_visibleBodies, 0, _visibleBodyCount),
+                _shotLog);
         }
 
         /// Server side: publish the input the world must consume, and the tick

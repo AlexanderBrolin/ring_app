@@ -450,7 +450,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(data.TryToInput(in cfg, out SimInput decoded), "premise: it must decode");
 
             PlayerPredictionCore core = CoreReconciledTo(in start);
-            core.Predict(in decoded, in cfg);
+            core.Predict(in decoded, in cfg, 1u);
 
             PlayerState expected = start;
             // app-88jb Т7: the same empty pulse PlayerPredictionCore.Predict
@@ -459,7 +459,7 @@ namespace Ring.Simulation.Tests
             // side carried alone would answer a different question.
             PlayerPrediction.Step(ref expected, in decoded, in cfg,
                 in Ring.Simulation.Combat.ImpactPulse.None,
-                System.ReadOnlySpan<PushableBody>.Empty);
+                System.ReadOnlySpan<PushableBody>.Empty, null);
             AssertPlayerStateBitEqual(expected, core.Predicted,
                 "the core's own step must be PlayerPrediction.Step over the decoded input");
 
@@ -594,7 +594,7 @@ namespace Ring.Simulation.Tests
             // green on a core that never predicts anything at all.
             PlayerPredictionCore predicting = CoreReconciledTo(in live);
             Assert.IsTrue(predicting.IsPredicting, "witness: a live core must be predicting");
-            predicting.Predict(in move, in cfg);
+            predicting.Predict(in move, in cfg, 1u);
             Assert.AreNotEqual(System.BitConverter.SingleToInt32Bits(live.Vel.x),
                 System.BitConverter.SingleToInt32Bits(predicting.Predicted.Vel.x),
                 "witness: a live core must actually advance the predicted state");
@@ -604,7 +604,7 @@ namespace Ring.Simulation.Tests
             byEvent.NotifyOwnDeath();
             Assert.IsFalse(byEvent.IsPredicting, "(a) a reported death must stop prediction");
             PlayerState beforeEvent = byEvent.Predicted;
-            byEvent.Predict(in move, in cfg);
+            byEvent.Predict(in move, in cfg, 1u);
             AssertPlayerStateBitEqual(beforeEvent, byEvent.Predicted,
                 "(a) nothing may move after the death event, whatever the last state said");
 
@@ -615,7 +615,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(byState.IsPredicting,
                 "(b) an authoritative Alive == false must stop prediction on its own");
             PlayerState beforeState = byState.Predicted;
-            byState.Predict(in move, in cfg);
+            byState.Predict(in move, in cfg, 1u);
             AssertPlayerStateBitEqual(beforeState, byState.Predicted,
                 "(b) nothing may move once the authoritative state says the player is dead");
         }
@@ -633,7 +633,7 @@ namespace Ring.Simulation.Tests
                 "a core that has not been reconciled yet must not predict");
 
             PlayerState before = core.Predicted;
-            core.Predict(new SimInput { MoveDir = new float2(1f, 0f) }, in cfg);
+            core.Predict(new SimInput { MoveDir = new float2(1f, 0f) }, in cfg, 1u);
             AssertPlayerStateBitEqual(before, core.Predicted,
                 "…and Predict must be a no-op until the first reconcile arrives");
         }
@@ -752,7 +752,7 @@ namespace Ring.Simulation.Tests
 
             // The client runs ahead of the state it last heard about.
             for (int i = 0; i < frames.Length; i++)
-                core.Predict(in frames[i], in cfg);
+                core.Predict(in frames[i], in cfg, 1u);
             float2 aheadPos = core.Predicted.Pos;
 
             // Premise: it really did run ahead — far enough that a measurement
@@ -767,7 +767,7 @@ namespace Ring.Simulation.Tests
             // inputs replayed on top of it.
             core.BeginReconcile(WorldTick + 1u, in worldState);
             for (int i = 0; i < frames.Length; i++)
-                core.Predict(in frames[i], in cfg);
+                core.Predict(in frames[i], in cfg, 1u);
             core.FinishReconcile();
 
             Assert.AreEqual(0f, core.LastCorrectionMeters, 0f,
@@ -784,7 +784,7 @@ namespace Ring.Simulation.Tests
             moved.Pos = worldState.Pos + new float2(3f, 4f);
             core.BeginReconcile(WorldTick + 2u, in moved);
             for (int i = 0; i < frames.Length; i++)
-                core.Predict(in frames[i], in cfg);
+                core.Predict(in frames[i], in cfg, 1u);
             core.FinishReconcile();
 
             Assert.Greater(core.LastCorrectionMeters, 0f,

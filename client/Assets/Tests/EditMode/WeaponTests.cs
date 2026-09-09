@@ -462,7 +462,8 @@ namespace Ring.Simulation.Tests
             {
                 w.Tick(fire);
                 PlayerPrediction.Step(ref predicted, in fire, in cfg, in ImpactPulse.None,
-                    System.ReadOnlySpan<PushableBody>.Empty);   // the journal arrives only in T4
+                    System.ReadOnlySpan<PushableBody>.Empty, null);   // no journal: this test
+                // examines the counters, and PredictedShotLogTests examines the journal
                 Assert.AreEqual(w.Player.ShotOrdinal, predicted.ShotOrdinal,
                     "счётчик выстрелов разошёлся — он растёт не в общем теле Advance");
                 Assert.AreEqual(w.Player.BurstShots, predicted.BurstShots,

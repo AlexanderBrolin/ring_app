@@ -5,6 +5,7 @@ using Ring.Data;
 using Ring.Networking;
 using Ring.Networking.Client;
 using Ring.Networking.Protocol;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Ring.Simulation.Loot;
 using Ring.Simulation.Visibility;
@@ -249,6 +250,17 @@ namespace Ring.Presentation.Net
         EventDedup _dedup;
         ClientEventQueue _events;
         GhostProjectiles _ghosts;
+
+        /// app-8dv T4: the client's own journal of predicted shots, and the
+        /// memory of which of them already grew a trail.
+        /// ⛔ OWNED HERE RATHER THAN BY THE PREDICTION CORE, and the reason is
+        /// a lifetime: `ClientMatchReset` below is built ONCE PER CONNECTION,
+        /// while `PlayerPredictionCore` is rebuilt PER MATCH (Р164). A journal
+        /// owned by the core would be unreachable to that constructor, and after
+        /// a restart the reference it captured would point at a dead
+        /// controller's journal -- a seam green in tests and dead in a match.
+        PredictedShotLog _shotLog;
+        SpawnedShotKeys _spawnedShotKeys;
 
         /// ADR-002 A28б: everything a ROUND causes -- the spark, the hit flash,
         /// the sound, the ricochet, the body's tilt -- queued on the clock the
@@ -1859,6 +1871,8 @@ namespace Ring.Presentation.Net
             _impactEvents = new ClientEventQueue(in _timings, _net.SnapshotEventBudget);
             _ghosts = new GhostProjectiles(cfg.Arena.MaxProjectiles, _net.GhostConfirmTicks,
                 GhostTrackTicks(in cfg), _stats);
+            _shotLog = new PredictedShotLog();
+            _spawnedShotKeys = new SpawnedShotKeys();
             _hitTrail = new HitFeedbackTrail(HitTrailTicks);
             _ownDamage = new OwnDamageLane(_net.SnapshotEventBudget);
             // Sized for the PLAYER SLOT space and nothing else. `StalePolicy`
@@ -1898,7 +1912,7 @@ namespace Ring.Presentation.Net
             _entityStale = new EntityStaleTrackers(in cfg.Arena,
                 _net.InterpMaxStaleTicks, _net.EntityFadeTicks);
             _reset = new ClientMatchReset(_dedup, _snapshots, _clock, _ghosts, _stale, _events,
-                _tracers, _entityStale);
+                _tracers, _entityStale, _shotLog, _spawnedShotKeys);
             // Sized from the same cap as `_mobScratch` below, which is what
             // makes "a frame can never carry more records than one generation
             // holds" true rather than hoped for.
@@ -3718,6 +3732,11 @@ namespace Ring.Presentation.Net
                 {
                     _controller = controller;
                     _controller.Configure(in _cfg);
+                    // app-8dv T4: a seam of its own rather than two more
+                    // parameters on `Configure` -- `MatchServer` calls
+                    // `Configure` too, and a server neither needs a journal of
+                    // predicted shots nor may hold one.
+                    _controller.AttachShotLog(_shotLog, _spawnedShotKeys);
                     return;
                 }
             }

@@ -1,4 +1,5 @@
 using System;
+using Ring.Simulation.Combat;
 
 namespace Ring.Networking.Client
 {
@@ -8,7 +9,7 @@ namespace Ring.Networking.Client
     /// that names a new epoch (`MatchRestartedNet`, and the welcome that opens
     /// the first match).
     ///
-    /// WHY ONE HANDLER AND NOT EIGHT CALL SITES. The eight objects below each
+    /// WHY ONE HANDLER AND NOT TEN CALL SITES. The ten objects below each
     /// carry a piece of "where this client is in the match", and each of them
     /// fails SILENTLY when it is the one that was forgotten — no exception, no
     /// log line, just one guarantee quietly dead for the whole next match:
@@ -57,7 +58,7 @@ namespace Ring.Networking.Client
     ///     This one does not merely lose a guarantee, it INVENTS events: the
     ///     only seam of the eight that fails by producing something rather than
     ///     by refusing.
-    /// Eight call sites spread across a receiver would be eight chances to
+    /// Ten call sites spread across a receiver would be ten chances to
     /// forget one; one call site is one.
     ///
     /// THE SET'S COMPLETENESS IS CONTRACTUAL, NOT SOMETHING THE TYPE SYSTEM
@@ -70,23 +71,26 @@ namespace Ring.Networking.Client
     /// `MatchLifecycleTests` — or it inherits none of that. That is not a
     /// hypothetical: the sixth seam (`ClientEventQueue`) arrived in Task 44b
     /// and the seventh (`TracerProjectiles`) in bd `app-s0u`
-    /// by exactly this route, and the paragraph is left standing, with the
-    /// number moved on, for the seventh.
+    /// by exactly this route, and the ninth and tenth (`PredictedShotLog`,
+    /// `SpawnedShotKeys`) in app-8dv T4. The paragraph is left standing, with
+    /// the number moved on, for whichever seam arrives next.
     ///
-    /// THIS CLASS DOES NOT OWN THE EIGHT AND DOES NOT BUILD THEM. They are
+    /// THIS CLASS DOES NOT OWN THE TEN AND DOES NOT BUILD THEM. They are
     /// handed in. Their construction parameters have nothing in common (an
     /// arena config, per-match timings, capacities, an event budget, a
     /// `NetStats` sink), and pulling those in here would make this a second
     /// home for the client's network configuration. The owner is the network
-    /// backend of Task 44, which builds all eight for its own reasons and hands
+    /// backend of Task 44, which builds all ten for its own reasons and hands
     /// them here once.
     ///
-    /// FIVE OF THE EIGHT TAKE NO EPOCH, AND THAT IS CORRECT (fix round, Ф7
+    /// SEVEN OF THE TEN TAKE NO EPOCH, AND THAT IS CORRECT (fix round, Ф7
     /// review A-5: this class doc still counted seven seams and three
-    /// epochless ones after the eighth arrived in Т32б — recount below).
+    /// epochless ones after the eighth arrived in Т32б — recount below, and
+    /// again in app-8dv T4, where both new seams are epochless too).
     /// `GhostProjectiles.Reset`/`StalePolicy.Reset`/`ClientEventQueue.Reset`
-    /// track no epoch at all — their reset is total by construction, which is
-    /// why none of them has an epoch-shaped seam to pass one to.
+    /// and the two app-8dv seams track no epoch at all — their reset is total
+    /// by construction, which is why none of them has an epoch-shaped seam to
+    /// pass one to.
     ///
     /// A RESET AT THE SAME EPOCH IS A FULL RESET, NOT A NO-OP. That is
     /// `SnapshotQueue`'s own documented contract ("`Reset` IS A FULL RESET
@@ -122,9 +126,19 @@ namespace Ring.Networking.Client
         /// before, answered for.
         readonly EntityStaleTrackers _entityStale;
         readonly ClientEventQueue _eventQueue;
+        /// app-8dv T4: the client's own journal of predicted shots. Without
+        /// this line a shot predicted in the match that just ended would be
+        /// drained into the new one and drawn there.
+        readonly PredictedShotLog _shotLog;
+        /// app-8dv T4: which predicted shots already grew a trail. The FishNet
+        /// tick this is keyed by does NOT reset between matches, so without
+        /// this line the marks of the old match would suppress the first shots
+        /// of the new one — the exact failure the ordinal's zero sentinel
+        /// exists to prevent on the other side of the same path.
+        readonly SpawnedShotKeys _spawnedShotKeys;
 
         /// Every seam is required, and each is guarded separately so a wiring
-        /// mistake names the argument it was actually made in — eight guards
+        /// mistake names the argument it was actually made in — ten guards
         /// answering "one of them was null" would leave the caller to find out
         /// which.
         ///
@@ -135,7 +149,8 @@ namespace Ring.Networking.Client
         /// its own enum grew.
         public ClientMatchReset(EventDedup dedup, SnapshotQueue snapshotQueue, RenderClock renderClock,
             GhostProjectiles ghosts, StalePolicy stalePolicy, ClientEventQueue eventQueue,
-            TracerProjectiles tracers, EntityStaleTrackers entityStale)
+            TracerProjectiles tracers, EntityStaleTrackers entityStale,
+            PredictedShotLog shotLog, SpawnedShotKeys spawnedShotKeys)
         {
             _dedup = dedup ?? throw new ArgumentNullException(nameof(dedup));
             _snapshotQueue = snapshotQueue ?? throw new ArgumentNullException(nameof(snapshotQueue));
@@ -145,9 +160,12 @@ namespace Ring.Networking.Client
             _eventQueue = eventQueue ?? throw new ArgumentNullException(nameof(eventQueue));
             _tracers = tracers ?? throw new ArgumentNullException(nameof(tracers));
             _entityStale = entityStale ?? throw new ArgumentNullException(nameof(entityStale));
+            _shotLog = shotLog ?? throw new ArgumentNullException(nameof(shotLog));
+            _spawnedShotKeys = spawnedShotKeys
+                ?? throw new ArgumentNullException(nameof(spawnedShotKeys));
         }
 
-        /// Clears all eight seams and starts tracking `epoch` in the three that
+        /// Clears all ten seams and starts tracking `epoch` in the three that
         /// track one. Call this on the Reliable lifecycle message that names
         /// the epoch — never on a snapshot: a snapshot of an unknown epoch is
         /// refused by these very objects and must never be the thing that
@@ -165,6 +183,13 @@ namespace Ring.Networking.Client
             // the table is what makes this seam cover the classes added after
             // it without anyone remembering to come back here.
             _entityStale.ResetAll();
+            // app-8dv T4: the predicted-shot journal and the marks of what it
+            // has already drawn. ⛔ `PredictedShotLog.Reset` deliberately keeps
+            // its overflow counter — that is a per-connection health number,
+            // and a counter that cleared itself every match would hide the very
+            // pattern it exists to surface.
+            _shotLog.Reset();
+            _spawnedShotKeys.Reset();
         }
     }
 }

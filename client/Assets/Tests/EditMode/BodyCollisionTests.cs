@@ -366,7 +366,7 @@ namespace Ring.Simulation.Tests
             {
                 PlayerPrediction.Step(ref predicted, in input, in cfg,
                     Ring.Simulation.Combat.ImpactPulse.None,
-                    System.ReadOnlySpan<PushableBody>.Empty);
+                    System.ReadOnlySpan<PushableBody>.Empty, null);
                 w.TickAll(new[] { input, default });
             }
 
@@ -460,7 +460,7 @@ namespace Ring.Simulation.Tests
 
                 PlayerPrediction.Step(ref predicted, in input, in cfg,
                     Ring.Simulation.Combat.ImpactPulse.None,
-                    System.MemoryExtensions.AsSpan(bodies.ToArray()));
+                    System.MemoryExtensions.AsSpan(bodies.ToArray()), null);
                 w.TickAll(new[] { input, default });
 
                 // Bodies go back onto the snapshot — see the doc above.
@@ -539,7 +539,7 @@ namespace Ring.Simulation.Tests
                 // The two calls the backend and FishNet make, in their order:
                 // the snapshot lands first, the tick is replicated after it.
                 core.SetVisibleBodies(System.MemoryExtensions.AsSpan(bodies.ToArray()));
-                core.Predict(in input, in cfg);
+                core.Predict(in input, in cfg, 1u);
                 w.TickAll(new[] { input, default(SimInput) });
 
                 for (int k = 0; k < w.MobCount && k < frozen.Count; k++)
@@ -811,7 +811,7 @@ namespace Ring.Simulation.Tests
                 bodies[0] = new PushableBody(w.PlayerAt(1).Pos, cfg.Hero.Radius, cfg.Hero.Mass);
                 PlayerPrediction.Step(ref predicted, in input, in cfg,
                     Ring.Simulation.Combat.ImpactPulse.None,
-                    new System.ReadOnlySpan<PushableBody>(bodies));
+                    new System.ReadOnlySpan<PushableBody>(bodies), null);
                 w.TickAll(new[] { input, default(SimInput) });
 
                 PlayerState q = w.PlayerAt(1);
