@@ -33,10 +33,13 @@ namespace Ring.Simulation.Combat
         /// ONE home rather than a hip formula here and an aimed one there.
         ///
         /// ⚠ NO MOVEMENT MULTIPLIERS -- SpreadRunMult and SpreadSlideMult live in
-        /// HipRadians above and nowhere else, so the aimed cone tops out at
-        /// RecoilMaxRad (4.01 degrees at the shipped numbers) and this branch's
-        /// ceiling is RecoilMaxRad + SpreadRad (5.50 degrees). Both figures are
-        /// read off Assets/Data/WeaponConfig.asset, not off the test fixture.
+        /// HipRadians above and nowhere else. So the recoil term alone tops out
+        /// at RecoilMaxRad (4.01 degrees), and this branch's ceiling, reached
+        /// with the aim not yet settled at all, is RecoilMaxRad + SpreadRad
+        /// (5.50 degrees) -- against the 11.0 degrees HipRadians answers in a
+        /// slide at the same recoil. All three figures are read off
+        /// Assets/Data/WeaponConfig.asset, not off the test fixture, which
+        /// shares these two numbers but not ProjectileSpeed.
         public static float AimRadians(in WeaponSimConfig weapon, in PlayerState p,
             in HeroSimConfig hero)
         {

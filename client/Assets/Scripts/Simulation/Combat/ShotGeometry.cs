@@ -29,24 +29,33 @@ namespace Ring.Simulation.Combat
         /// The birth height, the vertical half of that same pre-step.
         public readonly float Height;
 
-        /// ⛔⛔ THE AUTHORITATIVE PLANE VELOCITY, AND IT IS NOT `Dir * HorizSpeed`
-        /// -- MEASURED, NOT ARGUED. `Dir` is `normalizesafe(Vel)`, i.e.
-        /// `Vel * rsqrt(dot(Vel, Vel))`, and `HorizSpeed` is `sqrt(dot(Vel, Vel))`;
-        /// multiplying them back together returns a DIFFERENT float from `Vel`
-        /// for 32.3% of directions at both the shipped and the fixture projectile
-        /// speeds (400 000 samples, float32, error up to one ULP = 1.2e-7
-        /// relative). One ULP is not cosmetic here: SimulationWorld.HashProjectile
-        /// folds ProjectileState.Vel into the replay digest directly, so handing
-        /// the sink a reconstructed product instead of the original would move
-        /// all three golden hashes -- and the re-pin sanction was spent in T2.
+        /// ⛔⛔ THE AUTHORITATIVE PLANE VELOCITY, AND IT IS NOT `Dir * HorizSpeed`.
+        /// `Dir` is `normalizesafe(Vel)`, i.e. `Vel * rsqrt(dot(Vel, Vel))`, and
+        /// `HorizSpeed` below is `sqrt(dot(Vel, Vel))`; multiplying them back
+        /// together rounds twice and returns a DIFFERENT float from `Vel`. The
+        /// error is one ULP -- and one ULP is not cosmetic here, because
+        /// SimulationWorld.HashProjectile folds ProjectileState.Vel into the
+        /// replay digest DIRECTLY, and the re-pin sanction was spent in T2.
         ///
-        /// So the three live side by side, each computed exactly once, right
-        /// here, by the same expressions the sink used to run inline. That is not
-        /// "one number with two homes" (ruling 291): they are three different
-        /// numbers, and this struct is the single place any of them is worked
-        /// out. What ruling 291 forbids is a second CALCULATION elsewhere, which
-        /// is precisely what storing only one of the three would force on a
-        /// consumer of the other two.
+        /// ⭐ THE PROOF IS A RUN, NOT AN ESTIMATE, and it is quoted this way
+        /// because the estimate turned out to be the weaker half. Substituting
+        /// `Dir * HorizSpeed` here and running DeterminismTests reddened TWO of
+        /// the three goldens outright (T3 measurement D-1). A sampled "share of
+        /// directions that disagree" was measured too, and it is reported as a
+        /// range on purpose: it depends on the MANTISSA of the speed rather than
+        /// on the direction, so it is about 10% at the fixture's 35 m/s and about
+        /// 53% at the shipped 52.5 m/s (float32, 300 000 samples per speed, drawn
+        /// through this file's own chain: normalizesafe, then multiply by
+        /// ProjectileSpeed). Any single percentage quoted for "both speeds" would
+        /// be an artifact of how the sample was pooled.
+        ///
+        /// So `Vel` and `Dir` live side by side, each computed exactly once,
+        /// right here, by the same expressions the sink used to run inline. That
+        /// is not "one number with two homes" (ruling 291): they are different
+        /// numbers, and this struct is the single place either is worked out.
+        /// What ruling 291 forbids is a second CALCULATION elsewhere, which is
+        /// precisely what storing only one of them would force on a consumer of
+        /// the other.
         public readonly float2 Vel;
 
         /// ⭐ DIRECTION AND SPEED APART, NOT ONE `float2 Vel` ALONE: this is the
@@ -60,9 +69,15 @@ namespace Ring.Simulation.Combat
         /// ruling 306 stands against there.
         public readonly float2 Dir;
 
-        /// The plane speed of the round -- `length(Vel)`, and see `Vel` above for
-        /// why the product of these two is not the velocity itself.
-        public readonly float HorizSpeed;
+        /// ⚠ COMPUTED, NOT STORED, BY THE SAME TEST `BirthSteps` BELOW IS HELD TO
+        /// (review finding): `math.length(Vel)` is bit for bit the expression
+        /// `Solve` used to work this out with, from the same `Vel` -- so as a
+        /// property it cannot drift from the velocity, while as a field it could,
+        /// and nothing in the tree would notice (the mutant that widened it
+        /// survived all 1858 tests). `Dir` above cannot follow it: its fallback
+        /// is the aim line, which is NOT derivable from `Vel`, so it stays a
+        /// field. See `Vel` for why the product of the two is not the velocity.
+        public float HorizSpeed => math.length(Vel);
 
         /// The climb rate, the vertical component of the same velocity.
         public readonly float VelZ;
@@ -83,13 +98,12 @@ namespace Ring.Simulation.Combat
         /// The readonly fields are filled by this constructor alone -- there is
         /// nothing else to build the struct with.
         public ShotSolution(float2 spawnPos, float height, float2 vel, float2 dir,
-            float horizSpeed, float velZ, int pictureTicks, int inputTicks)
+            float velZ, int pictureTicks, int inputTicks)
         {
             SpawnPos = spawnPos;
             Height = height;
             Vel = vel;
             Dir = dir;
-            HorizSpeed = horizSpeed;
             VelZ = velZ;
             PictureTicks = pictureTicks;
             InputTicks = inputTicks;
@@ -204,7 +218,7 @@ namespace Ring.Simulation.Combat
             // only correct shape: the product of the other two is a DIFFERENT
             // float for a third of all directions, and that float lands in the
             // replay digest.
-            return new ShotSolution(spawnPos, height, vel3.xy, dir2D, horizSpeed, vel3.z,
+            return new ShotSolution(spawnPos, height, vel3.xy, dir2D, vel3.z,
                 RewindSplit.PictureTicks(input.RewindTicks, in cfg.Arena), inputTicks);
         }
     }

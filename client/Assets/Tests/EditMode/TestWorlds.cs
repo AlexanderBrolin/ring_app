@@ -188,7 +188,7 @@ namespace Ring.Simulation.Tests
         ///
         /// Players 0 and 1 duel each other point-blank (3 m apart, each
         /// aiming at the other's own static position — hip fire's per-shot
-        /// direction, WeaponSystem.Update's normalize(AimPoint - p.Pos), is
+        /// direction, ShotGeometry.Solve's normalize(AimPoint - p.Pos), is
         /// therefore exact and unchanging shot after shot). Player 2 fires
         /// the long way instead, back toward the arena center and into the
         /// mob crowd — the same "long sustained shot" role Saturated's own
@@ -781,8 +781,9 @@ namespace Ring.Simulation.Tests
         /// TestWorlds helper that does take one actually uses it.
         ///
         /// ⚠ AimHeight IS DELIBERATELY LEFT UNSET, and that is right rather
-        /// than an oversight: hip fire never reads it -- `WeaponSystem`
-        /// touches `input.AimHeight` only inside the `input.AimHeld` branch --
+        /// than an oversight: hip fire never reads it -- the geometry
+        /// (`ShotGeometry.Solve` since app-8dv T3) touches `input.AimHeight`
+        /// only inside the `input.AimHeld` branch --
         /// and the repository's canon does not set it either (the lifted
         /// `WeaponTests.Fire` did not, and `ProjectileTests.FireRight` does
         /// not).

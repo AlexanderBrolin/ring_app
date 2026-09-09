@@ -1042,8 +1042,14 @@ namespace Ring.Simulation.Tests
         /// overshoot (`ShotGeometry.Solve`); the contact is where the
         /// solver's padded circle -- the target's own radius plus the round's
         /// -- meets the line; and the step is ProjectileSpeed * TickDt because
-        /// these fixtures fire from the HIP (no AimHeld), which leaves VelZ at
-        /// zero and makes the shot's whole speed horizontal. `toTargetCenter`
+        /// the shot's whole speed is horizontal to within far less than the
+        /// tolerance. ⚠ NOT BECAUSE "HIP FIRE LEAVES VelZ AT ZERO", WHICH
+        /// app-8dv T1 STOPPED BEING TRUE: the spray pattern gives a hip shot a
+        /// vertical component of its own. Two of the three callers close the
+        /// cone outright (`SpreadRad = 0`, and `Solve` places no pattern unless
+        /// `a > 0f`); the third leaves it at the fixture's 0.026 rad, where the
+        /// pattern's pitch reaches 0.0037 rad and shortens the horizontal step
+        /// by under 1e-5 m. `toTargetCenter`
         /// is measured off the world by every caller, so a fixture is checked
         /// where it actually put its shooter rather than where it meant to.
         ///
@@ -1112,7 +1118,7 @@ namespace Ring.Simulation.Tests
             // IS WHY (coordinator RULING 174). It stood the collector
             // ObstacleRadius + 1.5 m from the obstacle center on the strength
             // of a 0.78 m muzzle-to-wall gap, i.e. of a muzzle sitting at
-            // Weapon.MuzzleOffset. It does not: WeaponSystem.SpawnShot walks
+            // Weapon.MuzzleOffset. It does not: ShotGeometry.Solve walks
             // the round out by the fire cooldown's overshoot as well, and on
             // the first shot of a match that overshoot is a whole tick, so the
             // muzzle stands at 0.6 + 35/30 = 1.7666667 m. At the plan's spacing
@@ -1912,7 +1918,7 @@ namespace Ring.Simulation.Tests
         //
         // THE GEOMETRY EVERY NUMBER BELOW COMES FROM, written once. The muzzle
         // stands at MuzzleOffset + TickDt * ProjectileSpeed, because
-        // WeaponSystem.SpawnShot pre-advances the round by the fire cooldown's
+        // ShotGeometry.Solve pre-advances the round by the fire cooldown's
         // fractional remainder and the first shot of a match carries a whole
         // tick of it. The step is ProjectileSpeed * TickDt, whole and
         // horizontal, because most shots below aim at their OWN muzzle height
@@ -2026,9 +2032,10 @@ namespace Ring.Simulation.Tests
         ///
         /// AimHeld is set so that `aimHeight` means anything at all: hip fire
         /// ignores it and leaves the round at the standing muzzle height
-        /// (WeaponSystem.SpawnShot's two branches). With the cone closed the
-        /// aimed branch draws no randomness either -- the settle term is
-        /// multiplied by a SpreadRad of zero.
+        /// (ShotGeometry.Solve's two branches). With the cone closed the aimed
+        /// branch places no pattern either -- the settle term is multiplied by
+        /// a SpreadRad of zero, and `Solve` applies the spray only under
+        /// `a > 0f`.
         static SimInput[] OneShotAt(in SimConfig cfg, float aimHeight)
         {
             var inputs = new SimInput[2];
@@ -2053,7 +2060,7 @@ namespace Ring.Simulation.Tests
         ///
         /// Steps are counted 1-based from the muzzle, which is MuzzleOffset
         /// plus the first shot's whole tick of fire-cooldown overshoot
-        /// (WeaponSystem.SpawnShot), and the step is ProjectileSpeed * TickDt.
+        /// (ShotGeometry.Solve), and the step is ProjectileSpeed * TickDt.
         /// `toTargetCenter` is a stand the caller measured, so the fixture is
         /// checked where it actually put the bodies.
         /// ⚠ THE STEP IS THE FLAT ONE, and for TWO of the callers that is an

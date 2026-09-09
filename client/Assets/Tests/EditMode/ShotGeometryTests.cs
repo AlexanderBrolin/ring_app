@@ -35,8 +35,13 @@ namespace Ring.Simulation.Tests
     /// that the fields of one solution agree with each other and with what the
     /// sink actually hands the round (the angle assertion below caught exactly
     /// that -- an early M270 shape that left `Dir` unrotated while `Vel` was
-    /// rotated died on it), that the depth split answers all three of its
-    /// numbers, and that no movement multiplier reached the aimed branch. What
+    /// rotated died on it), that `Dir` is still a unit vector, that the depth
+    /// split answers all three of its numbers, and that no movement multiplier
+    /// reached the aimed branch. ⚠ `HorizSpeed` needs no assertion of its own
+    /// and gets none: it is a property computed from `Vel`, so it cannot
+    /// disagree with it -- the review that found the gap in `Dir` found the
+    /// same gap in `HorizSpeed`, and that one was closed in the structure
+    /// rather than in a test. What
     /// they buy over the goldens is WHERE: a golden says "something moved over
     /// a thousand ticks", these say which field of the first shot of a fresh
     /// world disagrees with which.
@@ -80,6 +85,16 @@ namespace Ring.Simulation.Tests
             // comparison is not the tautology the muzzle ones are.
             Assert.AreEqual(shot.Amount, math.atan2(s.Dir.y, s.Dir.x), 1e-5f,
                 "направление решения разошлось со скоростью, которую сток положил в снаряд");
+            // ⚠ AND THE LENGTH, BECAUSE atan2 CANNOT SEE IT (review finding).
+            // Without this line a `Dir` scaled by any positive factor passes the
+            // assertion above -- the mutant that doubled it survived all 1858
+            // tests, since nothing else in the tree reads this field yet. `Dir`
+            // is a unit vector by construction (normalizesafe, whose fallback
+            // `new float2(1f, 0f)` is unit too), and T5 will multiply it by a
+            // speed to seed the predicted trail, so the length is load-bearing
+            // rather than decorative.
+            Assert.AreEqual(1f, math.length(s.Dir), 1e-5f,
+                "направление перестало быть единичным — трассер T5 умножит его на скорость");
 
             // ⭐ AND THE MUZZLE POINT, NOT ONLY THE ANGLE -- but for the sink's
             // sake, not the geometry's. ⚠ THESE TWO DO NOT KILL M270, MEASURED:

@@ -47,10 +47,15 @@ namespace Ring.Simulation.Combat
         ///
         /// ⭐ THE RULE IS ABOUT OWNING AN OUTCOME, NOT ABOUT KNOWING A NUMBER,
         /// and it is stated that way so it stops needing a rewrite every time a
-        /// line moves. A null sink skips every line that DECIDES something — the
-        /// round with the catch-up that walks it, and the shooter's own stats
+        /// line moves. A null sink skips exactly what the WORLD owns — the round
+        /// with the catch-up that walks it, and the shooter's own stats
         /// (ShotsFired beside that spawn, AmmoSpent in the loop below) — and
         /// executes everything else, in the same order, on the same values.
+        /// ⚠ THAT IS NARROWER THAN "EVERY LINE THAT DECIDES SOMETHING": the
+        /// magazine spend and the recoil accumulation below decide the NEXT
+        /// shot, and a predicting client runs both — it must, or its own
+        /// weapon would drift out of step within one held trigger. What it
+        /// never gets is authority over an outcome the world records.
         /// Those are the two the client must never own, in the words
         /// PlayerPrediction's own doc names them by.
         /// ⚠ THAT SKIP LIST HAS SHRUNK TWICE UNDER app-8dv, and both times
@@ -62,9 +67,13 @@ namespace Ring.Simulation.Combat
         /// the sink's guard, once per iteration, by both paths. It writes
         /// nothing, spawns nothing and credits nobody — a predicting client that
         /// works out where its own round would go has decided no game outcome
-        /// (CR 3), and it needs that answer to draw its own shot at all. The
-        /// call is single and hoisted on purpose (ruling 291): a second call on
-        /// the client sink would be one number with two homes.
+        /// (CR 3). ⚠ ON THE PREDICTION PATH THE ANSWER IS COMPUTED AND DROPPED
+        /// UNTIL T4 GIVES IT A SINK, and that is deliberate rather than waste
+        /// left lying about: the client needs this very answer to draw its own
+        /// shot, and the call is placed here — single, hoisted, ruling 291 —
+        /// so that when the second sink arrives it reads a number that already
+        /// exists instead of computing a second one. The price meanwhile is one
+        /// sin/cos, one tan and two normalizes per predicted shot.
         ///
         /// This is one body rather than two on purpose: the overshoot comes off
         /// FireCooldown BEFORE the increment, the cone comes off RecoilOffset
@@ -167,8 +176,10 @@ namespace Ring.Simulation.Combat
                     // Р226's "synthesis spends nothing" therefore needs no
                     // second reading of Ammo to stay true of the counter as
                     // well as of the magazine. SpawnShot could not host it
-                    // without that second reading — it runs BEFORE the spend
-                    // and takes `p` by `in` on purpose.
+                    // without that second reading — it runs BEFORE the spend,
+                    // and since app-8dv T3 it is handed no player at all: the
+                    // geometry that used to need one went to ShotGeometry, and
+                    // what stayed cannot read Ammo even if it wanted to.
                     //
                     // The null-sink gate is the same one ShotsFired lives
                     // behind, for the same reason: MatchStats is a STAT, and
@@ -185,15 +196,16 @@ namespace Ring.Simulation.Combat
                     // one body, one rule, one authoritative sink.
                     if (worldOrNull != null) worldOrNull.StatsRef(ownerIndex).AmmoSpent++;
                 }
-                // app-8dv: both counters advance HERE — after SpawnShot has read
-                // their pre-increment values as this shot's pattern input and its
-                // seed, and beside the recoil accumulation, which is the other
-                // per-shot write this loop owns. In the SHARED body, so a
+                // app-8dv: both counters advance HERE — after ShotGeometry.Solve
+                // has read their pre-increment values as this shot's pattern input
+                // and its seed, and beside the recoil accumulation, which is the
+                // other per-shot write this loop owns. In the SHARED body, so a
                 // predicting client's counters walk in lockstep with the server's
-                // exactly the way Ammo above does; SpawnShot takes `p` by `in`
-                // precisely so it cannot do this itself. Any reordering here moves
-                // the golden replay hash — the same warning this method's own
-                // header gives about every other line of this bookkeeping.
+                // exactly the way Ammo above does; `Solve` takes `p` by `in`
+                // precisely so it cannot do this itself, and SpawnShot is handed
+                // no player at all. Any reordering here moves the golden replay
+                // hash — the same warning this method's own header gives about
+                // every other line of this bookkeeping.
                 p.BurstShots++;
                 p.ShotOrdinal++;
                 p.RecoilOffset = math.min(weapon.RecoilMaxRad, p.RecoilOffset + weapon.RecoilPerShotRad);
@@ -397,9 +409,9 @@ namespace Ring.Simulation.Combat
             // what lets it ride out on the ProjectileFired event this call
             // emits, without moving a single emit (see SimEvent.BirthSteps).
             // ⚠ `s.Vel` RATHER THAN `s.Dir * s.HorizSpeed`: the product is a
-            // different float from the velocity for about a third of all
-            // directions, and this field lands in the replay digest — the
-            // measurement is written out beside ShotSolution.Vel.
+            // different float from the velocity by one ULP, and this field
+            // lands in the replay digest — substituting it reddens two of the
+            // three goldens, measured. The account is beside ShotSolution.Vel.
             int projectileId = w.SpawnProjectile(ProjectileOwner.Player, ownerIndex, 0, s.SpawnPos,
                 s.Vel, s.Height, s.VelZ,
                 weapon.Damage, weapon.ProjectileRadius, weapon.ProjectileLifetime,
