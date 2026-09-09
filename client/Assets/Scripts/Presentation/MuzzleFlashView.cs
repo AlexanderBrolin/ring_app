@@ -175,19 +175,6 @@ namespace Ring.Presentation
         ParticleSystem _particles;
         readonly ImmediatePredictionLatch _latch = new ImmediatePredictionLatch();
 
-        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
-        // its sole SimEventRouter subscriber) — direct subscription, the same
-        // shape every other Presentation registry uses. app-8dv T6 is what
-        // gives this view a reason to have these at all: its latch now
-        // remembers WHICH rounds it showed, and a new match starts numbering
-        // them again from 1.
-        void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
-
-        void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
-
-        /// A fresh match: forget the rounds of the previous one, or its first
-        /// shots would be refused as already shown.
-        void HandleWorldRestarted() => _latch.Reset();
         readonly PendingBurst[] _pending = new PendingBurst[PendingCapacity];
         int _pendingCount;
 
@@ -202,6 +189,20 @@ namespace Ring.Presentation
         }
 
         void Awake() => _particles = GetComponent<ParticleSystem>();
+
+        // WorldRestarted is not a tick event (П-1 only restricts TicksFlushed to
+        // its sole SimEventRouter subscriber) — direct subscription, the same
+        // shape every other Presentation registry uses. app-8dv T6 is what
+        // gives this view a reason to have these at all: its latch now
+        // remembers WHICH rounds it showed, and a new match starts numbering
+        // them again from 1.
+        void OnEnable() => _runner.WorldRestarted += HandleWorldRestarted;
+
+        void OnDisable() => _runner.WorldRestarted -= HandleWorldRestarted;
+
+        /// A fresh match: forget the rounds of the previous one, or its first
+        /// shots would be refused as already shown.
+        void HandleWorldRestarted() => _latch.Reset();
 
         /// Task 28: per-frame prediction — see the class doc above. Fix-round
         /// (review #1, Medium): the authoritative burst spawns at the MUZZLE,

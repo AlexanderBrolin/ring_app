@@ -162,7 +162,14 @@ namespace Ring.Presentation
     /// the gate reads false both before and after, no edge is seen, and no
     /// prediction is made. That act's feedback then comes with its event,
     /// exactly as if the prediction had been refused. Nothing is shown twice;
-    /// something is shown late. The two gates are very differently exposed to
+    /// something is shown late.
+    /// ⚠ SINCE app-8dv T6 THAT GUARANTEE RESTS ON `TryConsume` TAKING THE HEAD
+    /// RECORD, and it is worth saying because the first draft of the queue lost
+    /// it: a missed edge leaves NO record, so the events that follow still line
+    /// up with the records that remain. An implementation that SKIPPED records
+    /// instead of taking them would answer each event with the next round's
+    /// record — one shot silent, the next one twice.
+    /// The two gates are very differently exposed to
     /// it: the fire window is one tick wide (~33 ms), while a dash holds its
     /// gate up for 90 ms, so only a frame longer than that can step over the
     /// dash's.
@@ -219,32 +226,6 @@ namespace Ring.Presentation
         /// bound the doc above derives. Left unchanged since a window-based
         /// credit costs nothing extra to keep once armed (class doc, "THE
         /// WINDOW IS INSURANCE, NOT THE MATCH").
-        /// "THIS CALLER HAS NO IDENTITY FOR ITS ACT", and it is a number rather
-        /// than an overload because the dash callers must keep behaving exactly
-        /// as they did (bd `app-g21`): with no key the identity check is off
-        /// entirely, and the class falls back to the single-outstanding-
-        /// prediction rule the eight original fixtures pin.
-        /// ⛔ ZERO IS FREE BY CONSTRUCTION, not by luck: the shot key is the
-        /// POST-increment `ShotOrdinal`, so the first round of a match is 1
-        /// (`WeaponSystem` raises the counter after the shot). That is also
-        /// what makes clearing the ring to `default` safe -- a zeroed slot
-        /// cannot read as "shot 0 was already shown".
-        public const int NoKey = 0;
-
-        /// How many predicted acts can be outstanding at once, and how many
-        /// shown keys are remembered.
-        ///
-        /// DERIVED, NOT CHOSEN, from the two numbers that actually bound the
-        /// wait -- the precedent is `ClientEventQueue`'s own constructor
-        /// ("capacity is DERIVED from the two numbers that bound the wait"):
-        /// `ceil(BufferedWindowSeconds 0.5 / FireInterval 0.12)` = 5. Nothing
-        /// slower than the fire cadence can put more rounds in the air than
-        /// that inside one confirmation window.
-        /// ⚠ THE RING IS NOT SHORTER THAN THE QUEUE, deliberately: a shown key
-        /// forgotten while its own record is still queued would let the
-        /// reconciliation echo of that very round through.
-        const int DefaultCapacity = 5;
-
         public const float SameFrameWindowSeconds = 0.1f;
 
         /// For a backend whose confirmation crosses the wire: the client
@@ -274,6 +255,42 @@ namespace Ring.Presentation
         /// into two numbers rather than stretching this one.
         public const float BufferedWindowSeconds = 0.5f;
 
+        /// NO KEY AT ALL: the caller has no identity to give its act.
+        /// It is a number rather
+        /// than an overload because the dash callers must keep behaving exactly
+        /// as they did (bd `app-g21`): with no key the identity check is off
+        /// entirely, and the class falls back to the single-outstanding-
+        /// prediction rule the eight original fixtures pin.
+        /// ⛔ ZERO IS FREE BY CONSTRUCTION, not by luck: the shot key is the
+        /// POST-increment `ShotOrdinal`, so the first round of a match is 1
+        /// (`WeaponSystem` raises the counter after the shot). That is also
+        /// what makes clearing the ring to `default` safe -- a zeroed slot
+        /// cannot read as "shot 0 was already shown".
+        public const int NoKey = 0;
+
+        /// How many predicted acts can be outstanding at once, and how many
+        /// shown keys are remembered.
+        ///
+        /// DERIVED, NOT CHOSEN, from the two numbers that actually bound the
+        /// wait -- the precedent is `ClientEventQueue`'s own constructor
+        /// ("capacity is DERIVED from the two numbers that bound the wait"):
+        /// `ceil(BufferedWindowSeconds 0.5 / FireInterval 0.12)` = 5. Nothing
+        /// slower than the fire cadence can put more rounds in the air than
+        /// that inside one confirmation window.
+        /// ⚠ THE RING IS NOT SHORTER THAN THE QUEUE, deliberately: a shown key
+        /// forgotten while its own record is still queued would let the
+        /// reconciliation echo of that very round through.
+        /// ⛔ AND IT IS DERIVED FROM A BALANCE NUMBER, SO IT CARRIES THE SAME
+        /// MAINTENANCE RULE `BufferedWindowSeconds` above carries: `FireInterval`
+        /// lives in a `ScriptableObject` and is tunable without a recompile
+        /// (CR 6), with a `[Range(0.01f, 5f)]` that refuses nothing. Take it
+        /// below 0.1 s and `ceil(0.5 / FireInterval)` passes 5 — the queue then
+        /// refuses grants during a sustained burst and counts them in
+        /// `OverflowDroppedPredictions`. Whoever moves `FireInterval` or the
+        /// window re-does this arithmetic and moves this number with them; the
+        /// symptom of forgetting is a rising counter, not a wrong picture.
+        const int DefaultCapacity = 5;
+
         bool _armed;
         float _expireAt;
         bool _gateWasSatisfied;
@@ -287,9 +304,14 @@ namespace Ring.Presentation
         /// written where the defect was predicted -- `AudioDirector`'s G-4
         /// comment: "one shot's event could consume a record another shot had
         /// left behind". A grant is not a showing: the SFX gates can refuse a
-        /// voice, a frame can have no doll to fire from. Such a record must be
-        /// invisible to `TryConsume`, or an event would suppress the feedback
-        /// of an act nobody ever saw and the round would be lost entirely.
+        /// voice, a frame can have no doll to fire from.
+        /// ⛔⛔ AND THE ANSWER IS NOT "MAKE SUCH A RECORD INVISIBLE" — that was
+        /// the first attempt and a review took it apart. Skipping an unmarked
+        /// record leaves it in the queue, so every later event is answered by
+        /// the record of the round AFTER its own: one shot loses its feedback
+        /// and the next gets it twice. The record stays VISIBLE and is taken in
+        /// order; what `Shown` decides is only the ANSWER — `false` means "no
+        /// prediction was made for this round, play it now".
         struct Granted
         {
             public int Key;
@@ -407,15 +429,33 @@ namespace Ring.Presentation
         {
             Expire(now);
 
-            // THE OLDEST SHOWN RECORD, AND ONLY A SHOWN ONE. Events of one
-            // burst arrive in the order their rounds were fired, so the oldest
-            // is the one this event belongs to; an unmarked record is skipped
-            // rather than eaten (see `Granted.Shown`).
-            for (int i = 0; i < _queueCount; i++)
+            // ⛔⛔ THE HEAD RECORD, TAKEN WHETHER OR NOT IT WAS SHOWN, AND THE
+            // ANSWER IS ITS `Shown` FLAG. This is the one line of the class a
+            // review found wrong after it was written, so the reasoning is
+            // recorded rather than trusted to be obvious.
+            //
+            // Events of one burst arrive in the order their rounds were fired
+            // — `ClientEventQueue` orders delivery by tick and, within a tick,
+            // by the `seq` the server assigned — so the k-th event belongs to
+            // the k-th record, full stop. SKIPPING an unmarked record instead
+            // of taking it breaks exactly that correspondence: the first
+            // event would then be answered with the SECOND round's record.
+            // Measured on the shipped numbers: round 1 is granted and its
+            // voice is refused by the SFX gates (unmarked), round 2 is granted
+            // and shown; round 1's event skips past its own record, eats round
+            // 2's, and is suppressed — round 1 goes silent — while round 2's
+            // own event finds nothing and plays a SECOND time. That is a lost
+            // shot and `app-id9` in one input.
+            //
+            // Taking the head answers both: an unmarked head is removed and
+            // reported as `false`, so the round's own event plays it (the
+            // prediction never happened); a marked head is removed and
+            // reported as `true`, so the duplicate is suppressed.
+            if (_queueCount > 0)
             {
-                if (!_queue[i].Shown) continue;
-                RemoveQueuedAt(i);
-                return true;
+                bool shown = _queue[0].Shown;
+                RemoveQueuedAt(0);
+                return shown;
             }
 
             // The keyless path, untouched: a dash's single outstanding
