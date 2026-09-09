@@ -97,11 +97,29 @@ namespace Ring.Simulation.Tests
             // a client that does not interpolate is a server that does not
             // rewind -- and #1 is again the only thing wrong with it.
             // Zero is legal for RewindPictureTicks on both sides of that
-            // sentence: #11 is the only rule in this file that reads the
-            // field, and the builder's rule 12 bounds it from above only (and
+            // sentence: the builder's rule 12 bounds it from above only (and
             // is not on this path at all -- a hand-built SimConfig never
             // passes through SimConfigBuilder).
+            //   A THIRD NUMBER JOINED THE FIXTURE WITH app-88jb Т7, and for the
+            // same reason the second one did: #11 is no longer the only rule
+            // here that reads RewindPictureTicks. #13 asks that the picture
+            // plus Net.RewindSanityTicks reach Arena.RewindCapTicks, and with
+            // the picture at zero the shipped tolerance alone does not reach
+            // the shipped cap -- a second, entirely TRUE violation of a rule
+            // this fixture is not about. The four-field move its neighbor
+            // RewindSanityTicksNegative_IsReported uses cannot help here,
+            // because THIS fixture needs the buffer at zero. So it finishes the
+            // sentence above instead: a server that does not rewind has no
+            // compensation window to cap either. With the cap at zero #13 holds
+            // identically -- any tolerance >= 0 reaches it -- and #1 is again
+            // the only thing wrong here.
+            //   AND THE LOWERED CAP EARNS ITS KEEP TWICE: this is the only
+            // fixture in the file whose Arena.RewindCapTicks is not the shipped
+            // 5, so it is also what refuses a #13 written against a literal cap
+            // -- under that substitution this fixture reports two violations
+            // and AssertOnly fails.
             sim.Arena.RewindPictureTicks = 0;
+            sim.Arena.RewindCapTicks = 0;
 
             AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.InterpBufferTicks");
@@ -532,11 +550,23 @@ namespace Ring.Simulation.Tests
         }
 
         // ==================================================================
-        // Invariant #12 (app-88jb Т29 review round, owner decision 4б):
-        // NetConfig.RewindSanityTicks — the tolerance the server's rewind
-        // sanity check allows itself on top of its own estimate. Below zero
-        // the check does not tighten, it inverts; the rule's own doc carries
-        // the measurement.
+        // Invariants #12 and #13, both about NetConfig.RewindSanityTicks — the
+        // tolerance the server's rewind sanity check allows itself on top of
+        // its own estimate.
+        //   #12 (app-88jb Т29 review round, owner decision 4б) closes the field
+        // at zero from below: under it the check does not tighten, it inverts;
+        // the rule's own doc carries the measurement.
+        //   #13 (app-88jb Т7) states the field's real lower bound against two
+        // SimConfig numbers -- RewindSanityTicks >= Arena.RewindCapTicks -
+        // Arena.RewindPictureTicks -- because below it the server's estimate
+        // sinks under the cap while the client keeps drawing at the cap. It
+        // REVOKED the "zero is always legal" half of #12's doc, which is why
+        // the fixture that asserted that half is gone from this block and
+        // RewindSanityTicksBelowTheFloor_IsReported stands in its place.
+        //   THE TWO SHARE A SUBJECT, so AssertOnly's prefix cannot tell them
+        // apart on its own: every fixture below either keeps one of the two out
+        // of the answer by construction and says how, or names a number only
+        // one of the messages carries.
         // ==================================================================
 
         [Test]
@@ -562,28 +592,96 @@ namespace Ring.Simulation.Tests
             // negative tolerance is a mode at no depth), and this fixture
             // stands on the one where the inversion is visible.
             net.RewindSanityTicks = -4;
+            //   FOUR FIELDS MOVE WITH IT SINCE app-88jb Т7, AND WHY THEY MOVE
+            // AS A FOUR IS THE POINT. Rule #13 asks that
+            // Arena.RewindPictureTicks plus this tolerance reach
+            // Arena.RewindCapTicks, so a negative tolerance on the shipped
+            // picture is TWO violations, while AssertOnly demands exactly one:
+            // a fixture reporting both would be testing two rules and pinning
+            // neither. Raising the picture alone is not available -- #11
+            // requires Net.InterpBufferTicks to name the same number, and #3
+            // and #4 are stated against that in turn -- so the four move
+            // together and as RELATIONSHIPS, the idiom
+            // RewindPictureTicksAndInterpBuffer_MayMoveTogether above
+            // established:
+            //   #13 InterpBufferTicks = RewindCapTicks - RewindSanityTicks -> 9
+            //   #11 RewindPictureTicks == InterpBufferTicks               -> 9
+            //   #3  GhostConfirmTicks > InterpBufferTicks                 -> 10
+            //   #4  LingerTicks >= InterpBufferTicks + 2                  -> 11
+            // The sum is then 9 - 4 = 5, exactly the cap, so #13 is silent and
+            // #12 is the single violation left.
+            //   THE MOVE COSTS SOMETHING, AND IT IS NAMED RATHER THAN HIDDEN:
+            // with the buffer this deep the estimate is 5, not -1, so this
+            // fixture no longer stands on the WRAP the paragraph above
+            // measures. It stands on the other half of #12 -- that a negative
+            // tolerance is a value no band admits at any depth. The wrapping
+            // configuration is unreachable under #13 by arithmetic and not by
+            // taste: the sum has to stay >= the cap, so a sum below zero would
+            // need a cap below zero. What is pinned here is therefore that #12
+            // still answers wherever #13 is satisfied -- a picture deeper than
+            // its own cap, which SimConfigBuilder's rule 12 refuses and a
+            // hand-built SimConfig like this one reaches.
+            net.InterpBufferTicks = sim.Arena.RewindCapTicks - net.RewindSanityTicks;
+            sim.Arena.RewindPictureTicks = net.InterpBufferTicks;
+            net.GhostConfirmTicks = net.InterpBufferTicks + 1;
+            sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;
 
             AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "Net.RewindSanityTicks");
         }
 
         [Test]
-        public void RewindSanityTicksZero_IsLegal()
+        public void RewindSanityTicksBelowTheFloor_IsReported()
         {
             NetConfig net = DefaultNet();
             SimConfig sim = TestConfigs.Default();
-            // Zero is the STRICTEST form of the check, not its absence: the
-            // claim is believed exactly as far as the server's own estimate
-            // reaches and no further. The same argument
-            // `SlewFractionZero_IsLegal` above makes for #7 — a deliberate
-            // mode, not a misconfiguration — and it is the whole reason this
-            // rule reads `>= 0` while its neighbor #9 reads `> 0`. A validator
-            // written by analogy with #9 would refuse the strictest setting the
-            // owner can dial in, and nothing but this line would say so.
-            net.RewindSanityTicks = 0;
+            // ⭐ THIS FIXTURE REPLACES `RewindSanityTicksZero_IsLegal`, WHICH
+            // ASSERTED PRECISELY THE HALF OF #12 THAT app-88jb Т7 REVOKED. Zero
+            // used to be "the strictest setting the field has", the same shape
+            // as #7's "do not slew"; rule #13 puts a floor under the field at
+            // Arena.RewindCapTicks - Arena.RewindPictureTicks, because below it
+            // the server's rewind estimate sinks under the cap while the client
+            // goes on drawing its own shot at the cap -- the picture running
+            // ahead of the judge, 1.75 m of flight per tick of divergence. The
+            // old fixture could not be repaired, only replaced: what it claimed
+            // is now false at the shipped numbers (picture 3, cap 5).
+            //
+            // THE FLOOR IS AN EXPRESSION OVER THE FIXTURE'S OWN FIELDS, never
+            // the number those fields happen to hold today -- this file's
+            // header asks for exactly that, and MayMoveTogether above enforces
+            // the same discipline for #11.
+            int floor = sim.Arena.RewindCapTicks - sim.Arena.RewindPictureTicks;
+            Assert.Greater(floor, 0,
+                "премиса: пол обязан стоять строго выше нуля, иначе `floor - 1` уходит под " +
+                "ноль, отвечает правило #12, и фикстура пинит не тот инвариант");
 
+            // BOTH SIDES OF THE BOUNDARY, the idiom `Boundaries_AreExact` above
+            // uses: one tick below the floor is refused, the floor itself is
+            // silent. Either half alone would be satisfied by a rule off by a
+            // tick in its own direction.
+            net.RewindSanityTicks = floor - 1;
+            string[] errors = NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate);
+            AssertOnly(errors, "Net.RewindSanityTicks");
+            // #12 AND #13 SHARE A SUBJECT, so the prefix alone cannot say which
+            // of the two answered -- the same hole
+            // SceneTickRateDisagreesWithNetConfig_IsReported closes for #6 and
+            // #8. The premise above keeps #12 out of the answer (floor - 1
+            // stays >= 0), and this line proves the message is the one that
+            // weighs the cap: #12's names no cap at all.
+            StringAssert.Contains("RewindCapTicks", errors[0]);
+
+            // At the shipped numbers this second half lands on the same value
+            // RewindSanityTicksShippedTolerance_IsLegal below stands on, and
+            // the two are still different claims -- that one witnesses the
+            // SHIPPED tolerance, this one the COMPUTED floor. Their arithmetic
+            // coincides only while the shipped tolerance sits exactly on the
+            // floor; TheFloorFollowsThePictureDepth_NotAShippedLiteral below
+            // moves the picture so that no fixture can rest on the coincidence.
+            net.RewindSanityTicks = floor;
             CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
-                "нулевой допуск — самая строгая форма проверки, а не ошибка конфигурации");
+                "ровно на полу допуск законен — правило #13 стоит на `>=`, а не на `>`: " +
+                string.Join(" | ",
+                    NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
         }
 
         [Test]
@@ -597,15 +695,69 @@ namespace Ring.Simulation.Tests
             // shipped tolerance fails both, but this one fails NAMING the
             // field, and it asserts the premise the witness rests on instead of
             // leaning on it silently. There is no separate "first legal value"
-            // fixture the way #9 needed `EntityFadeTicksOne_IsLegal`: with the
-            // rule stated as `>= 0` that value is zero, and the case above
-            // already stands on it.
+            // fixture the way #9 needed `EntityFadeTicksOne_IsLegal`, and since
+            // app-88jb Т7 that is true for a second reason rather than the one
+            // written here first: the field's first legal value is no longer
+            // #12's zero but #13's floor, and the case above stands on exactly
+            // that boundary, both sides of it. What this fixture adds is that
+            // the number the project SHIPS is on the legal side — a claim about
+            // the asset, which a fixture computing its own floor cannot make.
             Assert.Greater(net.RewindSanityTicks, 0,
                 "премиса: отгруженный допуск обязан быть строго положительным, иначе эта " +
                 "фикстура повторяет проверку нуля выше и ничего своего не свидетельствует");
 
             CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
                 "отгруженный допуск обязан быть законным: " + string.Join(" | ",
+                    NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
+        }
+
+        [Test]
+        public void TheFloorFollowsThePictureDepth_NotAShippedLiteral()
+        {
+            NetConfig net = DefaultNet();
+            SimConfig sim = TestConfigs.Default();
+            // ⭐ #13 HAS TWO SUMMANDS AND THE SECOND ONE NEEDS A WITNESS OF ITS
+            // OWN. Every other fixture in this file leaves
+            // Arena.RewindPictureTicks at the shipped 3, so the substitution
+            //     net.RewindSanityTicks < sim.Arena.RewindCapTicks - 3
+            // -- a shipped literal where the picture depth belongs -- survives
+            // all of them; checked case by case rather than assumed, and it is
+            // exactly the class of defect this project has already paid for.
+            // This fixture moves the picture OFF that value and demands the
+            // floor move with it: under the literal the floor would stay at 2
+            // while the real one drops to 1, so the legal half below fails
+            // there and only there.
+            //
+            // THE PAIR MOVES AS A FOUR, the idiom
+            // RewindPictureTicksAndInterpBuffer_MayMoveTogether above
+            // established: #11 ties the picture to Net.InterpBufferTicks, and
+            // #3 and #4 are stated against that in turn, so moving one field
+            // alone would report three violations and pin none of them. THE
+            // PICTURE IS RAISED RATHER THAN LOWERED because that direction is
+            // the retune the rules' own docs name -- a lossier network wants a
+            // deeper buffer -- and because it keeps every neighbor clear of #1
+            // and inside the [Range] band an operator could really dial in.
+            // Either direction would kill the literal; this one describes a
+            // configuration somebody would actually ask for.
+            int picture = sim.Arena.RewindPictureTicks + 1;
+            int floor = sim.Arena.RewindCapTicks - picture;
+            Assert.Greater(floor, 0,
+                "премиса: пол при поднятой картинке обязан остаться строго выше нуля, иначе " +
+                "`floor - 1` уходит под ноль и отвечает правило #12, а не #13");
+
+            net.InterpBufferTicks = picture;
+            sim.Arena.RewindPictureTicks = picture;
+            net.GhostConfirmTicks = net.InterpBufferTicks + 1;
+            sim.Visibility.LingerTicks = net.InterpBufferTicks + 2;
+
+            net.RewindSanityTicks = floor - 1;
+            AssertOnly(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "Net.RewindSanityTicks");
+
+            net.RewindSanityTicks = floor;
+            CollectionAssert.IsEmpty(NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate),
+                "пол уехал вместе с глубиной картинки — #13 обязан читать " +
+                "Arena.RewindPictureTicks, а не отгруженную тройку: " + string.Join(" | ",
                     NetInvariants.Validate(net, in sim, FittingMtu(net), net.TickRate)));
         }
     }

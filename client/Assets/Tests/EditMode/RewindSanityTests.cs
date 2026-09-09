@@ -170,9 +170,19 @@ namespace Ring.Simulation.Tests
             // cannot come out green by accident.
             //
             // ⚠ AND UNLIKE `claimed: 7` ABOVE, THIS INPUT IS REACHABLE: a
-            // picture buffer of 2 is a legal tuning (rule #11 only asks that
-            // Net.InterpBufferTicks name the same number), so nothing here is a
-            // contract-only fixture.
+            // picture buffer of 2 is a legal tuning, so nothing here is a
+            // contract-only fixture. WHAT IT COSTS ELSEWHERE IN THE CONFIG WAS
+            // RESTATED BY app-88jb Т7, and the earlier wording of this sentence
+            // -- "rule #11 only asks that Net.InterpBufferTicks name the same
+            // number" -- is no longer the whole story: NetInvariants rule #13
+            // now also asks that `Arena.RewindPictureTicks +
+            // Net.RewindSanityTicks >= Arena.RewindCapTicks`, so a picture of 2
+            // is legal only where the tolerance carries the remainder -- 4 at
+            // this fixture's own `capTicks: 6`, 3 at the cap of 5 the shipped
+            // asset holds, both inside the field's own [Range(0, 6)]. The
+            // arguments below are a FUNCTION fixture and not a configuration
+            // claim either way, exactly as the `capTicks: 6` note above already
+            // records for all five cases in this file.
             Assert.AreEqual((byte)4, MatchServer.SanitizedRewindDepth(
                     claimed: 6, roundTripMs: 0f, sanityTicks: 2, capTicks: 6,
                     pictureTicks: 2),

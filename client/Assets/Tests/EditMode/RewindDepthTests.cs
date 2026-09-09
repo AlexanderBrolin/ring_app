@@ -41,6 +41,26 @@ namespace Ring.Simulation.Tests
     /// actually leaves the process.
     public class RewindDepthTests
     {
+        /// THE ARENA CAP THE `DrawDepth` CASES BELOW HAND OVER, AND WHY IT IS
+        /// A LOCAL NUMBER RATHER THAN A CONFIG READ. `Arena.RewindCapTicks` is
+        /// a balance value whose single home is the shipped tuning; here it is
+        /// simply a PARAMETER of the function under test, so the cases stay
+        /// what the rest of this file is — arithmetic over given numbers. The
+        /// value mirrors the shipped tuning only so the sums below read like
+        /// the ones a real match produces; nothing here breaks if it moves.
+        ///
+        /// ⚠ AND BECAUSE IT DOES MIRROR THE SHIPPED NUMBER, IT CANNOT BE THE
+        /// ONLY CAP THIS FILE EVER HANDS OVER — see
+        /// `TheArenaCapComesFromItsParameter_NotAShippedLiteral` at the foot of
+        /// the file, which stands on a DIFFERENT cap for exactly that reason.
+        const int ArenaCapTicks = 5;
+
+        /// The cap that off-shipped case hands over. Legal tuning rather than
+        /// an invented number: the invariant behind the clamp asks only that
+        /// the rewind picture plus the sanity tolerance reach the cap, and the
+        /// shipped 3 + 2 reaches four as comfortably as it reaches five.
+        const int OffShippedCapTicks = 4;
+
         [Test]
         public void NoReconcileYet_LeavesOnlyTheInterpolationLag()
         {
@@ -161,6 +181,126 @@ namespace Ring.Simulation.Tests
                     hasNewestTick: false, newestTick: 0,
                     clockPlaced: false, renderTick: 0),
                 "клиент, не видевший ни снапшота, ни реконсиляции, обязан заявлять нулевую глубину");
+        }
+
+        [Test]
+        public void ADepthDeeperThanTheArenaCap_IsClampedForTheDrawing()
+        {
+            // WHY THIS CASE EXISTS. The picture was drawn on the MEASURED
+            // depth, whose only ceiling belongs to the wire, while the server
+            // judges the shot against the arena cap. Two ticks of disagreement
+            // is about three and a half meters of round travel: the effect
+            // showed up farther along the trajectory than the server ever
+            // looked. `DrawDepth` is the one place the arena cap reaches the
+            // drawing, and this case pins that it actually bites.
+            byte measured = InputCodec.MaxRewindTicksOnWire;
+            Assert.Greater((int)measured, ArenaCapTicks,
+                "премисса теста: измеренная глубина обязана стоять глубже капа арены, иначе клампить нечего");
+
+            Assert.AreEqual((byte)ArenaCapTicks, RewindDepthMeter.DrawDepth(measured, ArenaCapTicks),
+                "картинка обязана рисоваться по капу арены, а не по необрезанной измеренной глубине");
+        }
+
+        [Test]
+        public void TheClaimOnTheWire_OutrunsTheArenaCap()
+        {
+            // A GUARD RATHER THAN A WITNESS OF NEW BEHAVIOR (ruling 374),
+            // and it says something the saturation case above it does not.
+            // That neighbor pins WHERE the claim saturates; this one pins the
+            // RELATION that keeps the drawing's clamp invisible to the wire —
+            // the wire's ceiling stands ABOVE the arena cap, so a claim that
+            // saturated on it demonstrably was not pre-clamped to the arena's
+            // number. A client that pre-clamps can never show the server's own
+            // sanity check an inflated depth, and that check is the point of
+            // sending the claim at all.
+            Assert.Greater((int)InputCodec.MaxRewindTicksOnWire, ArenaCapTicks,
+                "премисса теста: проводной потолок обязан стоять выше капа арены — иначе завышенную заявку показать не на чем");
+
+            byte claimed = RewindDepthMeter.Measure(
+                localTick: 10000, lastReconciledTick: 1,
+                hasNewestTick: true, newestTick: 100,
+                clockPlaced: true, renderTick: 97);
+            Assert.Greater((int)claimed, ArenaCapTicks,
+                "заявка на проводе обязана оставаться глубже капа арены — кламп картинки в неё не протекает");
+        }
+
+        [Test]
+        public void TheDrawTick_IsTheRenderTickPlusTheClampedDepth()
+        {
+            // ONE HOME FOR BOTH CONSUMERS. The tracer and the impact — its
+            // spark, its sound, its recoil — are halves of one event, and a
+            // clamp applied to only one of them would split those halves by
+            // two ticks: the consequence would be shown before the round got
+            // there. Neither consumer is reachable from EditMode (both are
+            // private lines of a class whose constructor wants a live
+            // `NetworkManager`), so the expression they share is pinned here.
+            // It takes the MEASURED depth and the cap rather than a ready-made
+            // draw depth, which is what makes an unclamped number impossible
+            // to pass in.
+            const int renderTick = 10;
+            byte measured = InputCodec.MaxRewindTicksOnWire;
+            Assert.Greater((int)measured, ArenaCapTicks,
+                "премисса теста: измеренная глубина обязана стоять глубже капа, иначе кламп в сумме не виден");
+
+            // The expectation is arithmetic performed here, not a second call
+            // to the function under test: render tick plus the depth the cap
+            // allows.
+            double expectedDrawTick = renderTick + (double)ArenaCapTicks;
+            Assert.AreEqual((int)expectedDrawTick,
+                RewindDepthMeter.DrawTickFor(renderTick, measured, ArenaCapTicks),
+                "тик отрисовки обязан складывать рендер-тик с капнутой глубиной, а не с необрезанной");
+        }
+
+        [Test]
+        public void ADepthInsideTheArenaCap_IsDrawnUnchanged()
+        {
+            // THE OTHER BRANCH, AND THE ONLY WITNESS AGAINST A CLAMP THAT
+            // ALWAYS ANSWERS WITH THE CAP. Ordinary shots are measured well
+            // inside the arena's number, and a `DrawDepth` that returned the
+            // cap regardless would push every one of them deeper than the
+            // server looked — the same defect this task removes, mirrored.
+            // The depth is derived from the cap rather than written as its own
+            // number so that the case keeps its meaning if the cap moves.
+            byte measured = (byte)(ArenaCapTicks - 2);
+            Assert.Less((int)measured, ArenaCapTicks,
+                "премисса теста: глубина обязана стоять внутри капа, иначе тест проверял бы кламп, а не проход");
+
+            Assert.AreEqual(measured, RewindDepthMeter.DrawDepth(measured, ArenaCapTicks),
+                "глубина внутри капа обязана доезжать до картинки без изменения");
+        }
+
+        [Test]
+        public void TheArenaCapComesFromItsParameter_NotAShippedLiteral()
+        {
+            // ⭐ WHY THIS CASE EXISTS: WITHOUT IT THE CAP COULD BE A SHIPPED
+            // LITERAL AND EVERY CASE ABOVE WOULD STAY GREEN. All of them hand
+            // over the shipped five, so the substitution "clamp to five and
+            // ignore the argument" survives each one — checked case by case
+            // rather than assumed: their answers stay 5, 15 and 3. A parameter
+            // made mandatory to keep a caller from forgetting it is still a
+            // parameter nothing observes until some case moves it (the lesson
+            // the predicted-shot log paid for one task ago), and the same
+            // guard stands beside the server's own rewind estimate for the
+            // same reason.
+            //
+            // BOTH ENTRY POINTS ARE PINNED, because the clamp has two doors:
+            // a `DrawTickFor` that passed a literal of its own would clamp
+            // correctly and still answer the wrong tick.
+            byte measured = InputCodec.MaxRewindTicksOnWire;
+            Assert.AreNotEqual(ArenaCapTicks, OffShippedCapTicks,
+                "премисса теста: этот случай обязан стоять на ДРУГОМ капе, иначе он повторяет соседей");
+            Assert.Greater((int)measured, OffShippedCapTicks,
+                "премисса теста: измеренная глубина обязана стоять глубже этого капа, иначе клампить нечего");
+
+            Assert.AreEqual((byte)OffShippedCapTicks,
+                RewindDepthMeter.DrawDepth(measured, OffShippedCapTicks),
+                "кламп обязан читать кап из параметра, а не из отгруженного числа");
+
+            const int renderTick = 10;
+            double expectedDrawTick = renderTick + (double)OffShippedCapTicks;
+            Assert.AreEqual((int)expectedDrawTick,
+                RewindDepthMeter.DrawTickFor(renderTick, measured, OffShippedCapTicks),
+                "тик отрисовки обязан читать тот же параметр, а не собственный литерал");
         }
     }
 }

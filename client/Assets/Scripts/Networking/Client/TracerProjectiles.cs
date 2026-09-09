@@ -642,8 +642,10 @@ namespace Ring.Networking.Client
         ///     (`ClientMatchReset.ResetForEpoch` calls `Reset`), leaving no
         ///     cache to rewind.
         ///     WHAT DOES MOVE THE TARGET BACK IS THE OTHER SUMMAND. The caller
-        ///     asks about `renderTick + _rewindDepth`
-        ///     (`NetworkSimBackend.Advance`), and the latched depth SHRINKS —
+        ///     asks about the render tick plus the latched rewind depth, the
+        ///     latter trimmed to the arena cap since app-88jb Т7
+        ///     (`RewindDepthMeter.DrawTickFor`, called from
+        ///     `NetworkSimBackend.Advance`), and that depth SHRINKS —
         ///     it is re-measured on the prediction tick, 30 Hz, while this is
         ///     asked on the render frame, 60+ Hz, so most frames carry a
         ///     `renderTick` that did not move and a depth that may have. One

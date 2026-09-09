@@ -465,6 +465,14 @@ namespace Ring.Data
         /// function of (state, input, tick) and break CRITICAL RULE 2. The
         /// two numbers being EQUAL is a written invariant with its own home,
         /// Networking/NetInvariants.cs, not a duplicated field.
+        ///
+        /// ⚠ AND THAT HOME HOLDS A SECOND RULE ABOUT THIS FIELD SINCE
+        /// app-88jb Т7: together with NetConfig.RewindSanityTicks it must reach
+        /// RewindCapTicks (rule #13), because the client draws its own shot at
+        /// the cap and the server's estimate is built from this number. Lower
+        /// this one alone and the judge starts trimming deeper than the picture
+        /// showed -- so it is bounded from BELOW by that rule as well as from
+        /// above by the builder's cap check.
         [Range(0, 16)] public int RewindPictureTicks = 3;   // sync-marker key — keep LAST (was RelaxIterations, app-88jb Т22)
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.

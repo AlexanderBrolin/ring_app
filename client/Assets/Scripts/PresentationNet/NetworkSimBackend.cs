@@ -327,8 +327,9 @@ namespace Ring.Presentation.Net
 
         /// app-88jb Т32 (spec §3.8, coordinator Ruling 286): the rewind depth
         /// LATCHED on the prediction tick that measured it, so a render frame
-        /// can name the PREDICTED tick — `renderTick + this` — without asking
-        /// the question a second time.
+        /// can name the PREDICTED tick — `RewindDepthMeter.DrawTickFor` over
+        /// this and the arena cap, since app-88jb Т7 — without asking the
+        /// question a second time.
         ///
         /// LATCHED, NOT RE-MEASURED ON THE FRAME, for three reasons and none
         /// of them is cost. (1) `MeasureRewindTicks` is the one home of "which
@@ -348,15 +349,26 @@ namespace Ring.Presentation.Net
         /// ⛔ AND THAT ZERO IS THIS PROCESS'S FIRST MATCH ONLY. `SyncMatchEpoch`
         /// clears six things keyed to the epoch and deliberately does NOT clear
         /// this one, so the opening frames of a RESTART carry the depth the
-        /// previous match latched. It is harmless today and only today, for one
-        /// reason worth naming rather than rediscovering: the one consumer is
-        /// `predictedTick`, and the table it addresses has just been emptied on
-        /// the same event (`ClientMatchReset.ResetForEpoch` calls
-        /// `TracerProjectiles.Reset`), so a stale depth asks about a tick no
-        /// round is tracked at. The next consumer of this field — anything that
-        /// survives an epoch — would inherit the carry-over as a defect, and
-        /// the honest fix then is a line in `SyncMatchEpoch`, not a second
-        /// reader that re-measures.
+        /// previous match latched. It is harmless today, and the reason is
+        /// worth naming rather than rediscovering — the more so because the
+        /// readers have grown past one. Three read this field: the claim that
+        /// rides out on the wire, and BOTH picture sites — `predictedTick` for
+        /// the tracers and `impactTick` for the spark with its sound and its
+        /// recoil. The two picture sites reach the field through
+        /// `RewindDepthMeter.DrawTickFor` since app-88jb Т7, so what they draw
+        /// on is the depth the SERVER judges by rather than the raw
+        /// measurement; that clamp changes the number, not its provenance, and
+        /// a stale measurement still reaches the screen through it.
+        /// ⚠ THE CARRY-OVER IS SAFE FOR A REASON, NOT BY LUCK, AND THE REASON
+        /// COVERS BOTH SITES: each addresses a table the same event has just
+        /// emptied — `ClientMatchReset.ResetForEpoch` calls
+        /// `TracerProjectiles.Reset`, and `SyncMatchEpoch` itself resets
+        /// `_impactEvents` — so a stale depth asks about a tick at which
+        /// nothing whatever is tracked. It stays safe only while that holds:
+        /// give this field a reader whose data SURVIVES an epoch and the
+        /// carry-over becomes a defect that reader inherits, and the honest fix
+        /// then is a line in `SyncMatchEpoch`, not a second reader that
+        /// re-measures.
         byte _rewindDepth;
 
         float _alpha;
@@ -1541,19 +1553,35 @@ namespace Ring.Presentation.Net
                 // `renderTick` and the drawn position stays a function of the
                 // render clock, i.e. nothing on screen changes at all.
                 //
+                // ⛔ AND ON THE DEPTH THE SERVER JUDGES BY, NOT ON THE ONE THIS
+                // CLIENT MEASURED (app-88jb Т7, spec §3.6). The measured depth
+                // saturates on the wire's ceiling of seven, while the shot is
+                // judged against `Arena.RewindCapTicks` — so drawing on the
+                // raw measurement put the round up to two ticks, about three
+                // and a half meters of travel, past the point the server ever
+                // looked at. `RewindDepthMeter.DrawTickFor` applies that cap;
+                // the claim riding out on the wire stays UNCLAMPED, which is a
+                // separate decision with its own reasons (ruling 374, stated
+                // where the clamp lives). The tick comes from that function
+                // rather than from a sum written here because the impact site
+                // in `DrainDueEvents` needs the very same number: two spellings
+                // would let a later edit clamp one half of an event and leave
+                // the other where it was.
+                //
                 // ⚠ AND THE PRICE IS PAID HERE, SO IT IS WRITTEN HERE. Every
                 // OTHER body in the picture — mobs, other collectors — is
                 // interpolated on the render clock, so from this line on the
                 // bullet flies AHEAD of them: the spark of a hit on a mob lags
-                // the bullet's passage by the depth, about five ticks (~170 ms)
-                // at 80 ms RTT. That is the mirror image of the already
-                // accepted "the bullet is ahead of the barrel" edge, it was
-                // taken with the price named, and it belongs to the В3
+                // the bullet's passage by the depth, at most five ticks
+                // (~170 ms) at the shipped cap. That is the mirror image of the
+                // already accepted "the bullet is ahead of the barrel" edge, it
+                // was taken with the price named, and it belongs to the В3
                 // expectations rather than to a future bug list. The one thing
                 // it is NOT is an argument for putting the tracers back on the
                 // render clock: there they lag their own shooter instead, which
                 // is the artifact that has a body's own hand on it.
-                int predictedTick = renderTick + _rewindDepth;
+                int predictedTick = RewindDepthMeter.DrawTickFor(
+                    renderTick, _rewindDepth, _cfg.Arena.RewindCapTicks);
 
                 // ONCE PER FRAME AND BEFORE BOTH WRITES, which is the cache's
                 // own rule (`TracerProjectiles.StepTo`): `WriteInto` mutates
@@ -3127,12 +3155,20 @@ namespace Ring.Presentation.Net
             _ownDamage.Clear();
 
             // ADR-002 A28б: the round's own consequences are due when the ROUND
-            // reaches them, and the round is drawn `_rewindDepth` ticks ahead of
-            // the render clock (`predictedTick` in the tracer block above). The
-            // expression is repeated rather than hoisted because the tracer's
-            // copy lives inside the render-pair branch, which a frame is free
-            // to skip -- and a frame that showed no new picture must still be
-            // able to hand over an impact that came due.
+            // reaches them, and the round is drawn ahead of the render clock by
+            // the depth the SERVER judges on (`predictedTick` in the tracer
+            // block above, and the same call). The call is made a second time
+            // rather than hoisted because the tracer's copy lives inside the
+            // render-pair branch, which a frame is free to skip -- and a frame
+            // that showed no new picture must still be able to hand over an
+            // impact that came due.
+            //
+            // ⛔ A SECOND CALL, NOT A SECOND EXPRESSION (app-88jb Т7). Both
+            // sites go through `RewindDepthMeter.DrawTickFor` and hand it the
+            // measured depth together with the cap, so neither can be left
+            // drawing on an unclamped number while the other is corrected: the
+            // halves of one event would then sit two ticks apart, the very
+            // split A28б exists to close.
             //
             // WHY NOT THE RENDER CLOCK, WHICH IS WHERE THESE USED TO GO. The
             // player's eye follows the round. Under 80 ms the round arrives at
@@ -3142,7 +3178,8 @@ namespace Ring.Presentation.Net
             // that in a burst they queued up and read as belonging to later
             // shots, which is what the owner reported at В4 ("sparks are not
             // visible at all, or visible at the end of the spray").
-            int impactTick = renderTick + _rewindDepth;
+            int impactTick = RewindDepthMeter.DrawTickFor(
+                renderTick, _rewindDepth, _cfg.Arena.RewindCapTicks);
             while (_frameEventCount < _frameEvents.Length
                    && _impactEvents.TryDequeue(impactTick, out SimEvent impact))
             {
@@ -3869,6 +3906,13 @@ namespace Ring.Presentation.Net
     /// sanitizer's `min` lands on the cap either way. It was not free of COST:
     /// a client that pre-clamps can never show a server-side sanity check an
     /// inflated claim, and that check is the point of Р374 (Т29).
+    ///   ⚠ AND `DrawDepth` BELOW IS NOT A RETRACTION OF THAT PARAGRAPH, WHICH
+    /// A READER MEETING BOTH IN ONE TYPE IS OWED (app-88jb Т7). It does apply
+    /// `Arena.RewindCapTicks` — to the depth the PICTURE is drawn on, a number
+    /// that never leaves this process. The claim `Measure` answers is the one
+    /// that rides the wire, and it is still handed over unclamped, so the
+    /// server-side check still sees what this client really asked for. Two
+    /// questions, two answers; the sentence above governs the one that travels.
     ///
     /// ⚠ WHAT THIS FUNCTION CANNOT ANSWER, AND THE PROJECT HAS ALREADY PAID
     /// FOR THE OMISSION (fix-round A, ruling 164; review finding A-REV-1,
@@ -3910,5 +3954,78 @@ namespace Ring.Presentation.Net
                 ? InputCodec.MaxRewindTicksOnWire
                 : (byte)depth;
         }
+
+        /// THE DEPTH THE PICTURE IS DRAWN ON, which is not the depth the claim
+        /// carries: the claim stays unclamped on purpose (ruling 374), and the
+        /// arena cap belongs to the drawing alone.
+        ///
+        /// ⛔ THE CLAMP LANDS ON THE PICTURE AND NEVER ON THE CLAIM, AND THAT
+        /// ASYMMETRY IS THE MECHANISM RATHER THAN AN OVERSIGHT (ruling 374).
+        /// A client that pre-clamps can never show the server's own sanity
+        /// check an inflated claim, and that check is the whole point of
+        /// sending a claim at all — so the number that leaves this process
+        /// keeps the wire's ceiling (`Measure` saturates at
+        /// `InputCodec.MaxRewindTicksOnWire`, and the paragraph above this
+        /// class says why the arena cap is absent there), while the number the
+        /// eye is shown keeps the arena's. Read the two together: they are one
+        /// decision written in two places because they answer two questions.
+        ///
+        /// ⭐ AND THE CLAMP IS EXACT, NOT APPROXIMATE — taken from the judge's
+        /// own source rather than inferred from its shape.
+        /// `MatchServer.SanitizedRewindDepth` builds
+        /// `estimate = TicksFromSeconds(rtt / 2) + pictureTicks + sanityTicks`
+        /// and answers `min(claimed, min(estimate, capTicks))`. At the shipped
+        /// `picture 3 + sanity 2 = 5 = cap`, that estimate stands at or above
+        /// the cap for EVERY round trip time, zero included, because the first
+        /// term is never negative — so the inner minimum is the cap and the
+        /// judge reduces to `min(claimed, cap)`, which is this line, tick for
+        /// tick. Not "close enough for a picture": the same number.
+        ///
+        /// ⛔ AND THE EQUALITY RESTS ON EXACTLY ONE CONDITION,
+        /// `RewindPictureTicks + RewindSanityTicks >= RewindCapTicks`, which is
+        /// `NetInvariants` rule #13 and which `ServerBootstrap` fails the
+        /// process on like any other violation. Let either term fall below that
+        /// line and the judge's estimate drops under the cap while this clamp
+        /// does not follow it down — the picture outruns the shot again, which
+        /// is the defect this function exists to remove.
+        ///
+        /// ⛔ A NEGATIVE CAP IS NAMED HERE AND NOT GUARDED AGAINST, exactly as
+        /// `SanitizedRewindDepth` names its own two parameters instead of
+        /// clamping them: hand this a cap below zero and the `(byte)` cast
+        /// wraps, and the answer is nonsense rather than a small error. The cap
+        /// has a written home upstream — `SimConfigBuilder`'s validation
+        /// refuses an `Arena.RewindCapTicks` below 1 (and above the 200 ms of
+        /// CRITICAL RULE 5), and rule #13 now bounds it from the other side —
+        /// and with a written home upstream, a second answer here would be the
+        /// duplication ruling 139 refuses.
+        public static byte DrawDepth(byte measured, int capTicks)
+            // `Unity.Mathematics.math.min`, the idiom the judge's own clamp and
+            // `SimInputSanitizer.Sanitize` both apply to this same field. The
+            // `(int)` cast on `measured` is for the reader rather than the
+            // compiler — overload resolution picks min(int, int) either way.
+            => (byte)math.min((int)measured, capTicks);
+
+        /// THE TICK ON WHICH THE CONSEQUENCE OF A SHOT IS SHOWN — the tracer
+        /// and, for the same round, the spark with its sound and its recoil.
+        /// One expression with one home: a clamp applied to only one of the
+        /// two would split the halves of a single event by as many ticks as
+        /// the clamp removes.
+        ///
+        /// ⛔⛔ IT TAKES THE MEASURED DEPTH AND THE CAP RATHER THAN A READY-MADE
+        /// DRAW DEPTH, and that signature is the point of the function. The
+        /// shape `DrawTickFor(renderTick, drawDepth)` would lift out the
+        /// ADDITION, while the way this can go wrong lives in the CHOICE OF
+        /// ARGUMENT — "hand the unclamped depth in at one of the two sites and
+        /// the clamped one at the other". Taking two numbers instead makes the
+        /// unclamped depth unpassable: there is no argument to get wrong.
+        ///
+        /// ⚠ THERE IS DELIBERATELY NO `_drawDepth` FIELD BESIDE `_rewindDepth`
+        /// IN THE BACKEND — the clamped depth's home is `DrawDepth` and the
+        /// sum's home is this function, and both call sites reach them through
+        /// this one door. A field would have no reader left (the backend's
+        /// three readings of `_rewindDepth` are the wire claim and these two
+        /// sites), and a field nothing reads is not a home, it is dead weight.
+        public static int DrawTickFor(int renderTick, byte measured, int capTicks)
+            => renderTick + DrawDepth(measured, capTicks);
     }
 }

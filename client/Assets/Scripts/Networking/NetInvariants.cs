@@ -338,8 +338,11 @@ namespace Ring.Networking
             // duration number, and the one nothing implemented until this
             // gate. Its home is here because Р72 says only the nodes that see
             // BOTH configs may state a rule spanning them, and this validator
-            // is exactly that node — `ServerBootstrap` and `NetworkSimBackend`
-            // are its only callers.
+            // is exactly that node — and `ServerBootstrap` is its only caller.
+            // (An earlier wording named `NetworkSimBackend` beside it. MEASURED
+            // in app-88jb Т7: that file does not mention this class once, and a
+            // doc naming a caller that does not exist sends the next reader
+            // hunting for a second call site to keep in step with this one.)
             //
             // WHAT IT REFUSES IS A CONFIGURATION NOBODY CAN WIN, NOT A LATE
             // GAMBLE. Р300 is explicit that a collector who enters the core
@@ -443,12 +446,38 @@ namespace Ring.Networking
             // made for `Arena.RewindPictureTicks`, which rule #11 holds rather
             // than a clamp of its own. This rule is that home.
             //
-            // ZERO STAYS LEGAL, AND IT IS THE STRICTEST SETTING THE FIELD HAS,
-            // not the absence of a setting: no tolerance at all, the claim
-            // believed only as far as the server's own estimate reaches. Same
-            // shape as #7's zero, which means "do not slew" and is a deliberate
-            // mode rather than a misconfiguration — which is why the rule below
-            // is stated `>= 0` and not `> 0` the way #9's is.
+            // ⛔ ZERO NO LONGER STAYS LEGAL EVERYWHERE, AND THIS PARAGRAPH IS
+            // THE REVOCATION (app-88jb Т7). It used to read "ZERO STAYS LEGAL,
+            // AND IT IS THE STRICTEST SETTING THE FIELD HAS" — no tolerance at
+            // all, the claim believed only as far as the server's own estimate
+            // reaches, the same shape as #7's zero, which means "do not slew"
+            // and is a deliberate mode rather than a misconfiguration. Rule #13
+            // below takes that half away: it states a SECOND floor under the
+            // same field, `RewindSanityTicks >= Arena.RewindCapTicks -
+            // Arena.RewindPictureTicks`, because under it the server's estimate
+            // sinks beneath the cap the client draws its own shot at. At the
+            // shipped picture of 3 against a cap of 5 that floor is 2 — the
+            // shipped tolerance exactly — so zero and one are now REFUSED, by
+            // #13 and not by this rule. Zero survives only where the picture
+            // alone already reaches the cap, which on any `SimConfig` that came
+            // through `SimConfigBuilder` (its rule 12 bounds
+            // `Arena.RewindPictureTicks` above by `Arena.RewindCapTicks`) means
+            // exactly `RewindPictureTicks == RewindCapTicks`. THE LOWER BOUND
+            // OF THIS FIELD IS #13's, NOT THIS RULE'S — do not "restore" the
+            // revoked sentence by reading the one-sided form below as the whole
+            // domain.
+            //   THE RULE IS STILL STATED `>= 0` AND NOT `> 0` the way #9's is,
+            // and that is not a leftover of the revoked half. It is one-sided
+            // at zero because what it refuses is the INVERSION the paragraphs
+            // above measure, and the shallower negatives with it — a diagnosis
+            // #13 cannot give, since "below the floor" says nothing about a sum
+            // that wraps. It also reads nothing from `SimConfig`, so it is the
+            // only rule that answers for a hand-built config whose picture
+            // exceeds its cap: a shape `SimConfigBuilder` refuses but this
+            // validator can still be handed, and the one the #12 fixture in
+            // `NetInvariantsTests` has to dial in now that #13 exists. On a
+            // config that DID come through the builder, `picture <= cap` makes
+            // every negative tolerance trip both rules at once.
             //
             // NO CEILING, DELIBERATELY, and by a DIFFERENT argument from #9's.
             // A tolerance above the rewind cap breaks nothing downstream: it
@@ -468,6 +497,56 @@ namespace Ring.Networking
             {
                 errors.Add("Net.RewindSanityTicks must be >= 0 " +
                     $"(got RewindSanityTicks={net.RewindSanityTicks}).");
+            }
+
+            // #13 (app-88jb Т7; spec §3.6). THE PICTURE MAY NOT RUN AHEAD OF
+            // THE JUDGE. Т7 clamps the depth the client DRAWS its own shot at
+            // to `min(measured, Arena.RewindCapTicks)`, while the server judges
+            // `min(claimed, min(estimate, capTicks))` with
+            //     estimate = TicksFromSeconds(rtt / 2)
+            //              + Arena.RewindPictureTicks + Net.RewindSanityTicks
+            // (`MatchServer.SanitizedRewindDepth`). The two numbers coincide
+            // EXACTLY — not approximately — for as long as `estimate` reaches
+            // the cap at every round trip; the first term is >= 0 at any
+            // RTT >= 0, so that reduces to the rule below: the picture and the
+            // tolerance must reach the cap on their own.
+            //
+            // WHAT BREAKS THE MOMENT THEY DO NOT. Drop either summand and
+            // `estimate` falls under the cap, so the judge starts trimming
+            // deeper than the client drew, and the shooter watches his own shot
+            // resolved against a world the server never rewound to — the very
+            // error lag compensation exists to remove, reintroduced by
+            // configuration, exactly as in #11. MEASURED, not feared: a round
+            // covers `ProjectileSpeed` 52.5 m/s * `TickDt` = 1.75 m per tick,
+            // so the two ticks between the shipped floor and a tolerance of
+            // zero are 3.5 m of divergence between what was drawn and what was
+            // decided. And silent in the same way #11's drift is silent — both
+            // sides go on answering plausible tick counts.
+            //
+            // IT IS NOT A DUPLICATE OF THE `[Range]` AND NOT A SECOND HOME FOR
+            // ANY OF THE THREE NUMBERS (Р115, ruling 139) — the argument #11 and
+            // #12 already make. A rule tying `NetConfig.RewindSanityTicks` to
+            // two `SimConfig` fields can be stated in no other node: `NetConfig`
+            // never enters `SimConfig` (Р52), so neither asset's own validator
+            // ever sees both sides, and no attribute can express "at least that
+            // other field minus that third one".
+            //
+            // THE SUBJECT IS THE TOLERANCE, and the message opens with it:
+            // `Arena.RewindCapTicks` is the compensation window the design
+            // fixes, `Arena.RewindPictureTicks` is already pinned by #11 to the
+            // buffer the client renders behind, so `Net.RewindSanityTicks` is
+            // the free number of the three and this rule is what narrows its
+            // domain to `>= RewindCapTicks - RewindPictureTicks`. That floor
+            // REVOKES half of #12's doc above, which says so in place rather
+            // than being left to contradict this rule.
+            if (sim.Arena.RewindPictureTicks + net.RewindSanityTicks < sim.Arena.RewindCapTicks)
+            {
+                errors.Add("Net.RewindSanityTicks must be >= Arena.RewindCapTicks - "
+                    + "Arena.RewindPictureTicks — below that the server's rewind estimate "
+                    + "sinks under the cap and judges shallower than the client drew (got "
+                    + $"RewindSanityTicks={net.RewindSanityTicks}, "
+                    + $"RewindPictureTicks={sim.Arena.RewindPictureTicks}, "
+                    + $"RewindCapTicks={sim.Arena.RewindCapTicks}).");
             }
 
             return errors.ToArray();

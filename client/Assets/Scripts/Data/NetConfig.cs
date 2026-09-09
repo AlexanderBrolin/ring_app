@@ -318,6 +318,15 @@ namespace Ring.Data
         // want of a plan). ABOVE the band there is still no guard, and
         // deliberately: a tolerance past the cap only switches the check off,
         // which is the mode the paragraph two up already states.
+        // ⛔ AND SINCE app-88jb Т7 RULE #12 IS NOT THE WHOLE FLOOR. Rule #13 of
+        // the same validator states the binding one — this field must reach
+        // Arena.RewindCapTicks together with Arena.RewindPictureTicks — because
+        // the client now DRAWS its own shot at the cap, and an estimate that
+        // sinks below the cap makes the server judge shallower than the picture
+        // showed. At the shipped picture of 3 against a cap of 5 the floor is 2,
+        // which is this default: zero and one are refused, and the "zero is the
+        // strictest setting" reading that #12's doc used to carry was revoked
+        // there in place.
         [Range(0, 6)] public int RewindSanityTicks = 2;
 
         // app-88jb Т32 (spec §3.8, coordinator Rulings 295/305): how many
