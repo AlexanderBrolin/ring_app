@@ -266,18 +266,27 @@ namespace Ring.Data
         // earlier cap of 6 it was three (6 - 3). PvP is switched on, so that
         // slack is paid for by the collector who gets shot.
         //
-        // BOTH ENDS OF THE RANGE ARE MODES, NOT MISTAKES, which is why neither
-        // is excluded. 0 is the STRICTEST form of the check — no tolerance at
-        // all, the claim believed only as far as the estimate itself reaches —
-        // and emphatically not "the check switched off". 5, the shipped rewind
-        // cap, is the opposite end: at that tolerance the estimate can never
-        // fall below the cap whatever the other two terms are, so the minimum
-        // is always the cap or the claim and the check trims nothing ever
-        // again. That is a deliberate mode too. The [Range] ceiling of 6 on
-        // the declaration below is the VALIDATION ceiling of the cap
-        // (SimulationWorld.TicksFromSeconds(0.2f)), not the shipped cap, and
-        // it is stated as a number rather than as some value pretending the
-        // field cannot be neutralized.
+        // THE UPPER END OF THE RANGE IS A MODE, NOT A MISTAKE, AND IT IS THE
+        // ONLY END THAT STILL IS. 5, the shipped rewind cap, is that mode: at
+        // that tolerance the estimate can never fall below the cap whatever
+        // the other two terms are, so the minimum is always the cap or the
+        // claim and the check trims nothing ever again. That is deliberate,
+        // and nothing above the band is guarded.
+        // ⛔ THE LOWER END WAS A MODE TOO UNTIL app-88jb Т7 REVOKED IT. This
+        // paragraph used to read "0 is the STRICTEST form of the check — no
+        // tolerance at all, the claim believed only as far as the estimate
+        // itself reaches — and emphatically not the check switched off". It is
+        // no longer true: NetInvariants rule #13 narrows this field's domain to
+        // >= Arena.RewindCapTicks - Arena.RewindPictureTicks, and that rule's
+        // own doc is the single home of the formula and of the measurement
+        // behind it. The LAST ⛔ paragraph before the declaration below says
+        // what that domain comes to for this number in particular.
+        // The [Range] ceiling of 6 on the declaration below is the VALIDATION
+        // ceiling of the cap (SimulationWorld.TicksFromSeconds(0.2f)), not the
+        // shipped cap, and it is stated as a number rather than as some value
+        // pretending the field cannot be neutralized. Its floor of 0 now sits
+        // BELOW the real domain, which costs nothing: a [Range] refuses nothing
+        // anyway, as this class's type doc says of every one of them here.
         // ⚠ 5 IS WHERE NEUTRALITY HOLDS WHATEVER THE OTHER TERMS ARE; ON THE
         // SHIPPED SERVER IT ARRIVES ALREADY AT 2 — THE SHIPPED TOLERANCE
         // (fix-round, B-5; app-gtj6). The round trip time a dedicated server
@@ -318,15 +327,13 @@ namespace Ring.Data
         // want of a plan). ABOVE the band there is still no guard, and
         // deliberately: a tolerance past the cap only switches the check off,
         // which is the mode the paragraph two up already states.
-        // ⛔ AND SINCE app-88jb Т7 RULE #12 IS NOT THE WHOLE FLOOR. Rule #13 of
-        // the same validator states the binding one — this field must reach
-        // Arena.RewindCapTicks together with Arena.RewindPictureTicks — because
-        // the client now DRAWS its own shot at the cap, and an estimate that
-        // sinks below the cap makes the server judge shallower than the picture
-        // showed. At the shipped picture of 3 against a cap of 5 the floor is 2,
-        // which is this default: zero and one are refused, and the "zero is the
-        // strictest setting" reading that #12's doc used to carry was revoked
-        // there in place.
+        // ⛔ AND SINCE app-88jb Т7 RULE #12 IS NOT THE WHOLE FLOOR. The binding
+        // one is rule #13 of the same validator — this field must reach
+        // Arena.RewindCapTicks together with Arena.RewindPictureTicks — and its
+        // own doc carries the whole argument, so it is not restated here. What
+        // it means for THIS number: at the shipped picture of 3 against a cap
+        // of 5 the domain starts at 2, which is exactly this default, so zero
+        // and one are refused.
         [Range(0, 6)] public int RewindSanityTicks = 2;
 
         // app-88jb Т32 (spec §3.8, coordinator Rulings 295/305): how many
@@ -363,8 +370,12 @@ namespace Ring.Data
         // about itself: those four numbers are one clock's — buffer, staleness,
         // snap and slew — and a catch-up budget is not about the clock at all.
         //
-        // BOTH ENDS OF THE [Range] ARE MODES, NOT MISTAKES, the same way
-        // RewindSanityTicks' own doc argues about its own band. 1 is the
+        // BOTH ENDS OF THE [Range] ARE MODES, NOT MISTAKES — the argument
+        // RewindSanityTicks' own doc used to make about its own band, and
+        // which app-88jb Т7 left standing only at that field's upper end
+        // (NetInvariants rule #13 closed its lower one). Here it still holds at
+        // both, because no invariant of that validator reads this number at
+        // all: it decides a drawing budget, not an outcome. 1 is the
         // slowest honest setting — one step per FRAME, and what that means
         // depends on the frame rate, which an earlier wording here did not say:
         // TracerProjectiles.StepTo is called once per rendered frame while a

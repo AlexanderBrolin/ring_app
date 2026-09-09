@@ -1,6 +1,8 @@
 using NUnit.Framework;
 using Ring.Networking.Protocol;
+using Ring.Networking.Server;
 using Ring.Presentation.Net;
+using Ring.Simulation.Core;
 
 namespace Ring.Simulation.Tests
 {
@@ -39,6 +41,15 @@ namespace Ring.Simulation.Tests
     /// not of the formula, and its only witness is the Ф4 lag gate under 80 ms
     /// RTT (CR 7). A green run of this file says nothing about the depth that
     /// actually leaves the process.
+    ///
+    /// SINCE app-88jb Т7 THE FILE HOLDS A SECOND SUBJECT, and it is stated
+    /// here so the two are not read as one: `DrawDepth` and `DrawTickFor`, the
+    /// depth the PICTURE is drawn on. The measured claim leaves this process
+    /// unclamped; the picture is trimmed to `Arena.RewindCapTicks` so that it
+    /// stands on the tick the server judges by. The cases for it hand over
+    /// their own cap, and one of them compares the answer against
+    /// `MatchServer.SanitizedRewindDepth` — the only place in the project
+    /// where the two formulas meet inside one assertion.
     public class RewindDepthTests
     {
         /// THE ARENA CAP THE `DrawDepth` CASES BELOW HAND OVER, AND WHY IT IS
@@ -60,6 +71,14 @@ namespace Ring.Simulation.Tests
         /// the rewind picture plus the sanity tolerance reach the cap, and the
         /// shipped 3 + 2 reaches four as comfortably as it reaches five.
         const int OffShippedCapTicks = 4;
+
+        /// The render tick the draw-tick cases stand on, and a SECOND one for
+        /// the same reason the cap has a second value: a sum that ignored its
+        /// first argument and answered `10 + depth` would satisfy every case
+        /// that hands over ten, and nothing would say so. The two numbers are
+        /// arbitrary — what matters is that they differ.
+        const int SampleRenderTick = 10;
+        const int OtherRenderTick = 23;
 
         [Test]
         public void NoReconcileYet_LeavesOnlyTheInterpolationLag()
@@ -202,26 +221,97 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void TheClaimOnTheWire_OutrunsTheArenaCap()
+        public void TheWireCeilingCoversEveryLegalArenaCap()
         {
-            // A GUARD RATHER THAN A WITNESS OF NEW BEHAVIOR (ruling 374),
-            // and it says something the saturation case above it does not.
-            // That neighbor pins WHERE the claim saturates; this one pins the
-            // RELATION that keeps the drawing's clamp invisible to the wire —
-            // the wire's ceiling stands ABOVE the arena cap, so a claim that
-            // saturated on it demonstrably was not pre-clamped to the arena's
-            // number. A client that pre-clamps can never show the server's own
-            // sanity check an inflated depth, and that check is the point of
-            // sending the claim at all.
-            Assert.Greater((int)InputCodec.MaxRewindTicksOnWire, ArenaCapTicks,
-                "премисса теста: проводной потолок обязан стоять выше капа арены — иначе завышенную заявку показать не на чем");
+            // A GUARD (ruling 427), AND THE PREMISE THE WHOLE CLAMP RESTS ON.
+            // `DrawDepth` trims the MEASURED depth; the server trims the
+            // CLAIMED one, and the claim is that same measurement saturated at
+            // the wire's ceiling. The two therefore answer the same number only
+            // while the arena cap stays at or below that ceiling — otherwise
+            // the wire would swallow depth the picture still draws, and the
+            // clamp's "tick for tick" claim would quietly become an
+            // approximation.
+            //
+            // WHAT HOLDS IT TODAY IS A THIRD PARTY, WHICH IS WHY THIS IS
+            // WORTH A LINE: `SimConfigBuilder` refuses an
+            // `Arena.RewindCapTicks` above the 200 ms of CRITICAL RULE 5, and
+            // that ceiling is SimulationWorld.TicksFromSeconds(0.2f) — six,
+            // one below the seven three bits carry. Nothing states the
+            // relation between the two ceilings anywhere else, and neither
+            // number is derived from the other: they could be retuned apart by
+            // two unrelated hands.
+            //
+            // ⚠ THIS REPLACES AN EARLIER CASE THAT COMPARED THE SAME CLAIM
+            // AGAINST A TEST-LOCAL CAP. That one restated its neighbor
+            // `AnAbsurdDepth_SaturatesAtTheWireMaximum` — same arguments, a
+            // weaker assertion — and could not notice the retune it claimed to
+            // guard, because a number written in this file moves with the file.
+            Assert.GreaterOrEqual((int)InputCodec.MaxRewindTicksOnWire,
+                SimulationWorld.TicksFromSeconds(0.2f),
+                "проводной потолок обязан покрывать любой законный кап арены: иначе заявка " +
+                "теряет глубину, которую картинка ещё рисует, и кламп перестаёт совпадать с судьёй");
+        }
 
-            byte claimed = RewindDepthMeter.Measure(
-                localTick: 10000, lastReconciledTick: 1,
-                hasNewestTick: true, newestTick: 100,
-                clockPlaced: true, renderTick: 97);
-            Assert.Greater((int)claimed, ArenaCapTicks,
-                "заявка на проводе обязана оставаться глубже капа арены — кламп картинки в неё не протекает");
+        [Test]
+        public void TheDrawnDepthIsTheJudgesOwnAnswer_WhileTheInvariantHolds()
+        {
+            // ⭐⭐ THE CLAIM THIS WHOLE TASK RESTS ON, AND UNTIL THIS CASE IT
+            // LIVED ONLY IN PROSE. Both docs say the clamp is EXACT rather than
+            // approximate — that `DrawDepth` answers the very number
+            // `MatchServer.SanitizedRewindDepth` will answer — and the two
+            // formulas sat in two files with nothing comparing them. An extra
+            // term quietly added to the judge's estimate would leave every
+            // other case in this file and in `RewindSanityTests` green.
+            //
+            // AND IT IS ALSO THE WITNESS THAT `NetInvariants` RULE #13 CARRIES
+            // ITS WEIGHT. The equality holds exactly while the picture and the
+            // tolerance reach the cap between them, which is what that rule
+            // demands; the second half below breaks the rule by ONE tick and
+            // shows the two answers coming apart. Without that half the rule
+            // would be a sentence nothing tests.
+            int pictureTicks = ArenaCapTicks - 2;
+            int sanityTicks = ArenaCapTicks - pictureTicks;
+            Assert.GreaterOrEqual(pictureTicks + sanityTicks, ArenaCapTicks,
+                "премисса теста: фикстура обязана удовлетворять правилу #13, иначе первая половина " +
+                "проверяет не то, что заявлено");
+
+            // Three claims, one per branch of the judge's inner minimum: well
+            // inside the cap, exactly on it, and saturated on the wire.
+            foreach (byte claimed in new byte[]
+                     { (byte)(ArenaCapTicks - 3), (byte)ArenaCapTicks, InputCodec.MaxRewindTicksOnWire })
+            {
+                Assert.AreEqual(
+                    MatchServer.SanitizedRewindDepth(claimed, roundTripMs: 0f,
+                        sanityTicks: sanityTicks, capTicks: ArenaCapTicks, pictureTicks: pictureTicks),
+                    RewindDepthMeter.DrawDepth(claimed, ArenaCapTicks),
+                    $"картинка обязана совпадать с судьёй тик в тик на заявке {claimed}");
+
+                // A live round trip only lifts the estimate, so the agreement
+                // is not a property of the zero a dedicated server reads.
+                Assert.AreEqual(
+                    MatchServer.SanitizedRewindDepth(claimed, roundTripMs: 80f,
+                        sanityTicks: sanityTicks, capTicks: ArenaCapTicks, pictureTicks: pictureTicks),
+                    RewindDepthMeter.DrawDepth(claimed, ArenaCapTicks),
+                    $"и под живым RTT тоже — оценка судьи от задержки только растёт (заявка {claimed})");
+            }
+
+            // THE OTHER SIDE OF RULE #13, one tick below the floor: the judge's
+            // estimate now falls short of the cap, so it — and not the cap —
+            // becomes the binding term, while the picture goes on being drawn
+            // at the cap. The expectation is the estimate written out here,
+            // not a second call to the judge.
+            int shortTolerance = sanityTicks - 1;
+            Assert.Less(pictureTicks + shortTolerance, ArenaCapTicks,
+                "премисса теста: вторая половина обязана НАРУШАТЬ правило #13, иначе она повторяет первую");
+
+            byte deep = InputCodec.MaxRewindTicksOnWire;
+            Assert.AreEqual((byte)(pictureTicks + shortTolerance),
+                MatchServer.SanitizedRewindDepth(deep, roundTripMs: 0f,
+                    sanityTicks: shortTolerance, capTicks: ArenaCapTicks, pictureTicks: pictureTicks),
+                "под полом правила #13 судья обязан судить по своей оценке, а не по капу");
+            Assert.AreEqual((byte)ArenaCapTicks,
+                RewindDepthMeter.DrawDepth(deep, ArenaCapTicks),
+                "а картинка по-прежнему рисуется по капу — вот цена нарушенного инварианта");
         }
 
         [Test]
@@ -237,17 +327,18 @@ namespace Ring.Simulation.Tests
             // It takes the MEASURED depth and the cap rather than a ready-made
             // draw depth, which is what makes an unclamped number impossible
             // to pass in.
-            const int renderTick = 10;
             byte measured = InputCodec.MaxRewindTicksOnWire;
             Assert.Greater((int)measured, ArenaCapTicks,
                 "премисса теста: измеренная глубина обязана стоять глубже капа, иначе кламп в сумме не виден");
 
             // The expectation is arithmetic performed here, not a second call
             // to the function under test: render tick plus the depth the cap
-            // allows.
-            double expectedDrawTick = renderTick + (double)ArenaCapTicks;
-            Assert.AreEqual((int)expectedDrawTick,
-                RewindDepthMeter.DrawTickFor(renderTick, measured, ArenaCapTicks),
+            // allows. Ticks are whole numbers and the sum is exact in `int`,
+            // so it is computed in `int` — a `double` here would buy nothing
+            // and the cast back could only lose something.
+            int expectedDrawTick = SampleRenderTick + ArenaCapTicks;
+            Assert.AreEqual(expectedDrawTick,
+                RewindDepthMeter.DrawTickFor(SampleRenderTick, measured, ArenaCapTicks),
                 "тик отрисовки обязан складывать рендер-тик с капнутой глубиной, а не с необрезанной");
         }
 
@@ -286,9 +377,19 @@ namespace Ring.Simulation.Tests
             // BOTH ENTRY POINTS ARE PINNED, because the clamp has two doors:
             // a `DrawTickFor` that passed a literal of its own would clamp
             // correctly and still answer the wrong tick.
+            //
+            // ⚠ AND THE RENDER TICK MOVES HERE FOR THE SAME REASON THE CAP
+            // DOES. Every other draw-tick case hands over the same ten, so a
+            // sum that ignored its first argument would answer correctly for
+            // all of them; one case standing on a different frame is what
+            // makes that substitution visible. The argument is the one above,
+            // applied to the other parameter — a mandatory argument is not an
+            // observed one.
             byte measured = InputCodec.MaxRewindTicksOnWire;
             Assert.AreNotEqual(ArenaCapTicks, OffShippedCapTicks,
                 "премисса теста: этот случай обязан стоять на ДРУГОМ капе, иначе он повторяет соседей");
+            Assert.AreNotEqual(SampleRenderTick, OtherRenderTick,
+                "премисса теста: и на другом рендер-тике — иначе первый аргумент суммы никто не наблюдает");
             Assert.Greater((int)measured, OffShippedCapTicks,
                 "премисса теста: измеренная глубина обязана стоять глубже этого капа, иначе клампить нечего");
 
@@ -296,11 +397,10 @@ namespace Ring.Simulation.Tests
                 RewindDepthMeter.DrawDepth(measured, OffShippedCapTicks),
                 "кламп обязан читать кап из параметра, а не из отгруженного числа");
 
-            const int renderTick = 10;
-            double expectedDrawTick = renderTick + (double)OffShippedCapTicks;
-            Assert.AreEqual((int)expectedDrawTick,
-                RewindDepthMeter.DrawTickFor(renderTick, measured, OffShippedCapTicks),
-                "тик отрисовки обязан читать тот же параметр, а не собственный литерал");
+            int expectedDrawTick = OtherRenderTick + OffShippedCapTicks;
+            Assert.AreEqual(expectedDrawTick,
+                RewindDepthMeter.DrawTickFor(OtherRenderTick, measured, OffShippedCapTicks),
+                "тик отрисовки обязан читать оба своих аргумента, а не собственные литералы");
         }
     }
 }

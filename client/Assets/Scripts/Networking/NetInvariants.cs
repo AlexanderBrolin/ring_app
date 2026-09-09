@@ -340,9 +340,11 @@ namespace Ring.Networking
             // BOTH configs may state a rule spanning them, and this validator
             // is exactly that node — and `ServerBootstrap` is its only caller.
             // (An earlier wording named `NetworkSimBackend` beside it. MEASURED
-            // in app-88jb Т7: that file does not mention this class once, and a
-            // doc naming a caller that does not exist sends the next reader
-            // hunting for a second call site to keep in step with this one.)
+            // in app-88jb Т7: that file CALLS nothing here — its one mention of
+            // this class is a doc line in `RewindDepthMeter.DrawDepth` naming
+            // rule #13, which is a reference and not a call site — and a doc
+            // naming a caller that does not exist sends the next reader hunting
+            // for a second call site to keep in step with this one.)
             //
             // WHAT IT REFUSES IS A CONFIGURATION NOBODY CAN WIN, NOT A LATE
             // GAMBLE. Р300 is explicit that a collector who enters the core
@@ -452,20 +454,13 @@ namespace Ring.Networking
             // all, the claim believed only as far as the server's own estimate
             // reaches, the same shape as #7's zero, which means "do not slew"
             // and is a deliberate mode rather than a misconfiguration. Rule #13
-            // below takes that half away: it states a SECOND floor under the
-            // same field, `RewindSanityTicks >= Arena.RewindCapTicks -
-            // Arena.RewindPictureTicks`, because under it the server's estimate
-            // sinks beneath the cap the client draws its own shot at. At the
-            // shipped picture of 3 against a cap of 5 that floor is 2 — the
-            // shipped tolerance exactly — so zero and one are now REFUSED, by
-            // #13 and not by this rule. Zero survives only where the picture
-            // alone already reaches the cap, which on any `SimConfig` that came
-            // through `SimConfigBuilder` (its rule 12 bounds
-            // `Arena.RewindPictureTicks` above by `Arena.RewindCapTicks`) means
-            // exactly `RewindPictureTicks == RewindCapTicks`. THE LOWER BOUND
-            // OF THIS FIELD IS #13's, NOT THIS RULE'S — do not "restore" the
-            // revoked sentence by reading the one-sided form below as the whole
-            // domain.
+            // below takes that half away: it puts a SECOND floor under the same
+            // field, and its own doc is the single home of that floor's formula
+            // and of the measurement behind it — it is not restated here.
+            // THE LOWER BOUND OF THIS FIELD IS #13's, NOT THIS RULE'S — do not
+            // "restore" the revoked sentence by reading the one-sided form
+            // below as the whole domain. Zero survives only where the picture
+            // alone already reaches the cap.
             //   THE RULE IS STILL STATED `>= 0` AND NOT `> 0` the way #9's is,
             // and that is not a leftover of the revoked half. It is one-sided
             // at zero because what it refuses is the INVERSION the paragraphs
@@ -484,8 +479,9 @@ namespace Ring.Networking
             // only lifts the estimate over `capTicks` on every input, so the
             // minimum becomes the cap or the claim and the check trims nothing
             // ever again. That is the check switched OFF, which the field's own
-            // doc records as a deliberate mode at both ends of its band — and
-            // the answer stays bounded by `Arena.RewindCapTicks` for every
+            // doc records as a deliberate mode at the UPPER end of its band —
+            // the only end that is one now, the lower end being #13's floor —
+            // and the answer stays bounded by `Arena.RewindCapTicks` for every
             // value the sum can hold without overflowing `int`. Past that (a
             // tolerance within `oneWayTicks + pictureTicks` of `int.MaxValue`)
             // the sum wraps negative again and the byte cast answers an
@@ -503,9 +499,14 @@ namespace Ring.Networking
             // THE JUDGE. Т7 clamps the depth the client DRAWS its own shot at
             // to `min(measured, Arena.RewindCapTicks)`, while the server judges
             // `min(claimed, min(estimate, capTicks))` with
-            //     estimate = TicksFromSeconds(rtt / 2)
+            //     estimate = TicksFromSeconds(roundTripMs * 0.001f * 0.5f)
             //              + Arena.RewindPictureTicks + Net.RewindSanityTicks
-            // (`MatchServer.SanitizedRewindDepth`). The two numbers coincide
+            // (`MatchServer.SanitizedRewindDepth`, copied term for term): half
+            // the round trip, converted from MILLISECONDS to seconds. An
+            // earlier wording here paraphrased that first term as
+            // `TicksFromSeconds(rtt / 2)`, which read literally is a thousand
+            // times too large — the round trip arrives in ms.
+            //   The two numbers coincide
             // EXACTLY — not approximately — for as long as `estimate` reaches
             // the cap at every round trip; the first term is >= 0 at any
             // RTT >= 0, so that reduces to the rule below: the picture and the

@@ -75,6 +75,13 @@ namespace Ring.Simulation.Combat
     /// whole of every shooter's depth would be spent cranking his round, and
     /// the weapon would be the canceled Р381 hitscan again -- reached by
     /// configuration instead of by code.
+    ///   AND SINCE app-88jb Т7 THERE IS A SECOND FLOOR, RULE #13, WHICH IS THE
+    /// STRONGER ONE. #11 holds an EQUALITY and inherits its floor from #1's
+    /// InterpBufferTicks > 0; #13 pushes the picture up from below jointly with
+    /// the server's tolerance -- Arena.RewindPictureTicks and
+    /// Net.RewindSanityTicks must reach Arena.RewindCapTicks TOGETHER -- so at
+    /// the shipped tolerance of 2 against a cap of 5 the picture may not fall
+    /// below 3, where #11 alone would still have admitted 1.
     internal static class RewindSplit
     {
         /// THE QUESTION HALF: how many ticks of `k` are spent asking where the

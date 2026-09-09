@@ -492,6 +492,12 @@ namespace Ring.Simulation.Core
         /// InterpBufferTicks of zero or less; and it holds it at SERVER START,
         /// because ServerBootstrap fails the process on every violation the
         /// validator reports. RewindSplit's own doc is the fuller account.
+        ///   A SECOND AND STRONGER FLOOR JOINED IT IN app-88jb Т7: rule #13
+        /// asks that Arena.RewindPictureTicks and Net.RewindSanityTicks reach
+        /// Arena.RewindCapTicks TOGETHER, so #11 holds the equality while #13
+        /// presses the picture up from underneath -- at the shipped tolerance
+        /// of 2 against a cap of 5 the picture may not go below 3, where #11
+        /// on its own would still have admitted 1.
         /// ⛔ AND NO CLAMP IS ADDED HERE (coordinator ruling 139, which is what
         /// left RewindPictureTicks without a lower bound in the first place):
         /// the border has a written home, and a second one in this struct would

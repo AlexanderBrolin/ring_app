@@ -113,6 +113,13 @@ namespace Ring.Simulation.Tests
             // compensation window to cap either. With the cap at zero #13 holds
             // identically -- any tolerance >= 0 reaches it -- and #1 is again
             // the only thing wrong here.
+            //   A CAP OF ZERO IS UNREACHABLE THROUGH SimConfigBuilder, said
+            // here the way the neighbor RewindSanityTicksNegative_IsReported
+            // says it of its own picture-deeper-than-its-cap fixture: that
+            // builder's rule 12 refuses an Arena.RewindCapTicks below 1. A
+            // hand-built SimConfig never passes through it, and this validator
+            // answers for the config it is handed rather than for the ones the
+            // builder would have let through.
             //   AND THE LOWERED CAP EARNS ITS KEEP TWICE: this is the only
             // fixture in the file whose Arena.RewindCapTicks is not the shipped
             // 5, so it is also what refuses a #13 written against a literal cap
@@ -567,6 +574,18 @@ namespace Ring.Simulation.Tests
         // apart on its own: every fixture below either keeps one of the two out
         // of the answer by construction and says how, or names a number only
         // one of the messages carries.
+        //   ONE LIMIT OF THIS BLOCK IS NAMED RATHER THAN CLOSED: the
+        // substitution `net.InterpBufferTicks + net.RewindSanityTicks < cap`
+        // for #13's own `sim.Arena.RewindPictureTicks + ...` survives every
+        // fixture in this file. Wherever #13 has anything to say, #11 already
+        // holds the picture equal to the buffer, so the two readings answer
+        // alike; and the one fixture that does part them
+        // (RewindPictureTicksDisagreesWithInterpBuffer_IsReported) leaves both
+        // sums above the cap, where neither reading speaks. Parting them so
+        // that #13 answered differently would break #11 in the same breath and
+        // report two violations, which AssertOnly refuses by design -- so no
+        // fixture here can distinguish the two, and pretending otherwise would
+        // cost the design of this block more than the mutant is worth.
         // ==================================================================
 
         [Test]
@@ -717,16 +736,32 @@ namespace Ring.Simulation.Tests
             NetConfig net = DefaultNet();
             SimConfig sim = TestConfigs.Default();
             // ⭐ #13 HAS TWO SUMMANDS AND THE SECOND ONE NEEDS A WITNESS OF ITS
-            // OWN. Every other fixture in this file leaves
-            // Arena.RewindPictureTicks at the shipped 3, so the substitution
+            // OWN. The substitution
             //     net.RewindSanityTicks < sim.Arena.RewindCapTicks - 3
-            // -- a shipped literal where the picture depth belongs -- survives
-            // all of them; checked case by case rather than assumed, and it is
-            // exactly the class of defect this project has already paid for.
-            // This fixture moves the picture OFF that value and demands the
-            // floor move with it: under the literal the floor would stay at 2
-            // while the real one drops to 1, so the legal half below fails
-            // there and only there.
+            // -- a shipped literal where the picture depth belongs -- is what
+            // this fixture stands against, and it is exactly the class of
+            // defect this project has already paid for. It moves the picture
+            // OFF the shipped 3 and demands the floor move with it: under the
+            // literal the floor would stay at 2 while the real one drops to 1,
+            // so the legal half below reports a violation where there must be
+            // none at all.
+            //   IT IS NOT THE ONLY FIXTURE THAT KILLS THAT MUTANT, AND SAYING
+            // SO IS THE POINT (measured rather than assumed: FIVE fixtures in
+            // this file move Arena.RewindPictureTicks off the shipped 3 -- to
+            // 0, to 4, to 5, to 9 and to 4 again here -- and the literal
+            // survives three of them, the ones whose sums stay clear of the cap
+            // under both readings). One other,
+            // RewindSanityTicksNegative_IsReported, kills it too -- but
+            // INCIDENTALLY and on an ALREADY ILLEGAL configuration: its picture
+            // of 9 against a tolerance of -4 satisfies the real #13 exactly
+            // (9 - 4 = 5, the cap), while the literal form reports -4 < 2, so
+            // that fixture dies of a SECOND error where AssertOnly demands
+            // exactly one. What it therefore witnesses is that the literal
+            // speaks where it should be silent on a config that is broken
+            // anyway. THIS fixture's own contribution is the LEGAL half: a
+            // configuration nothing whatever is wrong with, where the literal
+            // still reports -- and no error is the only answer a legal config
+            // may get.
             //
             // THE PAIR MOVES AS A FOUR, the idiom
             // RewindPictureTicksAndInterpBuffer_MayMoveTogether above

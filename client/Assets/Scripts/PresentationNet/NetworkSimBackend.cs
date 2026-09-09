@@ -347,9 +347,13 @@ namespace Ring.Presentation.Net
         /// predicted tick then degenerates into the render tick, i.e. into
         /// exactly the picture this class drew before Т32.
         /// ⛔ AND THAT ZERO IS THIS PROCESS'S FIRST MATCH ONLY. `SyncMatchEpoch`
-        /// clears six things keyed to the epoch and deliberately does NOT clear
-        /// this one, so the opening frames of a RESTART carry the depth the
-        /// previous match latched. It is harmless today, and the reason is
+        /// clears seven things keyed to the epoch — `_hasOwnSample`,
+        /// `_spectateRequestWindow`, `_lootRequests`, `_mobTypes`, `_mobTilt`,
+        /// `_ownDamage` and `_impactEvents`; the count was six until app-88jb
+        /// Т31 added the tilt table and is recounted here rather than
+        /// inherited — and deliberately does NOT clear this one, so the opening
+        /// frames of a RESTART carry the depth the previous match latched.
+        /// It is harmless today, and the reason is
         /// worth naming rather than rediscovering — the more so because the
         /// readers have grown past one. Three read this field: the claim that
         /// rides out on the wire, and BOTH picture sites — `predictedTick` for
@@ -3973,15 +3977,19 @@ namespace Ring.Presentation.Net
         /// ⭐ AND THE CLAMP IS EXACT, NOT APPROXIMATE — taken from the judge's
         /// own source rather than inferred from its shape.
         /// `MatchServer.SanitizedRewindDepth` builds
-        /// `estimate = TicksFromSeconds(rtt / 2) + pictureTicks + sanityTicks`
-        /// and answers `min(claimed, min(estimate, capTicks))`. At the shipped
+        /// `estimate = TicksFromSeconds(roundTripMs * 0.001f * 0.5f)
+        /// + pictureTicks + sanityTicks` and answers
+        /// `min(claimed, min(estimate, capTicks))`. That first term is HALF THE
+        /// ROUND TRIP CONVERTED FROM MILLISECONDS, copied the way the source
+        /// writes it: an earlier wording here shortened it to `rtt / 2`, which
+        /// read literally is a thousand times too large. At the shipped
         /// `picture 3 + sanity 2 = 5 = cap`, that estimate stands at or above
         /// the cap for EVERY round trip time, zero included, because the first
         /// term is never negative — so the inner minimum is the cap and the
         /// judge reduces to `min(claimed, cap)`, which is this line, tick for
         /// tick. Not "close enough for a picture": the same number.
         ///
-        /// ⛔ AND THE EQUALITY RESTS ON EXACTLY ONE CONDITION,
+        /// ⛔ AND THE EQUALITY RESTS ON A CONDITION WITH A WRITTEN HOME,
         /// `RewindPictureTicks + RewindSanityTicks >= RewindCapTicks`, which is
         /// `NetInvariants` rule #13 and which `ServerBootstrap` fails the
         /// process on like any other violation. Let either term fall below that
@@ -3989,15 +3997,32 @@ namespace Ring.Presentation.Net
         /// does not follow it down — the picture outruns the shot again, which
         /// is the defect this function exists to remove.
         ///
+        /// ⛔ AND ON A SECOND PREMISE, WHICH THE PARAGRAPHS ABOVE LEFT UNNAMED:
+        /// `capTicks <= InputCodec.MaxRewindTicksOnWire`. This function clamps
+        /// the MEASURED depth while the judge clamps the CLAIMED one, and the
+        /// claim is that same measurement saturated at the wire's seven by
+        /// `Measure` above — so `min(measured, cap)` and `min(claimed, cap)`
+        /// are one number only while the cap stays at or below seven. Past that
+        /// the claim saturates where the picture does not, and the two part
+        /// company by as much as the cap exceeds the wire. What supplies the
+        /// premise today is `SimConfigBuilder`'s ceiling on
+        /// `Arena.RewindCapTicks` — `SimulationWorld.TicksFromSeconds(0.2f)`,
+        /// six at this tick rate, CRITICAL RULE 5's own 200 ms. The relation
+        /// between those two ceilings is therefore a CONDITION of the exactness
+        /// above rather than a coincidence of today's numbers, and it is named
+        /// here so a retune of either one meets it written down.
+        ///
         /// ⛔ A NEGATIVE CAP IS NAMED HERE AND NOT GUARDED AGAINST, exactly as
         /// `SanitizedRewindDepth` names its own two parameters instead of
         /// clamping them: hand this a cap below zero and the `(byte)` cast
         /// wraps, and the answer is nonsense rather than a small error. The cap
         /// has a written home upstream — `SimConfigBuilder`'s validation
-        /// refuses an `Arena.RewindCapTicks` below 1 (and above the 200 ms of
-        /// CRITICAL RULE 5), and rule #13 now bounds it from the other side —
-        /// and with a written home upstream, a second answer here would be the
-        /// duplication ruling 139 refuses.
+        /// refuses an `Arena.RewindCapTicks` below 1 AND above the 200 ms of
+        /// CRITICAL RULE 5, which is already a closed band of [1, 6]; rule #13
+        /// adds no other side to it (there is none left) but a SECOND CEILING,
+        /// `cap <= RewindPictureTicks + RewindSanityTicks` read the other way
+        /// round — and with a written home upstream, a second answer here would
+        /// be the duplication ruling 139 refuses.
         public static byte DrawDepth(byte measured, int capTicks)
             // `Unity.Mathematics.math.min`, the idiom the judge's own clamp and
             // `SimInputSanitizer.Sanitize` both apply to this same field. The
