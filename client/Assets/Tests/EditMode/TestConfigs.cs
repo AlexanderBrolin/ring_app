@@ -770,6 +770,45 @@ namespace Ring.Simulation.Tests
                 c.Arena.ZoneRadius = new[] { radius * 0.5f, radius * 0.8f };
         }
 
+        /// Put ONE obstacle circle into a fixture that has none -- the shape
+        /// every barrier test states its geometry in.
+        ///
+        /// ⛔ Open() ZEROES ObstacleCount AND WallCount (its own doc above says
+        /// why), so a fixture built on it cannot simply raise Arena.BarrierTop:
+        /// the barrier has to be CREATED first. This pair stood as private
+        /// statics of BarrierHeightTests until app-461s T1, whose tests 8 and 13
+        /// need the very same two lines; lifting them here instead of copying
+        /// them is rule 2, reuse over duplication.
+        ///
+        /// ⚠ AND WHAT THE LIFT DOES NOT DO IS SAID PLAINLY: placing arena
+        /// geometry by hand lives in this set 54 times across 16 files
+        /// (MobAiTests, VisibilityTests, WallGeometryTests and a dozen more).
+        /// This pair does not become their home today -- it keeps a
+        /// seventeenth home from being opened and offers a shared one; sweeping
+        /// the rest is a task of its own.
+        ///
+        /// ⚠ EVERY CALLER STATES ITS OWN Arena.BarrierTop, exactly as
+        /// BarrierHeightTests' header requires: the shared baseline keeps that
+        /// number at 0 for the goldens' sake, so the height is the fixture's
+        /// business and never this helper's.
+        public static void PutObstacle(ref SimConfig c, float2 pos, float radius)
+        {
+            c.Arena.ObstacleCount = 1;
+            c.Arena.ObstaclePos = new[] { pos };
+            c.Arena.ObstacleRadius = new[] { radius };
+        }
+
+        /// Put ONE stadium wall into a fixture that has none -- PutObstacle's
+        /// twin, lifted out of BarrierHeightTests in the same move and for the
+        /// same reason.
+        public static void PutWall(ref SimConfig c, float2 a, float2 b, float halfWidth)
+        {
+            c.Arena.WallCount = 1;
+            c.Arena.WallA = new[] { a };
+            c.Arena.WallB = new[] { b };
+            c.Arena.WallHalfWidth = new[] { halfWidth };
+        }
+
         /// OpenField() with an extended slide (Task 10 — M16): SlideDuration 0.9s
         /// (vs the 0.52s default) and a shortened StaminaRegenDelay of 0.3s so
         /// slide-adjacent stamina-regen timing tests (regen frozen for the

@@ -292,6 +292,128 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void HipHalfWidth_DelegatesToTheCone()   // test 20 (app-461s T1), M316
+        {
+            // ⛔ WHAT IS PINNED IS THE DELEGATION, NOT A RATIO OF MULTIPLIERS
+            // (lesson 725): tan is not linear, so on this fixture the running
+            // half-width is 1.500423 times the standing one and the sliding one
+            // 2.001354 times it. A strict assertion on 1.5 would be red on
+            // CORRECT code. The multipliers are already proven by the neighbor
+            // above; what is proven here is that the half-width takes its angle
+            // OUT OF it.
+            var cfg = TestConfigs.Open();
+            WeaponSimConfig weapon = cfg.Weapon;
+            HeroSimConfig hero = cfg.Hero;
+            const float D = 10f;
+
+            var standing = new PlayerState();
+            Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in standing, in hero)) * D,
+                Spread.HipHalfWidth(in weapon, in standing, in hero, D), 1e-6f,
+                "полуширина стоя не равна tan(конус) x дистанция");
+
+            // The run threshold is INCLUSIVE -- the fixture puts the speed
+            // exactly on it, the way the neighbor above does.
+            var running = new PlayerState
+                { Vel = new float2(weapon.RunSpreadSpeedFrac * hero.MaxSpeed, 0f) };
+            Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in running, in hero)) * D,
+                Spread.HipHalfWidth(in weapon, in running, in hero, D), 1e-6f,
+                "полуширина на бегу не делегирует конусу");
+
+            var sliding = new PlayerState
+                { SlideTimer = hero.SlideDuration, Vel = new float2(hero.SlideSpeed, 0f) };
+            Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in sliding, in hero)) * D,
+                Spread.HipHalfWidth(in weapon, in sliding, in hero, D), 1e-6f,
+                "полуширина в слайде не делегирует конусу");
+
+            // ⛔ THE PREMISE: without it the three assertions above are green on
+            // a stub answering zero -- tan(0) * D would be zero too if the cone
+            // ever degenerated.
+            Assert.Greater(Spread.HipHalfWidth(in weapon, in standing, in hero, D), 0f,
+                "премисса: полуширина стоя положительна");
+        }
+
+        [Test]
+        public void HipHalfWidth_IsLinearInDistance()   // test 21 (app-461s T1), M317
+        {
+            var cfg = TestConfigs.Open();
+            var p = new PlayerState();
+            float near = Spread.HipHalfWidth(in cfg.Weapon, in p, in cfg.Hero, 10f);
+            float far = Spread.HipHalfWidth(in cfg.Weapon, in p, in cfg.Hero, 20f);
+            // ⛔ THE PREMISE COMES FIRST: 0 == 2 * 0 is green, and without this
+            // line the fixture is a tautology on the stub.
+            Assert.Greater(near, 0f, "премисса: полуширина на десяти метрах положительна");
+            Assert.AreEqual(2f * near, far, 1e-6f, "полуширина не масштабируется дистанцией");
+        }
+
+        [Test]
+        public void HipHalfWidth_GrowsWithRecoil()   // test 22 (app-461s T1)
+        {
+            var cfg = TestConfigs.Open();
+            var settled = new PlayerState();
+            // THE PREMISE IS A PROPERTY, NOT A LITERAL: the recoil of one shot
+            // against what drains away over one firing interval -- if the first
+            // is not the larger, the cone never grows at all and the fixture
+            // witnesses nothing.
+            Assert.Greater(cfg.Weapon.RecoilPerShotRad,
+                cfg.Weapon.RecoilRecoveryRadPerSec * cfg.Weapon.FireInterval,
+                "премисса фикстуры: очередь накапливает отдачу");
+            var recoiling = new PlayerState { RecoilOffset = cfg.Weapon.RecoilMaxRad };
+            Assert.Greater(Spread.HipHalfWidth(in cfg.Weapon, in recoiling, in cfg.Hero, 10f),
+                Spread.HipHalfWidth(in cfg.Weapon, in settled, in cfg.Hero, 10f),
+                "отдача не входит в полуширину");
+        }
+
+        [Test]
+        public void HipHalfWidth_IsClampedAtEveryReachableCone()   // test 23 (app-461s T1), M318
+        {
+            // ⛔⛔ THIS FIXTURE WAS REWRITTEN TWICE, BOTH TIMES BY A REVIEW ROUND
+            // OF THE PLAN. The first version stood on the CEILING of the owner's
+            // sliders -- (1 + 1) x 5 = 10 rad -- and checked "finite and
+            // non-negative". Recomputed: tan(10) = +0.6484, finite AND positive
+            // (10 rad falls in (3pi, 3.5pi), a positive branch), so a mutant
+            // with the clamp taken out passed BOTH assertions. Infinity is
+            // unreachable in the first place (exactly pi/2 does not exist in
+            // float), and math.max(0f, ...) in the body makes a negative answer
+            // unreachable as well -- a predicate assertion is powerless here BY
+            // CONSTRUCTION. The second version put a loop beside it, and the
+            // next round showed the loop SWALLOWS the older test whole while
+            // that one carried the very predicate form the rewrite had just
+            // declared bankrupt. The two were merged into this one.
+            //
+            // ⇒ THE SHAPE: a loop over three REACHABLE cones whose tangents
+            // differ in sign (2 rad: -2.185; 5 rad: -3.381; 10 rad: +0.648),
+            // the premise inside the loop, and an assertion pinning the VALUE.
+            // On the mutant math.max(0f, tan(cone) * D) answers exactly ZERO for
+            // 2 and 5 rad and 6.48 for 10 -- against 572.9 on correct code.
+            // ⚠ And the cones are built THROUGH SpreadSlideMult, or they are not
+            // reachable: at a multiplier of 1 a cone of 5 would need SpreadRad
+            // and RecoilMaxRad at 2.5 each, while the [Range] of both fields is
+            // [0, 1].
+            var cfg = TestConfigs.Open();
+            const float D = 10f;
+            float expected = math.tan(Spread.MaxHalfAngleRad) * D;
+
+            foreach (float cone in new[] { 2f, 5f, 10f })
+            {
+                var weapon = cfg.Weapon;
+                weapon.SpreadRad = cone / 10f;        // <= 1.0 -- inside the slider
+                weapon.RecoilMaxRad = cone / 10f;     // <= 1.0 -- inside the slider
+                weapon.SpreadSlideMult = 5f;          // the slider's ceiling
+                var p = new PlayerState
+                    { SlideTimer = cfg.Hero.SlideDuration, RecoilOffset = weapon.RecoilMaxRad };
+
+                // THE PREMISE AS A PROPERTY: the fixture's cone has to lie past
+                // the right angle, or the fixture examines something other than
+                // the clamp.
+                Assert.Greater(Spread.HipRadians(in weapon, in p, in cfg.Hero), math.PI / 2f,
+                    $"премисса фикстуры: конус {cone} рад обязан выйти за прямой угол");
+
+                Assert.AreEqual(expected, Spread.HipHalfWidth(in weapon, in p, in cfg.Hero, D),
+                    1e-2f, $"конус {cone} рад не приведён к потолку клампа — кламп угла снят");
+            }
+        }
+
+        [Test]
         public void FirstAimTick_SpreadNotZero() // Task 15, C2
         {
             // Aim that has only just gone up is not yet a laser: on the first

@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Networking.Client;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Ring.Simulation.Visibility;
 using Unity.Mathematics;
@@ -540,6 +541,73 @@ namespace Ring.Simulation.Tests
             // what shrinks is how much of the path the window covers.
             Assert.Greater(tracers.Count, 0,
                 "fixture premise: the table must not have emptied during the measured window");
+        }
+
+        /// app-461s T1 test 27: the aim line is recomputed by AimProvider on
+        /// EVERY RENDER FRAME, so an allocation anywhere inside it would be a
+        /// per-frame one -- the very shape this file exists to refuse.
+        ///
+        /// ⚠ WHAT IT ACTUALLY WATCHES: a two-stage scan over a SATURATED crowd
+        /// (Arena.MaxMobs bodies plus the roster), the broad phase ranking body
+        /// circles into the caller's buffer, the zone resolution behind it, and
+        /// the four notch points. Every one of them answers in structs; the
+        /// arrays they read belong to the config, the frame and the caller.
+        ///
+        /// ⛔ ON THE CONSTANT STUB THIS IS A GUARD RATHER THAN A WITNESS, and
+        /// it is said here rather than left for the next reader to work out
+        /// (rule 427): a body returning `default` allocates nothing whatever
+        /// the world holds. It becomes a witness the moment Solve grows its
+        /// real scan -- which is the same task, one step later.
+        [Test]
+        public void AimLineSolveAndNotches_DoNotAllocateGC()
+        {
+            var w = TestWorlds.Saturated(out SimConfig config);
+            // Same fixture-sanity discipline the neighbors above keep: prove
+            // the crowd is really there before measuring a scan across it.
+            Assert.AreEqual(config.Arena.MaxMobs, w.MobCount,
+                "fixture premise: every mob slot must be filled, or the scan below runs "
+                + "over an empty world and proves nothing");
+
+            var snap = new RenderSnapshot(in config);
+            w.CaptureSnapshot(snap);
+            // CaptureSnapshot deliberately never touches this field (its own
+            // doc says so -- the world has no notion of "the local client"), so
+            // the fixture states it.
+            snap.LocalPlayerIndex = 0;
+            Assert.AreEqual(config.Arena.MaxMobs, snap.MobCount,
+                "fixture premise: the frame must carry the whole crowd the world holds");
+
+            // ⛔ THE CANDIDATE BUFFER IS ALLOCATED ONCE, BEFORE THE WINDOW, the
+            // same way the neighbors build their world and their scratch ahead
+            // of the measurement. Solve takes it as a parameter precisely so
+            // the caller can own it (in the game it is a field of AimProvider);
+            // allocated inside the window, it would be the thing this test
+            // measures instead of the function.
+            var scratch = new (float t, int kind, int index)[
+                config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            float2 heroPos = snap.Player.Pos;
+            float2 aimPoint = heroPos + new float2(30f, 0f);
+            const float stroke = 0.5f;
+
+            // Warm-up OUTSIDE the measured window: the first call carries JIT
+            // and other one-off work that is not this function's allocation.
+            AimLineSolution warm = AimLine.Solve(heroPos, aimPoint, config.Hero.MuzzleHeight,
+                in config, snap, snap.LocalPlayerIndex, scratch);
+            AimLine.Notches(in warm, stroke, out _, out _, out _, out _);
+
+            Assert.That(() =>
+            {
+                // Fifty frames rather than a thousand: an allocation on this
+                // path shows on the very first iteration, and the answer is the
+                // same every frame -- the fixture does not tick.
+                for (int frame = 0; frame < 50; frame++)
+                {
+                    AimLineSolution line = AimLine.Solve(heroPos, aimPoint,
+                        config.Hero.MuzzleHeight, in config, snap, snap.LocalPlayerIndex,
+                        scratch);
+                    AimLine.Notches(in line, stroke, out _, out _, out _, out _);
+                }
+            }, Is.Not.AllocatingGCMemory());
         }
     }
 }

@@ -19,8 +19,10 @@ namespace Ring.Simulation.Tests
         /// Open arena (no obstacles, no walls) with both mob archetypes frozen
         /// and their weapon pushed out of reach: the only round in flight in
         /// these fixtures is the one the test itself states, so an event count
-        /// means what it says. Geometry is added per test through PutObstacle/
-        /// PutWall below.
+        /// means what it says. Geometry is added per test through
+        /// TestConfigs.PutObstacle/PutWall, which is where the pair moved in
+        /// app-461s T1 -- its tests 8 and 13 need the same two lines, and rule 2
+        /// forbids a second copy of them.
         static SimConfig Field(float barrierTop)
         {
             var c = TestConfigs.Open();
@@ -67,21 +69,6 @@ namespace Ring.Simulation.Tests
             // fixture here already states its own BarrierTop.
             c.Weapon.MaxRicochets = 0;
             return c;
-        }
-
-        static void PutObstacle(ref SimConfig c, float2 pos, float radius)
-        {
-            c.Arena.ObstacleCount = 1;
-            c.Arena.ObstaclePos = new[] { pos };
-            c.Arena.ObstacleRadius = new[] { radius };
-        }
-
-        static void PutWall(ref SimConfig c, float2 a, float2 b, float halfWidth)
-        {
-            c.Arena.WallCount = 1;
-            c.Arena.WallA = new[] { a };
-            c.Arena.WallB = new[] { b };
-            c.Arena.WallHalfWidth = new[] { halfWidth };
         }
 
         /// Ф2 fix-round (review A-3): the arc barrier, stated the same way its
@@ -150,7 +137,7 @@ namespace Ring.Simulation.Tests
             // barrier could plausibly reach is still stopped by one.
             SimConfig c = Field(0f);
             const float obstacleX = 6f, obstacleRadius = 1.5f, flightHeight = 12f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
 
             SimulationWorld w = Fire(in c, float2.zero, flightHeight, velZ: 0f);
             TestWorlds.RunUntilProjectilesDie(w);
@@ -190,7 +177,7 @@ namespace Ring.Simulation.Tests
             SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
             {
                 cfg = Field(barrierTop);
-                PutObstacle(ref cfg, new float2(obstacleX, 0f), obstacleRadius);
+                TestConfigs.PutObstacle(ref cfg, new float2(obstacleX, 0f), obstacleRadius);
                 var world = new SimulationWorld(1, cfg);
                 TestWorlds.SpawnMobsAt(world, (MobType.Gunner, new float2(mobX, 0f)));
                 world.SpawnProjectileForTest(ProjectileOwner.Player,
@@ -249,7 +236,7 @@ namespace Ring.Simulation.Tests
             SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
             {
                 cfg = Field(barrierTop);
-                PutWall(ref cfg, new float2(wallX, -4f), new float2(wallX, 4f), halfWidth);
+                TestConfigs.PutWall(ref cfg, new float2(wallX, -4f), new float2(wallX, 4f), halfWidth);
                 SimulationWorld world = Fire(in cfg, float2.zero, flightHeight, velZ: 0f);
                 Tick(world, ticks);
                 return world;
@@ -286,7 +273,7 @@ namespace Ring.Simulation.Tests
             // for a shot on the line the game is actually played on.
             SimConfig c = Field(3f);
             const float obstacleX = 6f, obstacleRadius = 1.5f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             float flightHeight = c.Hero.MuzzleHeight;
             Assert.Less(flightHeight, CrownReach(in c),
                 "fixture premise: a horizontal shot from the hero's own muzzle is under the crown");
@@ -313,7 +300,7 @@ namespace Ring.Simulation.Tests
             // unlike the shipped 113.
             TestConfigs.ShrinkArena(ref c, 20f);
             const float obstacleX = 10f, obstacleRadius = 2f, flightHeight = 12f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             Assert.Greater(flightHeight, CrownReach(in c),
                 "fixture premise: the flight clears the obstacle's crown");
             Assert.Greater(c.Weapon.ProjectileSpeed * c.Weapon.ProjectileLifetime, c.Arena.Radius,
@@ -345,7 +332,7 @@ namespace Ring.Simulation.Tests
             // body, and start the next tick already behind it.
             SimConfig c = Field(3f);
             const float obstacleX = 5f, obstacleRadius = 1.5f, entryHeight = 3.5f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             float2 start = new float2(obstacleX - 0.5f, 0f);
             // One meter of descent per tick: the whole step is expressed inside
             // the very tick the contact happens on.
@@ -378,7 +365,7 @@ namespace Ring.Simulation.Tests
             // height, no descent, so the whole step stays clear.
             SimConfig c = Field(3f);
             const float obstacleX = 5f, obstacleRadius = 1.5f, entryHeight = 3.5f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             float2 start = new float2(obstacleX - 0.5f, 0f);
             Assert.Greater(entryHeight, CrownReach(in c), "fixture premise: clear of the crown");
 
@@ -399,7 +386,7 @@ namespace Ring.Simulation.Tests
             // because it would have been clear a fraction of a tick later.
             SimConfig c = Field(3f);
             const float obstacleX = 5f, obstacleRadius = 1.5f, entryHeight = 2f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             float2 start = new float2(obstacleX - 0.5f, 0f);
             float velZ = 1.5f / SimulationWorld.TickDt;
             float stepEndHeight = entryHeight + velZ * SimulationWorld.TickDt;
@@ -429,7 +416,7 @@ namespace Ring.Simulation.Tests
         {
             SimConfig c = Field(3f);
             const float obstacleX = 5f, obstacleRadius = 1.5f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             var start = new float2(obstacleX - 0.5f, 0f);
             // Over the barrier's own top, under the column Overlaps grows by the
             // round's radius — the only band where that argument is what decides.
@@ -462,7 +449,7 @@ namespace Ring.Simulation.Tests
             // to twice the radius fails here, a pad removed fails there.
             SimConfig c = Field(3f);
             const float obstacleX = 5f, obstacleRadius = 1.5f;
-            PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref c, new float2(obstacleX, 0f), obstacleRadius);
             var start = new float2(obstacleX - 0.5f, 0f);
             float clear = CrownReach(in c) + 1e-3f;
 
@@ -516,7 +503,7 @@ namespace Ring.Simulation.Tests
             // Now the tie: an obstacle whose padded circle already contains the
             // start point answers t = 0 as well.
             SimConfig tied = c;
-            PutObstacle(ref tied, new float2(limit - obstacleBack, 0f), obstacleRadius);
+            TestConfigs.PutObstacle(ref tied, new float2(limit - obstacleBack, 0f), obstacleRadius);
             Assert.Less(obstacleBack, obstacleRadius + tied.Weapon.ProjectileRadius,
                 "fixture premise: the round starts inside the obstacle's padded circle (t = 0)");
 
@@ -540,7 +527,7 @@ namespace Ring.Simulation.Tests
             TestConfigs.ShrinkArena(ref c, 20f);
             float limit = c.Arena.Radius - c.Weapon.ProjectileRadius;
             var start = new float2(limit, 0f);
-            PutObstacle(ref c, new float2(limit - 0.9f, 0f), 1f);
+            TestConfigs.PutObstacle(ref c, new float2(limit - 0.9f, 0f), 1f);
             float flightHeight = CrownReach(in c) + 1f;
 
             SimulationWorld w = Fire(in c, start, flightHeight, velZ: 0f);
