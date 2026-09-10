@@ -1,0 +1,1791 @@
+# План имплементации: целеуказатель из ствола — луч вместо круга (`app-461s`)
+
+> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development`.
+> Модели: implementer per task = **opus** — T1 (чистая геометрия, 28 фикстур, 22 мутации),
+> T3 (засечки и их выключатель), T5 (снятие круга и маркера — правка чужих веток);
+> **sonnet** — T2 (готовый контракт T1 в три файла), T4 (три поля и строка прибора),
+> T6 (свип и четыре шапки), T7 (амендменты по готовым числам);
+> **T8 исполняет главный агент лично** (сборка, стенд, живой забег — запрещённое субагентам).
+> Ревьюеры таска = 2 × Explore (спека-соответствие + качество и арифметика), **круг ревью
+> после КАЖДОГО таска — часть порядка** (Р444). **Все прогоны Unity, вердикты субагентов,
+> гейты, мутации и коммиты — main-агент лично** (R-14: субагенты Unity не запускают вовсе;
+> R-98: `.meta` не пишут; не коммитят; `bd` не трогают). Шаги — чекбоксы `- [ ]`.
+>
+> ⚠ **ЧЕКБОКСЫ В ЭТОМ ПРОЕКТЕ НЕ ПРОСТАВЛЯЮТСЯ НИКОГДА.** Открытая `- [ ]` не означает
+> «не сделано»; прогресс живёт в ледгере `$SDD/progress.md` и в `bd`.
+
+**Goal:** игрок в любой момент видит линию, по которой уйдёт его выстрел. От бедра ствол
+горизонтален на высоте дула (1.0 стоя, 0.45 в слайде), головы начинаются с 1.35 / 2.12 / 2.76 /
+3.24 / 3.70, а ноги ганнера, элиты и Директора тянутся до 1.32 / 1.12 / 1.51 — то есть на высоте
+ствола этим трём **всегда достаются ноги ×0.75**, и сегодня это скрыто от игрока целиком:
+единственная подсказка, круг на полу, честна по ширине конуса и про высоту оси молчит вовсе.
+Заход заводит луч, включённый всегда и ведущий за курсором, упирающийся в первое тело, барьер
+или обод; круг и точку на полу снимает; вместо круга ставит **засечки разброса** — два
+поперечных штриха на дистанции курсора, разнесённые на полуширину конуса, — и прибор в
+дев-оверлее, которым всё это можно измерить, а не «посмотреть».
+
+**Architecture:** линия огня — **чистая функция `Ring.Simulation`** (`AimLine`), и дом выбран
+тремя доводами: `HitZones` объявлен `internal` собственным решением, ответ обязан совпасть с
+серверным (физический каст по прокси отвечает на другой вопрос), а `MonoBehaviour` в EditMode не
+заводится. Порядок кандидатов **повторяет форму снаряда, а не пересказывает её**: барьер и обод —
+существующими `ProjectileFlight.Step`/`BarrierStops` над синтетическим раундом (прецедент вызова
+из чужой сборки — `TracerProjectiles.cs:844/858`), тела — **две ступени**, широкая фаза по кругу
+тела и уточнение частями с отказом и пересканом, ровно как в `ProjectileSystem`. Полуширину
+конуса считает **новый член самого `Spread`** — дом понятия, а не дом задачи (рулинг 357).
+Presentation ничего не решает: `AimProvider` кэширует ответ, `AimRayView` рисует, `AimLine.Notches`
+отдаёт четыре точки штрихов. ⛔ **В `Ring.Simulation` заход добавляет один файл и один член, и ни
+одной правки поведения** — эталонов это не касается.
+
+**Tech Stack:** Unity 6000.3.21f1, NUnit EditMode, Unity.Mathematics, FishNet 4.7.2, Docker.
+**Новых пакетов заход не вводит** (CR 9). **Провод не растёт ни на байт**, `ProtocolVersion`
+остаётся **5**, `SimConfig` и `SimConfigHash` не трогаются — серверный образ пересобирать не
+придётся, пересобирается **клиент**.
+
+**Спека:** `docs/superpowers/specs/2026-09-10-aim-ray-from-muzzle-spec.md` **v4** (1059 строк,
+коммит `be46f50`; решения владельца Н37–Н46, решения агента Р471–Р504; **два круга self-review
+по четыре Explore**, 15 Critical, 62 Important, 66 Minor, шестнадцать находок разобрано в её §6a).
+Отдельной фразы «спека апрувнута» не звучало — распоряжение владельца 10.09 писать по ней план
+(«у нас есть спека, теперь надо к ней написать план») и есть разрешение идти дальше.
+**План против спеки — верить спеке**, кроме раздела «Отклонения от спеки» в конце файла, каждая
+запись которого обоснована фактом кода, **проверенным лично открытием файла**.
+
+**Статус плана:** **v1 — до кругов self-review по `review_plan.md`.**
+Стартовое состояние снято **свежим полным прогоном этой сессии**: `EXIT=0`, **1904/1904/0**,
+**380 с** при `uptime` LA 2.0–2.6; три эталона зелёные, md5 `DeterminismTests.cs` =
+`be382bc17c9451d3b74b07e6c36fb2ea`; оба дерева чистые, ГЕЙТ-ОТКАТ и ГЕЙТ-ЛОГ пусты.
+
+---
+
+## Global Constraints (каждый таск обязан соблюдать)
+
+- **Пути:** `RING_ROOT="/home/brolin/Documents/!_MY_Proj/The Ring"`;
+  `APP_REPO="$RING_ROOT/app"` (**bd — ТОЛЬКО отсюда**);
+  `WT="$APP_REPO/.worktrees/feature-app-88jb-weapon-netcode"` — **cwd всех команд**;
+  ветка `feature/app-88jb-weapon-netcode` **уже существует**, worktree **не пересоздавать и не
+  удалять** (в нём рабочая `Library`); `UNITY="$HOME/Unity/Hub/Editor/6000.3.21f1/Editor/Unity"`;
+  `SCRATCH=<scratchpad ТЕКУЩЕЙ сессии>`;
+  `SDD="$WT/.superpowers/sdd/2026-08-24-app-88jb-weapon-netcode"` (вне git).
+  ⛔ **`outroot` и все `.sh` — ТОЛЬКО абсолютным путём** (660).
+- **Стартовые счётчики (сняты СВЕЖИМ полным прогоном этой сессии, а не взяты из handoff'а):**
+  **1904** EditMode-теста, зелёных 1904, красных ноль, `EXIT=0`, **380 с** при LA 2.0–2.6.
+  Норма времени — 365–455 с; находка — свыше **900 с** (удвоение базы).
+- ⛔⛔ **ЭТАЛОНЫ НЕ ДВИГАЮТСЯ ЭТИМ ЗАХОДОМ, И САНКЦИЯ Н44 НА НЕГО НЕ ТРАТИТСЯ.**
+  `ExtractionGoldenHash = 0x5278A02A5C095067UL` (`DeterminismTests.cs:516`),
+  `GoldenHash = 0x4AB22CBB04361713UL` (`:1608`),
+  `MultiGoldenHash = 0x28E5ADF5CB02D7C4UL` (`:1806`);
+  **md5 файла = `be382bc17c9451d3b74b07e6c36fb2ea` и не меняется вовсе.**
+  ⛔ **Сдвиг любого из трёх — находка и СТОП с вопросом владельцу**, а не рабочий момент:
+  санкция Н44 записана в `app-94sk` и тратится целиком на неё.
+  ⭐ **Почему сдвига быть не может, и это довод, а не надежда:** новый файл симуляцией не
+  вызывается (единственный потребитель — `AimProvider`), новый член `Spread.HipHalfWidth` не
+  зовёт никто из боевого пути, `GameFeelConfig` в `SimConfig` не входит и симуляцией не читается
+  (ADR-002 A27), а рефлективный сторож `SimConfigHashTests` покраснел бы первым, если бы заход
+  завёл там поле. ⭐ **РУЛИНГ 318: правка `.asset` эталоны НЕ трогает** — они пришпилены к
+  `TestConfigs`.
+- ⛔⛔ **ЛИЦЕНЗИЯ UNITY — ЧАСТЬ ОКРУЖЕНИЯ** (урок 688): истекает **2026-10-07**, продлевается
+  только входом владельца в Hub. Признак — `EXIT=198` за ~44 с и
+  `LicenseGroupOfflineValidityPeriodIsExpired` в логе. **Нештатный код выхода разбирается ЛОГОМ
+  до любых выводов о тестах.** Проверка:
+  `$HOME/Unity/Hub/Editor/6000.3.21f1/Editor/Data/Resources/Licensing/Client/Unity.Licensing.Client --showEntitlements`.
+  ⚠ **`KILLED_BY_CEILING` = зависший прогон**, лечится ЧИСТЫМ перезапуском, а не разбором.
+- **Запретный список:** не менять `client/CLAUDE.md`, `.github/CODEOWNERS`, `.gitattributes`,
+  `client/ProjectSettings/**`, `client/Packages/**` (CR 9).
+  **`client/Assets/Data/*.asset` руками не редактировать** — только бутстрапом.
+  ⛔ **И не трогать `ShotGeometry`, `ProjectileFlight`, `ProjectileSystem`, `HitZones`,
+  `Trajectory`, `Targeting`, `Geometry`, `WeaponSystem`, `SimConfig`, `SimConfigHash`,
+  `Networking/**`** — их появление в диффе ЛЮБОГО таска есть **находка ревью, а не работа**
+  (спека §3.1). Читать их можно и нужно; писать в них — нет.
+- **`ProtocolVersion` остаётся 5.** Рост версии — стоп и разбор. Провод заход не касается вовсе:
+  ⛔ судить о «проводности» списком `GWrite___`/`GRead___` в собранной сборке (RULING 202), а не
+  по полю в типе симуляции.
+- **`Ring.Simulation` меняется** — строго TDD (CR 2), без `UnityEngine` (CR 1, исключение —
+  `Unity.Mathematics`). ⚠ Заход добавляет туда **один файл и один член**; всё остальное —
+  `Presentation` (санкция владельца Н30/Н35/Н37–Н46) и `Editor`.
+- **Два источника чисел** (спека §0, Р56/Р117): `.asset` — числа игры; C#-дефолты и `TestConfigs`
+  — числа тестов. **Ожидания в тестах — только фикстурными выражениями**; литерал из `.asset` в
+  тесте = находка ревью.
+  ⛔⛔ **ТРИ РАСХОЖДЕНИЯ, И ВСЕ ТРИ ЗАДЕВАЮТ ЭТОТ ЗАХОД** (проверено чтением обоих источников):
+
+  | Величина | Игра (`.asset`) | Фикстура (`TestConfigs.cs:63-71`) | Где всплывёт |
+  |---|---|---|---|
+  | `Weapon.ProjectileSpeed` | **52.5** | **35** | предел дальности линии: **78.75 м** против **52.5 м** в тестах |
+  | `Weapon.ProjectileRadius` | **0.02** | **0.12** | им падится каждый отрезок; допуски тестов считаются по 0.12 |
+  | `Arena.BarrierTop` | **3** | **0** (`:651`) | ⛔ при нуле `BarrierStops` отвечает **`true`** — «держит всё» |
+
+  ⛔ **Фикстурный `BarrierTop = 0` — записанное решение, а не небрежность** (голдены гоняются от
+  этой структуры). ⇒ Каждый тест, которому нужна настоящая высота барьера, ставит её **в своём
+  теле**; образец — `BarrierHeightTests.Field(float barrierTop)` (`:24-34`), и его собственная
+  шапка это правило объявляет дословно: «Every fixture here states its own `BarrierTop` in the
+  test body».
+  ⚠ `TestConfigs.Default()` — **ЗОННАЯ с волнами**; `Quiet()` = `Default()` без волн;
+  `Open()` (`:673`) = без препятствий, но **сборщик на спавн-кольце**; `OpenField()` (`:740`) =
+  `Open()` + сборщик в начале координат + беззонная арена. ⛔ **`.asset` из юнит-тестов не читать.**
+- **Словарь ADR-003 §9 + A1/A3/A4/A7/A8 — до первой фразы** (452): игрок — **сборщик**; «щит»
+  запрещён нигде (`CocoonDamping`); рикошет — `Ricochet*`, **`Bounce*` не заводить** (Р422);
+  подкат = **слайд**; `HitZone.Body` по-русски — **«корпус»** (Н35).
+  🆕 ⛔⛔ **`Gate` ЗАНЯТ СЛОВАРЁМ ПОД «СТВОР»** (ADR-003 A3, строка «`Gate` \| створ \| —»; на
+  экране «СТВОР ОТКРЫТ») — на нём споткнулась спека v3, и это урок 724. Засечка = **`Notch`**
+  (свип по коду даёт **ноль**). ⚠ **Имя нового поля свипается И ПО СЛОВАРЮ ADR, а не только по коду.**
+  ⛔ «Трасса/трассировка» из имён и прозы убраны намеренно: рядом живёт `TracerProjectiles` —
+  «трассер».
+- **Орфография идентификаторов — американская**; британские формы — находка.
+- ⚠ **КОММЕНТАРИИ В СНИППЕТАХ ЭТОГО ПЛАНА НАПИСАНЫ ПО-РУССКИ НАМЕРЕННО** — это объяснение
+  исполнителю, а не текст для файла. В `.cs` они переносятся **по-английски**; по-русски остаётся
+  только строка сообщения `Assert.*` и user-facing строки UI — законный прецедент репозитория.
+  **Скопированный дословно русский комментарий — находка свипа кириллицы и красный гейт таска** (454).
+- ⛔⛔ **СВИПЫ — ТОЛЬКО ГОТОВЫМ `sweeps.sh`, А НЕ САМОДЕЛЬНОЙ КОМАНДОЙ** (695):
+
+```bash
+"$SCRATCH/tools/sweeps.sh" <SHA предыдущего коммита таска>
+```
+
+  Он сшивает дифф с `git ls-files --others --exclude-standard` (иначе **новые файлы не видны**:
+  `git diff` untracked не показывает, а свип по правилу 679 идёт **до** `git add`), отбрасывает
+  `^+++`, исключает строки `Assert.*` и строковые литералы, ловит кириллицу в `//`/`///`,
+  британизмы, `Bounce`, `щит`/`shield`, цитаты номеров строк, секреты и NUL.
+  ⚠ **BASE передавать явно.** ⚠ Он смотрит только `client/Assets/**/*.cs` — **правки в `docs/`
+  свипать руками** (это T6 и T7 целиком). ⛔⛔ **И БЕЗ `head`** (700).
+  ⛔⛔ **`grep` в этой оболочке — функция-обёртка** (648): по `.superpowers/` и `.beads/` — только
+  `/usr/bin/grep`. ⚠ Пути с пробелом ломают `$(find …)` без кавычек.
+- **ГЕЙТ-ОТКАТ (после КАЖДОГО Unity-прогона):**
+  `git status --porcelain -- client/Packages client/Assets/Settings .gitattributes
+  client/ProjectSettings "client/Assets/TextMesh Pro"` → пусто.
+- **ГЕЙТ-ЛОГ:** `grep -E "error CS|Shader error|Failed to import|NullReferenceException|Exception" <лог>`
+  → пусто. ⚠ **`error CS` недопустим ни на одном таске** — компиляция обязана быть чистой после
+  каждого.
+- **ГЕЙТ-META:** каждому новому не-`.meta` файлу под `client/Assets/**` соответствует
+  `<path>.meta` (генерит Unity, **не субагент** — R-98).
+- **ГЕЙТ-ФАЙЛ (для каждого СОЗДАННОГО файла):** `file <файл>` = «UTF-8 Unicode text» или «ASCII
+  text», и NUL-чек `tr -d -c '\000' < <файл> | wc -c` → `0`.
+- **RED-дисциплина.** Тест не компилируется из-за отсутствующих типов → сначала **заглушки до
+  КОМПИЛЯЦИИ**, положенные **тем же шагом, что и тесты** (рулинг 358), затем наблюдаемый FAIL
+  ассерта. **Ошибка компиляции ИЛИ ИСПОЛНЕНИЯ ≠ RED** (332/498/630). **RED даёт `EXIT=2`.**
+  ⛔⛔ **ФОРМА ЗАГЛУШКИ — КОНСТАНТА, А НЕ `NotImplementedException`, И ЭТО ОТКЛОНЕНИЕ ОТ Р503**
+  (запись 3 «Отклонений»): бросок — ошибка **исполнения**, а она ≠ RED по тому же правилу
+  332/498/630, на которое Р503 и ссылается. Канон репозитория — константа
+  (`own-shot-prediction-plan` T1 Step 2 и T7 Step 2 дословно: «⛔ КОНСТАНТЫ, не почти
+  реализация»). ⇒ `Solve` возвращает `default(AimLineSolution)`, `HipHalfWidth` — `0f`,
+  `Notches` — четыре `float2.zero`.
+  ⚠ **Тест, зелёный на сегодняшнем коде, свидетелем не является** (427) — такие названы
+  **СТОРОЖАМИ** явно. ⚠ **Тавтология `f(x) == f(x)` свидетелем не является** (428).
+  ⛔⛔ **ПРЕМИССА ФИКСТУРЫ — СВОЙСТВО, НЕ ЛИТЕРАЛ** (307/308, 671).
+  ⛔⛔ **ПРОМЕЖУТОЧНЫЕ ЧИСЛА — `double`** (585). **ОПЕРАНДЫ АССЕРТА — ИЗ ОДНОЙ ФАЗЫ ТИКА** (694).
+  🆕 ⛔ **И НЕ ПИНИТЬ ОТНОШЕНИЕ ДВУХ ТАНГЕНСОВ** (725): `tan(1.5a)/tan(a)` = **1.500423**, а не
+  1.5 — строгий ассерт на 1.5 покраснел бы на **верном** коде. Пинится **делегирование**.
+- ⚠ **ЧИСЛА `total` И «КРАСНЫХ N» В ШАГАХ — ОРИЕНТИР, А НЕ ПИН.** Перед прогоном исполнитель
+  пишет в отчёт таска `ожидание = предыдущий total + <число тестов, добавленных ЭТИМ таском>` и
+  сверяет глазами; **стопом является расхождение с ЕГО СОБСТВЕННЫМ предсказанием** (Р431).
+- ⚠ **ЧИСЛО КРАСНЫХ НА ШАГЕ-ЗАГЛУШКЕ СЧИТАЕТСЯ ПО АССЕРТАМ, А НЕ ПО ЧИСЛУ ТЕСТОВ.** На
+  константной заглушке часть негативных фикстур **зелена** (`Assert.AreNotEqual(Body, Stop)` при
+  `Stop == Range` проходит), и неверное предсказание само провоцирует ложный стоп. Поимённый
+  разбор — в T1 Step 3.
+- **Мутация на каждую ветку** (спека §4.3, **M301–M322**; новые — с **M323**): форма —
+  **ОСЛАБЛЕНИЕ**, жертва называется **поимённо И числом/механизмом**, предсказание пишется
+  **ДО прогона** в `$SDD/task-461s-<N>-mutations-predicted.md`.
+  ⛔ **ОТКАТ МУТАЦИИ — `cp` с копии и `md5sum`, НЕ `git checkout`** (350).
+  ⛔ **Жертвы M301–M322 НЕ ПЕРЕНАЗНАЧАТЬ** — они выверены двумя кругами ревью спеки.
+  ⛔ **НЕ ОБЪЯВЛЯТЬ МУТАНТА ВЫЖИВШИМ, НЕ ПОКАЗАВ ВХОД, НА КОТОРОМ ВЕТКИ РАСХОДЯТСЯ** (696).
+- **Тест-швы:** канон — `var p = w.PlayerAt(i); p.X = …; w.SetPlayerForTest(i, p);` и
+  `var m = w.Mobs[i]; m.X = …; w.SetMobForTest(i, m);`. Существующие переиспользуются
+  (`TestWorlds.IdleTicks/SpawnMobsAt/FireAimed3D/HipFire/RunUntilProjectilesDie/
+  RelocatePlayerForTest/FreezeArchetype`, `TestEvents.TryFirstOf`). **Новые параметры существующих
+  хелперов — только хвостовыми с умолчанием.** ⚠ **`m.Ai = MobAiState.Idle` моба НЕ МОРОЗИТ** —
+  морозит `TestWorlds.FreezeArchetype`.
+- ⛔ **`RenderSnapshot` собирается в тестах вручную** — это штатно: класс публичный
+  (`RenderSnapshot.cs:59`), поля `Players`/`PlayerCount`/`Mobs`/`MobCount`/`LocalPlayerIndex`
+  открыты (`:62-70`), а `Player` — синоним `Players[LocalPlayerIndex]` (`:326`).
+- **bd:** сабтаски создаются ДО T1 (раздел «Декомпозиция bd»); клейм на старте таска;
+  `bd note app-461s` **КОРОТКО** после каждого; эвиденс — **файлом в `$SDD`**; после каждого
+  `bd close` — явный `bd export -o .beads/issues.jsonl`; jsonl-дрифт — chore-коммитом из
+  `$APP_REPO` в main. ⛔ **Лимит колонки 65 535 Б** (601). ⚠ **Ноты писать ДО диспетча** (564),
+  **текст — в ОДИНАРНЫХ кавычках** (602) либо `--file`.
+- **Коммиты:** `feat|test|fix|refactor|chore|docs(app-461s): …` (рус.).
+  ⭐⭐ **КОММИТ-ТРЕЙЛЕРА НЕТ ВОВСЕ** — решение владельца (Н31): ни `Co-Authored-By`, ни любого
+  другого. Перед каждым — секрет-чек
+  `git status --short --untracked-files=all | grep -E '\.(env|pem|key)$|secrets/'` → пусто, и
+  сверка `git diff --cached --stat` со скоупом таска **ПОСЛЕ `git add`** (до него индекс пуст).
+- **Unity — без `timeout`, на собственном стороже** (584, `$SDD/tools-34/`): фон, точный PID,
+  свой потолок, `kill -9` по номеру; **ни `pgrep -f`, ни `pkill -f`**; один инстанс.
+  ⛔⛔ **`nohup` не спасает от таймаута bash-тула** (619): `setsid nohup … < /dev/null & disown`.
+  ⚠ **перед каждым запуском — `uptime`**, при LA > 4 ждать.
+  ⛔ **НЕ ЗАПУСКАТЬ СУБАГЕНТА, ПОКА ИДЁТ ПРОГОН/СБОРКА UNITY**; ⛔ **и не править дерево, пока
+  ревьюер его читает**.
+
+---
+
+## ⚠ Что красное на каждом таске — ТАБЛИЦА, А НЕ ОБЕЩАНИЕ
+
+Спека §4.1 называет **два** ожидаемых красных, и оба приходятся на **T1**. Ниже они разложены по
+таскам вместе с тремя эталонами. **Любое расхождение — стоп и разбор**, а не «наверное, так и
+надо» (Р431).
+
+| Таск | Ожидаемые красные |
+|---|---|
+| **T1** | ⭐⭐ **ДВЕ СТРОКИ СПЕКИ, НО ТРИ ФАЙЛА И ДВА РАЗНЫХ ШАГА.** (1) `AimLineTests` — **24 фикстуры** плюс **четыре** новых в `WeaponTests` (тесты 20–23, полуширина); (2) **одна** новая в `AllocationTests` (тест 27). ⚠ **На шаге-заглушке красных МЕНЬШЕ, чем фикстур** — разбор по ассертам в Step 3, и число там названо **до** прогона. ⛔ **Эталоны остаются ЗЕЛЁНЫМИ на всём таске**: заход не меняет ни строки поведения в `Ring.Simulation`. Красный эталон здесь — **стоп** |
+| **T2** | **НОЛЬ.** Правки — три файла `Presentation`, ни одного теста в наборе на них нет. ⚠ Свип `RenderMuzzleSimPos` по тестам даёт **ноль** ⇒ делегирование красных не даёт |
+| **T3** | **НОЛЬ.** `AimLine.Notches` уже покрыта фикстурами 25–26 таска T1 (они зелены с T1); правки T3 — рисование и выключатель, то есть `MonoBehaviour` и бутстрап |
+| **T4** | **НОЛЬ.** ⚠ **И это проверено свипом, а не памятью:** рефлективного сторожа над `GameFeelConfig` в наборе **нет вовсе** — рефлексия живёт над `SimInput`, `RenderSnapshot`, `SimConfig`, `PlayerState`, `ReplicateData`, `MatchResultsNet`, `NetStats`, `MatchStats`, `WorldStats`, `WaveState`, `VisibilityConfig`, и ни один заход не трогает. ⇒ Свидетель трёх новых полей — **гейт `grep` по тексту ассета**, а не тест |
+| **T5** | **НОЛЬ КРАСНЫХ, НО ОДНА ОШИБКА КОМПИЛЯЦИИ, ЕСЛИ ПОРЯДОК ШАГОВ НАРУШЕН.** Удаление `CrosshairView.ConeSegments` ломает **бутстрап** (`StageOneSceneBootstrap.cs:1556` читает `spreadCone.positionCount = CrosshairView.ConeSegments`) — обе правки идут **одним шагом**. ⚠ Понижение видимости `Spread`/`SprayPattern` до `internal` компиляцию тестов **не ломает**: `InternalsVisibleTo("Ring.Simulation.Tests")` уже стоит. ⚠ Свип `CrosshairView\|SpreadCone\|ConeSegments` по тестам даёт **один** файл, и там это комментарий про `AimActive` |
+| **T6** | **НОЛЬ** (доки и шапки) |
+| **T7** | **НОЛЬ** (амендменты ADR кода не трогают) |
+| **T8** | **НОЛЬ** (сборка и веха) |
+
+⚠ **Гейт «ноль красных» применим на КАЖДОМ таске, включая T1 после Step 5** — этот заход не
+краснит ни одного существующего теста, и в этом его отличие от `app-8dv`, где красных было семь
+плюс три эталона. **Единственные красные захода — его собственные новые фикстуры, и только до
+своей GREEN-фазы.**
+
+---
+
+## Runbook
+
+Инструменты копируются в `$SCRATCH/tools/` из `$SDD/tools-34/` **один раз на сессию**:
+
+```bash
+mkdir -p "$SCRATCH/tools" "$SCRATCH/runs"
+cp "$SDD"/tools-34/*.sh "$SDD"/tools-34/*.py "$SCRATCH/tools/"; chmod +x "$SCRATCH"/tools/*.sh
+```
+
+- **R-TEST (полный):**
+
+```bash
+uptime   # LA < 4, иначе ждать
+setsid nohup "$SCRATCH/tools/run.sh" "$SCRATCH/runs/<имя>" > "$SCRATCH/runs/<имя>.stdout" 2>&1 < /dev/null & disown
+# ждать: цикл по файлу <outdir>/exit; разбор: python3 "$SCRATCH/tools/parse.py" <outdir>/t.xml
+```
+
+  Ожидание: `EXIT=0`, `total` — **ГЛАЗАМИ** из `parse.py`; красные — разбором xml питоном по
+  `test-case`, **не грепом**; + ГЕЙТ-ОТКАТ + ГЕЙТ-ЛОГ. База — **1904**, 380 с.
+  ⛔ **`EXIT=198` = лицензия Unity, не код** (688). ⚠ `KILLED_BY_CEILING` — перезапуск.
+- **R-FILTER `<Класс>`:** `run.sh <абс. outdir> <Класс>`. ⚠ **Запятая не работает** — один класс
+  на прогон; `testcasecount` вложенного сьюта сверять глазами (562).
+  ⚠ **Норма фильтра 20–30 с**, но `DeterminismTests` идёт **180 с**, `AllocationTests` — **267 с**.
+- **R-COMPILE:** `-batchmode -quit -projectPath client -logFile …` → `EXIT=0` + ГЕЙТ-ЛОГ +
+  ГЕЙТ-ОТКАТ.
+- **R-APPLY:** `"$SCRATCH/tools/apply.sh" <абс. outdir> Ring.Editor.StageOneSceneBootstrap.Apply`
+  → `EXIT=0` + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ.
+- **R-IDEM:** повторный R-APPLY → `git status --porcelain -- client/` и `git diff -- client/`
+  пусты. **Мерить ПОСЛЕ коммита артефактов.**
+  ⛔ **Тестов бутстрапа в наборе нет вовсе** — R-IDEM и есть его единственный свидетель.
+- **R-ASSET (гейт трёх новых полей, T4):** после R-APPLY —
+  `/usr/bin/grep -c "AimRayHipColor\|AimRayNotchFrac\|AimRayNotchMinLength" client/Assets/Data/GameFeelConfig.asset`
+  → **3**. ⛔ Ноль означает, что маркер-ключ не переехал и поля не доехали до ассета **никогда**.
+- **R-BUILD-`<X>`:** `"$SCRATCH/tools/build.sh" <абс. outdir> <Target>`. **ФОНОМ**; вердикт — **по
+  строке «Exiting batchmode successfully»**, НЕ грепом `error`. Норма: Linux-клиент 40–55 с.
+- **R-STAND:** по `RUNBOOK.md`, **только по слову владельца**:
+  `RING_DEV_IMAGE=brolin/ring-server-dev:882a965 RING_ROSTER=./match-v4-1p.json docker compose -f docker-compose.dev.yml up -d`.
+  ⛔ **`RING_DEV_IMAGE` обязателен.** ⛔ **Ключ задержки — ОДИН токен со слешем (`80/5`) и задаёт
+  его ОДНА сторона**: сервер с RTT, клиенты с `-ring-latency off`. ⛔ **`-logFile` каждого запуска
+  — с уникальным именем** (682). ⚠ После обрыва сервер держит место **30 с** (`DuplicatePlayer`).
+  ⭐⭐ **ОБРАЗ ПЕРЕСОБИРАТЬ НЕ НАДО** — `simConfigHash` заход не двигает (проверяется **по логу
+  сервера**, а не по вере); пересобирается **клиент**.
+- **R-COMMIT:** `sweeps.sh <BASE>` → секрет-чек → ГЕЙТ-META → ГЕЙТ-ФАЙЛ для созданных →
+  `git add …` → **`git diff --cached --stat` против скоупа** → `git commit`.
+  ⚠ Порядок именно такой: до `git add` индекс пуст, и сверка скоупа показала бы ноль строк.
+
+---
+
+## Фаза Ф-A — линия огня как чистая функция (T1)
+
+Цель фазы — **весь ответ «куда уйдёт выстрел» становится тестируемым числом**, до того как хоть
+одна строка картинки его прочитает. T1 идёт **первым и в одиночку**: у него 28 новых фикстур и
+22 мутации, и он единственный трогает `Ring.Simulation`.
+
+### Task T1: `AimLine` + `Spread.HipHalfWidth`
+
+**Files:**
+- Create: `client/Assets/Scripts/Simulation/Combat/AimLine.cs` (+ `.meta`)
+- Create: `client/Assets/Tests/EditMode/AimLineTests.cs` (+ `.meta`)
+- Modify: `client/Assets/Scripts/Simulation/Combat/Spread.cs` (**новый член `HipHalfWidth`**
+  рядом с `HipRadians` `:20-28`; шапка `:6-17` — «два потребителя» становятся «три»)
+- Modify: `client/Assets/Tests/EditMode/WeaponTests.cs` (**четыре** фикстуры рядом с
+  `HipSpread_RunAndSlideMultipliers` `:260`)
+- Modify: `client/Assets/Tests/EditMode/AllocationTests.cs` (**одна** фикстура; соседи —
+  `Tick_DoesNotAllocateGC` `:21`, `SaturatedTrio_TicksWithoutAllocations` `:72`,
+  `TracerStepAndWrite_DoNotAllocateGC` `:471`)
+
+**Interfaces:**
+
+```csharp
+// Simulation/Combat/AimLine.cs — НОВЫЙ ФАЙЛ, public static class.
+/// Где кончается луч прицеливания — тем же порядком кандидатов, каким его
+/// находит снаряд. ⚠ Дом — Ring.Simulation, и это ТРИ довода, а не удобство:
+/// HitZones объявлен internal собственным решением (его шапка), ответ обязан
+/// совпасть с серверным (физический каст по прокси отвечает на другой вопрос,
+/// и расхождение прокси с Parts — предмет app-94sk), а MonoBehaviour EditMode
+/// не заводит вовсе.
+///
+/// ⛔ НИЧЕГО НЕ ПИШЕТ И СИМУЛЯЦИЕЙ НЕ ЗОВЁТСЯ. Единственный потребитель —
+/// Presentation/AimProvider. Поэтому золотые эталоны этот файл не двигает, и
+/// санкция владельца на перепин (Н44) на него не тратится — она за app-94sk.
+public enum AimStop : byte { Range = 0, Barrier = 1, RingWall = 2, Body = 3 }
+
+/// ⚠ У КАЖДОГО ПОЛЯ ЕСТЬ ЧИТАТЕЛЬ (Ruling 73): End/Height — луч (T2);
+/// Start/Dir/NotchAt/NotchHalfWidth — засечки (T3); Length/Stop/Zone — прибор
+/// (T4). Индекс задетого тела НЕ объявляется: читателя нет.
+/// ⚠ End и NotchAt — СВОЙСТВА, а не поля (рулинг 291): одно число — один дом.
+public readonly struct AimLineSolution
+{
+    public readonly float2 Start;          // дуло в плане
+    public readonly float2 Dir;            // единичное направление линии
+    public readonly float Length;          // до упора
+    public readonly float Height;          // постоянная высота линии = высота дула
+    public readonly AimStop Stop;
+    public readonly HitZone Zone;          // часть тела под осью; None вне Body
+    public readonly float NotchDistance;   // где стоят засечки
+    public readonly float NotchHalfWidth;  // полуширина конуса на этой дистанции
+
+    public float2 End     => Start + Dir * Length;
+    public float2 NotchAt => Start + Dir * NotchDistance;
+}
+
+public static class AimLine
+{
+    /// Дуло В ПЛАНЕ — дом формулы ДЛЯ КАРТИНКИ. ⚠ Вторая копия этой формулы
+    /// живёт в ShotGeometry.Solve (`:204`), и трогать её нельзя (эталоны);
+    /// чтобы копии не разошлись, у пары есть тест 29.
+    public static float2 MuzzlePlan(float2 heroPos, float2 aimPoint, float muzzleOffset,
+                                    out float2 dir);
+
+    public static AimLineSolution Solve(float2 heroPos, float2 aimPoint, float muzzleHeight,
+                                        in SimConfig cfg, RenderSnapshot snap, int selfIndex);
+
+    /// Четыре точки двух поперечных штрихов (T3 их рисует).
+    public static void Notches(in AimLineSolution line, float strokeLength,
+                               out float2 a0, out float2 a1, out float2 b0, out float2 b1);
+}
+
+// Simulation/Combat/Spread.cs — НОВЫЙ ЧЛЕН рядом с HipRadians.
+/// ⛔ ДОМ — ЗДЕСЬ, А НЕ В AimLine, И ЭТО НАХОДКА КРУГА 2 СПЕКИ (рулинг 357):
+/// три операнда этой функции — ровно операнды HipRadians выше, а шапка этого
+/// класса объявляет его ЕДИНСТВЕННЫМ домом конуса. Полуширина в файле «линии
+/// огня» завела бы конусу третий дом — против того самого правила, на которое
+/// опирается снятие круга (T5).
+///
+/// ⛔⛔ КЛАМП ОБЯЗАТЕЛЕН, И ЭТО НЕ ПЕРЕСТРАХОВКА. Слайдеры владельца дают
+/// SpreadRad [0,1] и RecoilMaxRad [0,1] при SpreadSlideMult [1,5] ⇒ конус
+/// достижимо доходит до 10 радиан, а tan на π/2 уходит в бесконечность и
+/// меняет знак. Полуширина клампится по УГЛУ и не может быть отрицательной
+/// или неконечной.
+internal static float HipHalfWidth(in WeaponSimConfig weapon, in PlayerState p,
+                                   in HeroSimConfig hero, float distance);
+```
+
+**⭐ Арифметика — пересчитана питоном этой сессией** (правило 179/394), **по ФИКСТУРЕ**
+(`ProjectileSpeed 35`, `ProjectileRadius 0.12`, `BarrierTop 0`):
+
+| Величина | Вывод | Фикстура | Игра |
+|---|---|---|---|
+| Предел дальности | `ProjectileSpeed × ProjectileLifetime` | **52.5 м** | 78.75 м |
+| Конус от бедра стоя, до огня | `SpreadRad` | 0.026 рад = **1.49°** | то же |
+| Конус в очереди стоя / бег / слайд | `(SpreadRad + RecoilMaxRad) × 1 / 1.5 / 2` | **5.50° / 8.25° / 11.00°** | то же |
+| Полуширина до огня на 10 м | `tan(1.49°) × 10` | **0.26 м** | то же |
+| Полуширина в очереди на 10 м | `tan(5.50°) × 10` | **0.96 м** | то же |
+| ⛔ Отношение полуширин бег/стоя | `tan(1.5a)/tan(a)` | **1.500423** | — |
+| ⛔ Отношение полуширин слайд/стоя | `tan(2a)/tan(a)` | **2.001354** | — |
+
+⛔⛔ **ПОСЛЕДНИЕ ДВЕ СТРОКИ — ЭТО УРОК 725, И ОН СТОИТ ЖИЗНИ ТЕСТА:** строгий ассерт «отношение
+равно 1.5» покраснел бы на **верном** коде. Тесты 20–23 пинят **делегирование, дистанцию и
+кламп**, а множители уже доказывает сосед `HipSpread_RunAndSlideMultipliers`.
+
+- [ ] **Step 1 (RED, фикстуры линии):** создать `AimLineTests.cs` — **24 фикстуры**.
+      ⚠ **Мир собирается из `RenderSnapshot` вручную**, а не из `SimulationWorld`: предмет здесь —
+      чистая функция, и её вход обязан читаться на одном экране с ассертом (прецедент явной
+      фикстуры — `DashRicochetTests.Fixture()`, `SprayPatternTests.Pattern()`).
+
+```csharp
+using NUnit.Framework;
+using Ring.Simulation.Combat;
+using Ring.Simulation.Core;
+using Unity.Mathematics;
+
+namespace Ring.Simulation.Tests
+{
+    /// Линия огня как чистая функция (app-461s T1, спека §4.4 тесты 1-19 и
+    /// 24-26). Тесты 20-23 живут в WeaponTests: они экзаменуют КОНУС, а его дом
+    /// — Spread, и там уже стоит HipSpread_RunAndSlideMultipliers, который
+    /// доказывает множители. Тест 27 — в AllocationTests.
+    public class AimLineTests
+    {
+        const float Eps = 1e-4f;
+
+        /// ⚠ ФИКСТУРА СОБИРАЕТСЯ ЗДЕСЬ, А НЕ БЕРЁТСЯ ИЗ SimulationWorld:
+        /// Solve принимает RenderSnapshot, и построить его руками дешевле и
+        /// честнее, чем тикать мир ради двух полей. Прецедент ровно такой
+        /// сборки в наборе есть — ResultsTests.cs:805 и FramePresenceTests.cs:42
+        /// строят кадр тем же единственным конструктором `new RenderSnapshot(in
+        /// cfg)` (:342), который размеряет массивы по ёмкостям арены.
+        static RenderSnapshot Snap(in SimConfig cfg, int players = 1, int mobs = 0)
+        {
+            var s = new RenderSnapshot(in cfg)
+                { PlayerCount = players, MobCount = mobs, LocalPlayerIndex = 0 };
+            for (int i = 0; i < players; i++) s.Players[i] = new PlayerState { Alive = true };
+            return s;
+        }
+
+        [Test]
+        public void TheLineIsHorizontalAtTheMuzzleHeight()   // тест 1, M309
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var snap = Snap(in cfg);
+            AimLineSolution standing = AimLine.Solve(float2.zero, new float2(10f, 0f),
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0);
+            Assert.AreEqual(cfg.Hero.MuzzleHeight, standing.Height, Eps,
+                "высота линии не равна высоте дула стоя");
+
+            AimLineSolution sliding = AimLine.Solve(float2.zero, new float2(10f, 0f),
+                cfg.Hero.SlideMuzzleHeight, in cfg, snap, 0);
+            Assert.AreEqual(cfg.Hero.SlideMuzzleHeight, sliding.Height, Eps,
+                "в слайде линия не опустилась — высота приходит параметром, а не тернаром внутри");
+            // ⚠ ПРЕМИССА СВОЙСТВОМ, НЕ ЛИТЕРАЛОМ (307/308): две высоты обязаны
+            // отличаться, иначе тест зелен на любой из них.
+            Assert.Less(cfg.Hero.SlideMuzzleHeight, cfg.Hero.MuzzleHeight,
+                "премисса фикстуры: слайдовое дуло ниже стоячего");
+        }
+
+        [Test]
+        public void AnEmptyArenaStopsTheLineAtTheRangeLimit()   // тест 2, M304
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            AimLineSolution line = AimLine.Solve(float2.zero, new float2(10f, 0f),
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0);
+            Assert.AreEqual(AimStop.Range, line.Stop, "упор не в предел дальности");
+            // Ожидание — ФИКСТУРНЫМ ВЫРАЖЕНИЕМ: 35 * 1.5 = 52.5 м, а НЕ 78.75
+            // (то игровое число, урок 699).
+            Assert.AreEqual(cfg.Weapon.ProjectileSpeed * cfg.Weapon.ProjectileLifetime,
+                line.Length, Eps, "предел дальности не равен сроку жизни снаряда");
+        }
+
+        [Test]
+        public void TheLineStartsAtTheMuzzle_NotAtTheHero()   // тест 3, M314
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            var hero = new float2(3f, -2f);
+            AimLineSolution line = AimLine.Solve(hero, new float2(13f, -2f),
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0);
+            Assert.AreEqual(cfg.Weapon.MuzzleOffset, math.distance(hero, line.Start), Eps,
+                "начало линии не отодвинуто на MuzzleOffset");
+            // И оно на отрезке «сборщик → курсор», а не в стороне.
+            Assert.AreEqual(1f, math.dot(math.normalize(line.Start - hero), line.Dir), Eps,
+                "дуло отодвинуто не вдоль линии прицеливания");
+        }
+        // …тесты 4-19 и 24-26 — по §4.4 спеки, полный перечень в Step 1a ниже
+    }
+}
+```
+
+- [ ] **Step 1a (тот же шаг — остальные 21 фикстура; перечислены поимённо, чтобы ни одна не
+      потерялась).** ⚠ Каждая несёт **свою** премиссу свойством и **своё** сообщение ассерта:
+
+  | # | Имя фикстуры | Что пинит | Премисса, без которой тест — сторож |
+  |---|---|---|---|
+  | 4 | `TheRingWallStopsTheLine_WhenNothingElseDoes` | `Stop == RingWall` | ⚠ курсор **за** ободом, иначе выигрывает `Range` |
+  | 5 | `ABodyOnTheLineStopsItBeforeTheWallBehind` | `Stop == Body`, `Length` меньше дистанции до стены | тело **на** линии (проверить `SegmentCircle` сошёлся) |
+  | 6 | `ABodyOffTheLineDoesNotStopIt` | `Stop == Range` | ⛔ **`Length == предел`**: без неё тест зелен на заглушке |
+  | 7 | `ARefusedBodyDoesNotScreenTheOneBehindIt` | перескан: `Stop == Body` и задето **дальнее** тело | ближнее тело — с частями **выше** оси |
+  | 8 | `ABarrierNearerThanABodyWins_AndViceVersa` | оба порядка | ⚠ `BarrierTop` ставится **в теле теста** |
+  | 9 | `AnExactTieGoesToTheCandidateAskedFirst` | строгое `<` | равенство `t` строится **арифметически** |
+  | 10 | `InASlideTheAxisPassesLower` | стоя `Body`, в слайде `Legs` | ⛔ **чейзер**, не ганнер: ноги ганнера 0–1.32 накрывают **обе** высоты, и мутация выжила бы |
+  | 11 | `ASlidingCollectorDoesNotStopTheLine` | `Stop != Body` | ⛔ **`Length == предел`** + `SlideProfileTop < muzzleH` |
+  | 12 | `MyOwnBodyIsExcluded` | `Stop != Body` | ⛔ **`Length == предел`** + второй сборщик **на** линии останавливает |
+  | 13 | `ABarrierBelowTheMuzzleDoesNotHold` | `Stop != Barrier` | ⛔ `BarrierTop` ставится **в `(0, muzzleH)`**, не в ноль |
+  | 14 | `CollectorsAreGatedOnAlive_MobsAreNot` | эвакуант (`Alive == false`, `Hp > 0`) не держит; моб с `Hp` в ноль — держит | ⛔ это **не** `Hp > 0`, и обе половины в одном тесте |
+  | 15 | `TheZoneUnderTheAxisIsReported` | ганнер в 5 м — `Legs`; сборщик — `Body` | обе цели **на** линии |
+  | 16 | `ACursorNearerThanTheMuzzleDoesNotFlipTheDirection` | `dot(Dir, ожидаемое) > 0` | курсор **ближе** `MuzzleOffset` |
+  | 17 | `ADegenerateAimFallsBack_NotToNaNAndNotToZero` | `Dir` конечен и единичен | курсор **в** позиции сборщика |
+  | 18 | `AMuzzleInsideABodyCircleIsPinnedExplicitly` | выбранное поведение названо | тело вплотную: центр в `< bodyRadius + MuzzleOffset` |
+  | 19 | ⭐⭐ `TheOrderIsByBodyCircle_NotByPart` | двухступенчатость | A задето **по касательной** и ближе, B **в лоб** и дальше: `t` круга A < `t` круга B, но `t` части A > `t` части B |
+  | 24 | ⭐⭐ `NotchesStandAtMinOfStopAndCursor` | `NotchDistance == min(Length, |курсор − Start|)` | оба порядка: курсор ближе упора и стена в 3 м ближе курсора |
+  | 25 | `TheTwoNotchesStandOnTheConeEdges` | расстояние каждого штриха от оси `== NotchHalfWidth`; оба **перпендикулярны `Dir`** | `NotchHalfWidth > 0` |
+  | 26 | `TheNotchStrokeHasAFloor` | `max(MinLength, Frac × hw)` — обе ветви | малая и большая полуширина в одном тесте |
+
+- [ ] **Step 2 (заглушки — ТЕМ ЖЕ ШАГОМ, рулинг 358):** `AimLine.cs` кладётся целиком с
+      сигнатурами и **КОНСТАНТНЫМИ** телами: `Solve` → `default(AimLineSolution)`,
+      `MuzzlePlan` → `dir = new float2(1f, 0f); return heroPos;`, `Notches` → четыре
+      `float2.zero`; `Spread.HipHalfWidth` → `0f`.
+      ⛔ **НЕ `NotImplementedException`** (отклонение 3): бросок — ошибка **исполнения**, а она
+      ≠ RED по правилу 332/498/630. Без этого шага первый прогон дал бы **ошибку компиляции**,
+      которая ≠ RED тем более.
+- [ ] **Step 3 (verify RED — и число красных названо ДО прогона):**
+      R-FILTER `AimLineTests` → **`EXIT=2`**, `testcasecount` = **24** глазами.
+      ⚠⚠ **КРАСНЫХ ОЖИДАЕТСЯ 20, ЗЕЛЁНЫХ 4** — посчитано **по ассертам**, а не по числу фикстур:
+      **зелены на константной заглушке** тесты **6, 11, 12, 13** — все четыре негативные
+      (`Stop != Body` / `Stop != Barrier`), а заглушка отвечает `Stop == Range`, то есть проходит
+      их «по совпадению». ⭐ **Ровно поэтому Step 1a требует у каждого из четырёх премиссу
+      `Length == предел дальности`:** с ней они краснеют на заглушке (`Length == 0`) и остаются
+      настоящими свидетелями, а не сторожами (427).
+      ⇒ **Если премиссы написаны — красных 24 из 24;** если исполнитель их не написал, он увидит
+      20/4 и обязан **вернуться в Step 1a**, а не идти дальше. Оба числа названы здесь заранее
+      именно затем, чтобы ни одно не читалось как «наверное, так и надо».
+- [ ] **Step 4 (RED, конус):** четыре фикстуры в `WeaponTests.cs` рядом с
+      `HipSpread_RunAndSlideMultipliers` (`:260`), **по его дословному образцу** (`TestConfigs.Open()`,
+      `PlayerState` собирается инициализатором, ожидания — выражениями от `weapon`/`hero`):
+
+```csharp
+[Test]
+public void HipHalfWidth_DelegatesToTheCone()   // тест 20, M316
+{
+    // ⛔ ПИНИТСЯ ДЕЛЕГИРОВАНИЕ, А НЕ ОТНОШЕНИЕ МНОЖИТЕЛЕЙ (урок 725): tan
+    // нелинеен, и на фикстуре отношение полуширин бег/стоя равно 1.500423,
+    // а слайд/стоя — 2.001354. Строгий ассерт на 1.5 покраснел бы на ВЕРНОМ
+    // коде. Множители уже доказывает сосед выше; здесь доказывается, что
+    // полуширина берёт угол ИЗ НЕГО.
+    var cfg = TestConfigs.Open();
+    WeaponSimConfig weapon = cfg.Weapon;
+    HeroSimConfig hero = cfg.Hero;
+    const float D = 10f;
+
+    var standing = new PlayerState();
+    Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in standing, in hero)) * D,
+        Spread.HipHalfWidth(in weapon, in standing, in hero, D), 1e-6f,
+        "полуширина стоя не равна tan(конус) x дистанция");
+
+    // Порог бега ВКЛЮЧИТЕЛЬНЫЙ — фикстура ставит скорость РОВНО на него,
+    // как это делает сосед.
+    var running = new PlayerState
+        { Vel = new float2(weapon.RunSpreadSpeedFrac * hero.MaxSpeed, 0f) };
+    Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in running, in hero)) * D,
+        Spread.HipHalfWidth(in weapon, in running, in hero, D), 1e-6f,
+        "полуширина на бегу не делегирует конусу");
+
+    var sliding = new PlayerState
+        { SlideTimer = hero.SlideDuration, Vel = new float2(hero.SlideSpeed, 0f) };
+    Assert.AreEqual(math.tan(Spread.HipRadians(in weapon, in sliding, in hero)) * D,
+        Spread.HipHalfWidth(in weapon, in sliding, in hero, D), 1e-6f,
+        "полуширина в слайде не делегирует конусу");
+
+    // ⛔ ПРЕМИССА: без неё три ассерта выше зелены на заглушке, возвращающей
+    // ноль (tan(0) * D тоже ноль был бы, если бы конус вырождался).
+    Assert.Greater(Spread.HipHalfWidth(in weapon, in standing, in hero, D), 0f,
+        "премисса: полуширина стоя положительна");
+}
+
+[Test]
+public void HipHalfWidth_IsLinearInDistance()   // тест 21, M317
+{
+    var cfg = TestConfigs.Open();
+    var p = new PlayerState();
+    float near = Spread.HipHalfWidth(in cfg.Weapon, in p, in cfg.Hero, 10f);
+    float far = Spread.HipHalfWidth(in cfg.Weapon, in p, in cfg.Hero, 20f);
+    // ⛔ ПРЕМИССА ПЕРВОЙ СТРОКОЙ: 0 == 2*0 зелено, и без неё тест —
+    // тавтология на заглушке.
+    Assert.Greater(near, 0f, "премисса: полуширина на десяти метрах положительна");
+    Assert.AreEqual(2f * near, far, 1e-6f, "полуширина не масштабируется дистанцией");
+}
+
+[Test]
+public void HipHalfWidth_GrowsWithRecoil()   // тест 22
+{
+    var cfg = TestConfigs.Open();
+    var settled = new PlayerState();
+    // ПРЕМИССА СВОЙСТВОМ, НЕ ЛИТЕРАЛОМ: отдача за один выстрел против того,
+    // что стекает за такт огня — если первое не больше второго, конус не
+    // растёт вовсе и тест ничего не свидетельствует.
+    Assert.Greater(cfg.Weapon.RecoilPerShotRad,
+        cfg.Weapon.RecoilRecoveryRadPerSec * cfg.Weapon.FireInterval,
+        "премисса фикстуры: очередь накапливает отдачу");
+    var recoiling = new PlayerState { RecoilOffset = cfg.Weapon.RecoilMaxRad };
+    Assert.Greater(Spread.HipHalfWidth(in cfg.Weapon, in recoiling, in cfg.Hero, 10f),
+        Spread.HipHalfWidth(in cfg.Weapon, in settled, in cfg.Hero, 10f),
+        "отдача не входит в полуширину");
+}
+
+[Test]
+public void HipHalfWidth_IsClampedAtTheSliderCeiling()   // тест 23, M318
+{
+    // ⛔ ЭТО СТОРОЖ ПО ПРИРОДЕ, И ЭТО СКАЗАНО ЗДЕСЬ: на константной заглушке
+    // (0f) он зелен, потому что ноль конечен и неотрицателен. Свидетелем он
+    // становится ПОСЛЕ GREEN — против мутации M318, снимающей кламп, где tan
+    // за π/2 даёт бесконечность или отрицательное число.
+    var cfg = TestConfigs.Open();
+    var weapon = cfg.Weapon;
+    weapon.SpreadRad = 1f;          // потолок слайдера владельца
+    weapon.RecoilMaxRad = 1f;       // потолок слайдера владельца
+    weapon.SpreadSlideMult = 5f;    // потолок слайдера владельца
+    var extreme = new PlayerState
+        { SlideTimer = cfg.Hero.SlideDuration, RecoilOffset = weapon.RecoilMaxRad };
+    float hw = Spread.HipHalfWidth(in weapon, in extreme, in cfg.Hero, 10f);
+    Assert.IsTrue(math.isfinite(hw), "полуширина ушла в бесконечность — кламп снят");
+    Assert.GreaterOrEqual(hw, 0f, "полуширина отрицательна — tan прошёл за π/2");
+}
+```
+
+- [ ] **Step 5 (RED, аллокации):** одна фикстура в `AllocationTests.cs` по образцу соседей
+      (`SaturatedTrio_TicksWithoutAllocations` `:72`, `TracerStepAndWrite_DoNotAllocateGC` `:471`):
+      прогон `Solve` + `Notches` на **насыщенном** мире (много тел) не аллоцирует.
+      ⚠ **Это СТОРОЖ на заглушке** (константа не аллоцирует) и становится свидетелем после GREEN —
+      сказать это в доке теста. ⚠ Риск вида (`SetPosition` по точкам, **не**
+      `SetPositions(new Vector3[2])`) EditMode недостижим и назван в T3.
+- [ ] **Step 6 (verify RED целиком):** R-FILTER `WeaponTests` → `EXIT=2`, `testcasecount` =
+      **18 + 4 = 22**; красных **три** (тесты 20, 21, 22; **тест 23 зелен** — см. его доку).
+      R-FILTER `AllocationTests` (**267 с**) → `EXIT=0`, красных ноль, `testcasecount` = **5 + 1 = 6**
+      (сторож).
+- [ ] **Step 7 (GREEN, `Spread.HipHalfWidth`):** тело члена — **делегирование плюс кламп**:
+
+```csharp
+internal static float HipHalfWidth(in WeaponSimConfig weapon, in PlayerState p,
+    in HeroSimConfig hero, float distance)
+{
+    // Кламп по УГЛУ, а не по результату: tan за π/2 меняет ЗНАК, поэтому
+    // ловить надо аргумент. Потолок чуть ниже прямого угла — тот же приём,
+    // каким сосед по проекту держит "never NaN".
+    float half = math.min(HipRadians(in weapon, in p, in hero), MaxHalfAngle);
+    return math.max(0f, math.tan(half) * math.max(0f, distance));
+}
+
+/// Потолок полуугла конуса: чуть ниже π/2, потому что tan(π/2) неконечен, а
+/// tan за ним отрицателен. Слайдеры владельца (SpreadRad [0,1] +
+/// RecoilMaxRad [0,1]) x SpreadSlideMult [1,5] дают до 10 радиан.
+const float MaxHalfAngle = 1.5533431f;   // 89 градусов
+```
+
+  ⚠ **Число `MaxHalfAngle` пересчитывается питоном и записывается десятичным дублем** — на 89°
+  полуширина равна `57.29 × distance`, то есть заведомо за экраном, и это правильное поведение:
+  кламп существует против `NaN`, а не ради красивой картинки.
+  ⚠ **Шапка `Spread` правится тем же шагом:** «TWO CONSUMERS TODAY» (`:11`) становится тремя, и
+  третий назван — `AimLine.Solve` **внутри той же сборки**. ⛔ Это и есть довод, по которому
+  понижение видимости `Spread` до `internal` (T5) остаётся в силе: внешнего читателя у конуса не
+  остаётся.
+- [ ] **Step 8 (GREEN, `MuzzlePlan` и каркас `Solve`):**
+
+```csharp
+public static float2 MuzzlePlan(float2 heroPos, float2 aimPoint, float muzzleOffset,
+    out float2 dir)
+{
+    // ⚠ ФОЛБЭК (1,0) — ДОСЛОВНО ТОТ ЖЕ, что у обеих веток ShotGeometry.Solve
+    // (:155, :165, :202) и у SimulationRunner.RenderMuzzleSimPos (:449).
+    // normalizesafe возвращает НЕ ноль, а этот defaultvalue, поэтому
+    // вырожденный ввод (курсор в позиции сборщика) даёт конечное единичное
+    // направление, а не NaN и не ноль — тест 17 пинит именно это.
+    dir = math.normalizesafe(aimPoint - heroPos, new float2(1f, 0f));
+    return heroPos + dir * muzzleOffset;
+}
+```
+
+- [ ] **Step 9 (GREEN, `Solve` — порядок кандидатов ПОВТОРЯЕТ снаряд):** пять кандидатов, форма
+      каждого — из существующего кода, а не из головы:
+
+```csharp
+// 1. БАРЬЕРЫ И ОБОД — ОДНИМ вызовом существующей пары, над синтетическим
+//    раундом. ⭐ Прецедент вызова из чужой сборки с собранным вручную
+//    ProjectileState есть: TracerProjectiles.cs:844 и :858 делают ровно это.
+//    ⛔ Собственной перегрузки BarrierStops "по паре высот" НЕ заводить — она
+//    была бы НЕПОЛНОЙ: существующий член читает ещё и p.Radius, а он у
+//    снаряда моба (0.15) не равен оружейному (0.12 в фикстуре, 0.02 в игре).
+var probe = new ProjectileState {
+    Pos = start, Vel = dir * reach, Height = muzzleHeight, VelZ = 0f,
+    Radius = cfg.Weapon.ProjectileRadius };
+ProjectileFlight.StepResult step = ProjectileFlight.Step(in probe, in cfg, dt: 1f);
+// ⚠ При VelZ = 0 напольный кандидат Step не срабатывает ПО ПОСТРОЕНИЮ
+// (его гейт — `if (p.VelZ < 0f)`), и это довод, а не совпадение.
+
+// 2. ВЫСОТНЫЙ ГЕЙТ БАРЬЕРА — существующим членом, под тем же гейтом, что у
+//    прецедента (TracerProjectiles.cs:858).
+bool barrier = step.HasBarrier
+    && ProjectileFlight.BarrierStops(in probe, in cfg, muzzleHeight, 1f);
+// ⛔ СПРАШИВАЕТСЯ ВСЕГДА, ХОТЯ СЕГОДНЯ ОТВЕТ ИЗВЕСТЕН: при BarrierTop <= 0 он
+// отвечает true ("держит всё"), при отгруженных 3.0 против дула 1.0/0.45 —
+// тоже true. Ответ ПО ЧИСЛУ перестанет быть верным, если число тронут.
+// ⚠ contactHeight здесь — muzzleHeight, а не выражение прецедента
+// `p.Height + p.VelZ * dt * step.BarrierT`: у горизонтальной линии VelZ = 0,
+// и оба выражения дают одно число. Пишется простое, и причина — здесь.
+
+// 3. ОБОД — step.HasRingWall / step.RingWallT. ⚠ У обода НЕТ модельного верха
+//    НАМЕРЕННО (решение владельца 2026-08-11, шапка BarrierStops это
+//    объявляет), гейта здесь нет и быть не должно.
+
+// 4. ТЕЛА — ДВЕ СТУПЕНИ, как у снаряда (ProjectileSystem.cs:279-290 и :391-464):
+//    (а) широкая фаза — Geometry.SegmentCircle по РАДИУСУ ТЕЛА;
+//    (б) мин-скан, и у победителя — HitZones.Resolve; отказ ИСКЛЮЧАЕТ
+//        кандидата (swap-remove) и скан ПОВТОРЯЕТСЯ.
+// ⛔ ОДНОЙ СТУПЕНИ МАЛО, И ЭТО НЕ ЭКОНОМИЯ: части соосны и не шире тела, ⇒ t
+// части всегда НЕ МЕНЬШЕ t круга, и зазор тем больше, чем ближе линия к
+// касательной. Ранжируя по частям, мы получили бы ДРУГОЙ порядок, чем у
+// снаряда, — а вся ценность в том, что порядок ТОТ ЖЕ. Тест 19 пинит это.
+// ⚠ overlapTop — HitZones.StackTop(parts) для стоящего и Hero.SlideProfileTop
+// для слайдящего сборщика: тот же выбор, что делает ProjectileSystem.
+// ⚠ Бит слайда чужого сборщика ЕДЕТ ПО ПРОВОДУ ⇒ правило работает и в PvP.
+
+// 5. ПРЕДЕЛ ДАЛЬНОСТИ — ProjectileSpeed * ProjectileLifetime. Столько живёт
+//    снаряд; новой ручки не заводится.
+```
+
+  **Кого линия видит — гейты названы поимённо:**
+  - **Мобы гейта не требуют:** массив `snap.Mobs[0..MobCount)` живой по построению.
+    ⛔ **Гейт по `Hp <= 0` был бы прямым дефектом:** `Hp` на проводе квантуется в байт, и живое
+    тело с `Hp/MaxHp < 1/510` декодируется в ноль — у Директора это **последние 4.9 HP**, то есть
+    указатель врал бы ровно в момент добивания босса. Тест 14 пинит обе половины.
+  - **Сборщики — по `Alive`**, тем же правилом, каким их гейтит снаряд (`ProjectileSystem.cs:362`).
+    ⚠ Это **не** `Hp > 0`: эвакуировавшийся уходит с `Alive = false` при положительном здоровье.
+    ⚠ Слот, про который кадр ничего не сказал, читается как `default(PlayerState)` — **не жив**.
+  - **Своё тело исключается по `selfIndex`** (`snap.LocalPlayerIndex`).
+  - **Победитель — минимум по `t`; при точном равенстве выигрывает спрошенный раньше (строгое `<`)**
+    — та же дисциплина, что у мин-скана снаряда (`ProjectileSystem.cs:430`), и тест 9 её пинит.
+- [ ] **Step 10 (GREEN, засечки):**
+
+```csharp
+// NotchDistance = min(упор, курсор), И ЭТО ГЛАВНАЯ ПРАВКА КРУГА 2 СПЕКИ.
+// v3 ставила засечки на КОНЦЕ луча, и это ломало индикатор ровно там, где он
+// нужен: при пустой линии конец — 78.75 м, полуширина там 7.58 м стоя и
+// 15.31 м в слайде при видимой полосе земли около 25 м, то есть засечек на
+// экране НЕТ ВОВСЕ. Хуже: соскальзывание мыши с моба (упор 9 м) на пустоту
+// двигало бы зазор В 8.75 РАЗА ЗА КАДР — одна картинка кодировала бы и угол
+// конуса, и случайную дистанцию упора (урок 723). Кольцо стояло у курсора не
+// случайно, и засечки встают туда же.
+float toCursor = math.distance(start, aimPoint);
+float notchDistance = math.min(length, toCursor);
+float notchHalfWidth = Spread.HipHalfWidth(in cfg.Weapon, in self, in cfg.Hero, notchDistance);
+```
+
+```csharp
+public static void Notches(in AimLineSolution line, float strokeLength,
+    out float2 a0, out float2 a1, out float2 b0, out float2 b1)
+{
+    // ⚠ ПЕРПЕНДИКУЛЯР К НАПРАВЛЕНИЮ ЛИНИИ, А НЕ К НАПРАВЛЕНИЮ НА КУРСОР
+    // (мутация M321): при упоре ближе курсора это одно и то же, но при
+    // вырожденном вводе линия берёт фолбэк (1,0), а вектор на курсор — ноль.
+    float2 perp = new float2(-line.Dir.y, line.Dir.x);
+    float2 anchor = line.NotchAt;
+    float half = 0.5f * strokeLength;
+    float2 left = anchor + perp * line.NotchHalfWidth;
+    float2 right = anchor - perp * line.NotchHalfWidth;
+    a0 = left - perp * half;  a1 = left + perp * half;
+    b0 = right - perp * half; b1 = right + perp * half;
+}
+```
+
+  ⛔ **Геометрия штриха — чистая функция, а не решение вида:** без неё в `MonoBehaviour` осели бы
+  **четыре** решения (перпендикуляр, якорь, высота, концы), у которых нет ни теста, ни мутации.
+  ⚠ **Штрих откладывается ВДОЛЬ перпендикуляра** (то есть поперёк линии): пара штрихов образует
+  «ворота», а не «шпалы». Тест 25 пинит и положение, и перпендикулярность.
+- [ ] **Step 11 (verify GREEN):** R-FILTER `AimLineTests` → **PASS 24/24**;
+      R-FILTER `WeaponTests` → **PASS 22/22**; R-FILTER `AllocationTests` → **PASS 6/6**.
+- [ ] **Step 12 (мутации M301–M322 — ⭐ ВСЕ ДВАДЦАТЬ ДВЕ гоняются здесь; предсказания ДО прогона
+      в `$SDD/task-461s-1-mutations-predicted.md`).**
+      ⚠ **M319–M322 спека §10 приписывает таску T3, и это отклонение — запись 4 «Отклонений»:**
+      их жертвы (тесты 24–26) спека §4.4 кладёт **в `AimLineTests` таска T1**, а чистые функции,
+      которые они портят (`NotchDistance`, `NotchHalfWidth`, `Notches`), T1 и реализует. Оставить
+      мутации на T3 значило бы либо закончить T1 с двумя красными (против гейта «ноль красных на
+      выходе каждого таска»), либо гонять мутацию по коду, который таск не писал.
+      Полный список с жертвами — в разделе «Распределение мутаций». ⛔ **Откат — `cp` с копии и
+      `md5sum`, НЕ `git checkout`** (350). ⛔ **Не объявлять мутанта выжившим, не показав вход, на
+      котором ветки расходятся** (696).
+- [ ] **Step 13 (тесты швов 28 и 29 — они DoD, и без них заход недоказан):**
+
+```csharp
+[Test]
+public void TheShotLandsWhereTheLinePointed()   // тест 28 — ⭐⭐ ПУНКТ DoD
+{
+    // ⛔ ЕДИНСТВЕННЫЙ ТЕСТ, СВЯЗЫВАЮЩИЙ ЛИНИЮ С НАСТОЯЩИМ ВЫСТРЕЛОМ. Конус
+    // зануляется целиком (SpreadRad, RecoilMaxRad, SprayVariance,
+    // SprayPitchAmplitude), иначе рисунок уводит выстрел внутри конуса и
+    // сравнение теряет смысл. Серверная сторона читается ИЗ СОБЫТИЯ, а не из
+    // состояния (694: операнды из одной фазы тика).
+    // ⚠ ПРЕМИССА: overshoot == 0, иначе точка вылета уезжает на
+    // overshoot * horizSpeed (до 1.167 м на фикстуре).
+    // ⚠ Сравнение — ПО ТЕЛУ И ЗОНЕ строго, а по точке — с допуском шага
+    // снаряда фикстуры (ProjectileSpeed / 30 = 1.167 м).
+}
+
+[Test]
+public void ThePicturesMuzzleIsTheShotsMuzzle()   // тест 29 — ⭐ ПУНКТ DoD
+{
+    // Свидетель того, что ВТОРАЯ КОПИЯ формулы дула (ShotGeometry.Solve:204)
+    // не разошлась с MuzzlePlan. Копия оставлена намеренно: трогать Solve
+    // нельзя (эталоны), а у пары есть этот тест.
+    // ⚠ ПРЕМИССЫ ОБЕ: overshoot == 0 И нулевой конус — при разбросе dir2D
+    // считается ПОСЛЕ розыгрыша и с MuzzlePlan не совпадёт по построению.
+}
+```
+
+- [ ] **Step 14:** R-TEST полный → `total` = **1904 + 24 + 4 + 1 = 1933** (сверить с §4.4 спеки,
+      а не с этой строкой), красных **ноль**, `EXIT=0`.
+      ⛔⛔ **И ГЕЙТ ЭТАЛОНОВ ЯВНО:** три константы на месте, **md5 `DeterminismTests.cs` =
+      `be382bc17c9451d3b74b07e6c36fb2ea` не изменился**. Любое движение — **стоп**.
+- [ ] **Step 15:** ГЕЙТ-META (два новых файла), ГЕЙТ-ФАЙЛ, свипы → R-COMMIT
+      `feat(app-461s): T1 — линия огня как чистая функция и полуширина конуса`.
+
+**Гейт фазы Ф-A:** 1933/1933/0, `EXIT=0`; три эталона зелёные и md5 не двинулся; 22 мутации убиты
+с предсказаниями; свипы чисты; `bd note` с эвиденсом; push ветки.
+
+---
+
+## Фаза Ф-B — картинка от бедра (T2 → T3)
+
+Цель фазы — **ответ T1 доходит до экрана**: луч виден всегда, растёт из ствола модели, упирается
+туда, куда упрётся выстрел, и несёт на себе засечки разброса.
+
+⚠ **T2 идёт первым и это не вкусовой порядок:** T3 рисует засечки **на линии**, которую в
+`AimProvider` кладёт T2, и читает `AimRayView`, который T2 и перестраивает. При обратном порядке
+T3 использовал бы то, чего ещё нет.
+
+### Task T2: луч от бедра
+
+**Files:**
+- Modify: `client/Assets/Scripts/Presentation/AimProvider.cs` (кэш линии + поле + свойство;
+  точка правки — **сразу после `planeAimSimPos` `:110`, ДО ветвления `:111`**; шапка `:22-47`)
+- Modify: `client/Assets/Scripts/Presentation/AimRayView.cs` (гейт `:140-144`, конец `:165`,
+  цвет `:178-187`, шапка `:7-77`)
+- Modify: `client/Assets/Scripts/Presentation/SimulationRunner.cs`
+  (`RenderMuzzleSimPos` `:448-453` делегирует `AimLine.MuzzlePlan`; шапка `:430-447`)
+- Modify: `client/Assets/Scripts/Data/GameFeelConfig.cs` — ⚠ **обязателен, и это запись 5
+  «Отклонений»**: **три поля объявляются здесь** (после `WaveAnnounceFlashColor` `:584`), потому
+  что их читают этот таск (цвет) и следующий (две ручки засечек). ⛔ **Маркер-ключ на этом таске
+  НЕ переезжает** — он вместе с доставкой в `.asset` живёт в T4, и до него поля существуют только
+  как C#-дефолты, что для компиляции и чтения достаточно
+
+**Interfaces:**
+
+```csharp
+// AimProvider — ОДНО поле и ОДНО свойство рядом с соседями по кадру.
+AimLineSolution _cachedHipLine;
+/// Линия огня ЭТОГО кадра. ⚠ Читатели: AimRayView (луч и засечки) и DevOverlay
+/// (прибор). Кадровый контракт тот же, что у CurrentImpactWorldPoint рядом:
+/// AimProvider исполняется ПОЗЖЕ видов, поэтому вид читает значение ПРОШЛОГО
+/// кадра (K15).
+public AimLineSolution CurrentHipLine => _cachedHipLine;
+```
+
+⛔⛔ **ГДЕ ИМЕННО СТОИТ ВЫЧИСЛЕНИЕ — ОДНОЙ СТРОКОЙ ДО ВЕТВЛЕНИЯ, А НЕ «В ОБЕИХ ВЕТКАХ»**
+(запись 2 «Отклонений», проверено чтением файла). Спека §3.3 требует «считается КАЖДЫЙ кадр, в
+ОБЕИХ ветках, под тем же гейтом `Ready`» — **требование верное, а его буквальное исполнение дало
+бы дубль** (правило 2). Код показывает, что дубль не нужен: `planeAimSimPos` вычисляется
+**до** ветвления (`:110`), а бедровая ветка кончается `return` (`:127`) — значит одна строка сразу
+после `:110` исполняет требование точнее, чем две:
+
+```csharp
+if (_runner == null || !_runner.Ready) return;          // :108, без изменений
+
+float2 planeAimSimPos = ComputePlaneAimSimPos();        // :110, без изменений
+// ⛔⛔ ЗДЕСЬ, ДО ВЕТВЛЕНИЯ. v3 спеки считала линию "только в бедровой ветке и
+// только при AimActive", и это был дефект, найденный кругом 2: кэш стал бы
+// ПРОИЗВОЛЬНО СТАРЫМ. Отпустил ПКМ после пяти секунд прицеливания — первый
+// бедровый кадр нарисовал бы линию пятисекундной давности; после паузы,
+// смерти или рестарта — линию ИЗ ПРОШЛОГО МАТЧА. Сосед по классу
+// (_cachedImpactWorldPoint) пишется в обеих ветках именно поэтому (:126 и
+// :161), и аналогия v3 на него ссылалась, НЕ ПРОЧИТАВ его (урок 722).
+// ⇒ Правило одно: ПИШЕМ ВСЕГДА, РИСУЕМ ПО AimActive.
+_cachedHipLine = AimLine.Solve(_runner.RenderCurr.Player.Pos, planeAimSimPos,
+    _runner.RenderMuzzleHeight, _runner.Config,
+    _runner.RenderCurr, _runner.RenderCurr.LocalPlayerIndex);
+
+if (!_runner.LastFrameInput.AimHeld) { … }              // :111, без изменений
+```
+
+⚠ **Цена названа числом:** один проход по видимым телам в кадре, включая паузу и экран смерти.
+Худший случай оффлайн — `MaxMobs 1350` широких фаз по ~20 операций = **порядка 27 тысяч операций
+за кадр**, `HitZones.Resolve` зовётся **один раз**, для победителя. Аллокаций ноль (тест 27).
+⚠ **Гейт `AimActive` оборачивает только РИСОВАНИЕ в `AimRayView`**, а не метод провайдера: ранний
+возврат из `LateUpdate` убил бы обновление прицельных значений и маркера (Р480).
+⚠ **Аргумент — `planeAimSimPos`, а не `_cachedAimSimPos`**, и это существенно: луч от бедра ведёт
+**за курсором** (Н37), то есть за плоскостной точкой мыши, а не за точкой каста по прокси.
+⚠ **Позиция сборщика — из `RenderCurr`**, то есть предсказанное место этого клиента: от него же
+считается дуло и его же читает `ResolveImpactWorldPoint` — **операнды из одной фазы** (694).
+
+**`AimRayView` — пять правок** (`Notches` из них — таск T3, здесь только четыре):
+
+- [ ] **Step 1 (гейт):** снять ранний возврат по `!aimHeld` (`:140-144`) и превратить его в
+      **ветвление**. ⛔ **Гейт `AimActive` (`:133-137`) ОСТАЁТСЯ** — он же решает судьбу
+      OS-курсора и маркера, и без него луч пережил бы паузу (его собственный комментарий `:125-132`
+      объясняет, почему).
+      ⛔⛔ **И ЗДЕСЬ ЖЕ НАЗЫВАЮТСЯ ТРИ ПУТИ ГАШЕНИЯ, ПОТОМУ ЧТО T3 ПОВЕСИТ НА КАЖДЫЙ ЕЩЁ И
+      ЗАСЕЧКИ:** `!AimActive` (`:135`), `!TryGetMuzzle` (`:152`) и — после этой правки — **ни
+      одного третьего**: ветка `!aimHeld` больше не гасит луч, она меняет его конец и цвет.
+- [ ] **Step 2 (конец луча):** в прицеле — `_aimProvider.CurrentImpactWorldPoint` (без изменений,
+      `:165`); **от бедра**:
+
+```csharp
+AimLineSolution line = _aimProvider.CurrentHipLine;
+Vector3 aimPoint = aimHeld
+    ? _aimProvider.CurrentImpactWorldPoint
+    : SimSpace.ToWorld(line.End) + Vector3.up * line.Height;
+```
+
+  ⛔ **ОТ БЕДРА НЕЛЬЗЯ БРАТЬ `CurrentImpactWorldPoint`** (Р479): он считается по курсору и режется
+  полом (`ResolveImpactWorldPoint` `:205-215`), то есть отвечает на вопрос **прицельного** режима.
+  Получился бы луч, **ныряющий из дула в пол** — ровно та ложь, которую задача лечит.
+- [ ] **Step 3 (цвет — ⛔ И ЗДЕСЬ ЖЕ ОБЪЯВЛЯЮТСЯ ВСЕ ТРИ ПОЛЯ `GameFeelConfig`, запись 5
+      «Отклонений»):** спека кладёт их объявление в T4, но **читают их T2 (цвет) и T3 (две ручки
+      засечек)** — то есть при порядке спеки ни T2, ни T3 просто не скомпилировались бы, а ошибка
+      компиляции ≠ RED и сломала бы таск. ⇒ **Три поля объявляются одним блоком здесь**, вместе с
+      атрибутами и стартовыми значениями (текст блока — в T4, там же его дока и оба требования
+      механизма); **T4 делает всё остальное**: переезд маркер-ключа, доставку в `.asset`
+      (R-ASSET), третью ссылку, прибор и бюджет панели.
+      ⚠ Поля класса — **одно место в файле**, и дробить их по таскам было бы хуже, чем объявить
+      разом у первого читателя.
+
+      От бедра — **один жёлтый из SO**, без зон:
+
+```csharp
+// ⛔ AimZoneColors.Resolve от бедра НЕ ЗОВЁТСЯ ВОВСЕ (Н39): зона там не
+// показывается, и это сторож правила — оно же ответ на ADR-002 A29(б)
+// (клиентская зона остаётся показанием дев-прибора и в картинку не течёт).
+Color rayColor = aimHeld
+    ? AimZoneColors.Resolve(_aimProvider.CurrentAimZone, _baseColor, _gameFeel)
+    : _gameFeel.AimRayHipColor;
+float alphaBoost = aimHeld && _aimProvider.CurrentAimZone == HitZone.Head
+    ? _gameFeel.AimRayHeadAlphaBoost : 1f;
+```
+
+  ⚠ **`AimRayAlpha` масштабирует ЯРКОСТЬ ЭМИССИИ, а не прозрачность** — это записано в шапке
+  класса (`:26-37`), и жёлтый обязан быть HDR-цветом той же природы, что `AimRayEmissive`.
+  ⚠ **У цвета луча два дома** (базовый прицельный — в материале через `_baseColor` `:106`,
+  бедровый — в SO), и заход их **не сводит** (Р485): это правка чужого решения ради симметрии, не
+  нужная ни одному пункту вехи.
+- [ ] **Step 4 (прибор — ⭐ ЗАПИСЬ 1 «ОТКЛОНЕНИЙ», без неё у вехи нет `Δ`):** `AimRayView`
+      публикует **факт о нарисованном луче**:
+
+```csharp
+/// Зазор в ПЛАНЕ между сокетом куклы и симуляционным дулом — цена решения
+/// Н40, названная при его принятии и не замеренная до сих пор.
+/// ⛔ ДОМ ЗДЕСЬ, А НЕ В AimProvider, И ЭТО ФАКТ О КОДЕ, А НЕ ВКУС: позиция
+/// сокета живёт в ViewRegistry.TryGetPlayerView(...).MuzzleSocket, куда из
+/// всего проекта ходит только TryGetMuzzle ниже. У AimProvider ссылки на
+/// ViewRegistry нет вовсе, и заводить её ради одного показания значило бы
+/// научить провайдер кукле — при том что провайдер отвечает на вопрос
+/// СИМУЛЯЦИИ.
+/// ⚠ NaN, пока луч не рисуется (куклы нет, пауза, экран смерти) — прибор
+/// печатает по нему прочерк, как оверлей уже печатает прочерк вместо
+/// StateHash на сетевом бэкенде.
+public float MuzzleGapMeters { get; private set; } = float.NaN;
+```
+
+  ⚠ Считается **одной строкой там, где обе величины уже в руках**:
+  `MuzzleGapMeters = math.distance(SimSpace.ToSim(muzzle), line.Start);` — `muzzle` даёт
+  `TryGetMuzzle` (`:196-205`), `line.Start` даёт кэш провайдера, `SimSpace.ToSim` уже существует
+  (`SimSpace.cs:13`). ⛔ **Сравниваются планы, а не точки в пространстве:** вертикальную половину
+  цены Н40 прибор не меряет (сокет живёт на высоте анимированной руки, а печатается
+  симуляционная `h`), и это сказано в доке.
+  ⭐ **Числа, которые прибор покажет:** `Δ` складывается из постоянного `MuzzleOffset 0.6`
+  **вдоль** линии и переменного отставания куклы **поперёк** (до 0.25 м на бегу, 0.45 м в слайде)
+  ⇒ показание **0.6…1.05 м**. Наклон нарисованной линии даёт **только поперечная** составляющая:
+  до **2.9°** на бегу и **5.1°** в слайде на цели в пяти метрах.
+- [ ] **Step 5 (делегирование):** `SimulationRunner.RenderMuzzleSimPos` (`:448-453`) перестаёт
+      считать формулу сам и зовёт `AimLine.MuzzlePlan`:
+
+```csharp
+public float2 RenderMuzzleSimPos(float2 aimSimPos)
+    => AimLine.MuzzlePlan(RenderCurr.Player.Pos, aimSimPos, Config.Weapon.MuzzleOffset, out _);
+```
+
+  ⚠ **Это снятие копии, а не новая связь:** сегодняшнее тело (`:450-452`) — посимвольно та же
+  формула. ⛔ **Свидетель — не тест, а ГЕЙТ СВИПА** (мутация M323 в разделе мутаций):
+  `/usr/bin/grep -rn "normalizesafe.*MuzzleOffset" client/Assets/Scripts/Presentation/` → **ноль**.
+  Тестом это не покрыть: `SimulationRunner` — `MonoBehaviour`, и EditMode его не заводит.
+  ⚠ **Шапка `RenderMuzzleSimPos` (`:430-447`) правится тем же шагом** — она сегодня объясняет,
+  почему это **метод, а не свойство** (аим приходит от вызывающего), и это остаётся правдой;
+  добавляется, что арифметика уехала в дом линии огня.
+- [ ] **Step 6 (шапки — работа таска, а не побочный эффект):** шапка `AimRayView` (`:7-77`)
+      сегодня утверждает **дословно** «visible ONLY while `AimHeld` — hip fire's honest picture is
+      `CrosshairView`'s spread cone, aimed fire's honest picture is this ray» (`:9-10`). ⛔ **Это
+      запись PD15, и она отменяется решениями Н34/Н41** — исполнитель, встретив её, прочтёт запрет
+      ровно на ту правку, которую ему поручили. Переписывается: луч включён всегда, от бедра
+      честная картинка — **он сам плюс засечки**, круга больше нет.
+      ⚠ **Побочно в шапке `AimProvider` живёт устаревшее число** («head top 3.5» против
+      отгруженных 4.20) — файл заход и так правит, строка чинится попутно (`app-sr83`, T6 её
+      инвентарь и подтвердит).
+- [ ] **Step 7:** R-COMPILE → `EXIT=0` + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ.
+      R-TEST полный → **1933/1933/0** (правки в `Presentation` тестов не задевают — таблица
+      красных).
+- [ ] **Step 8:** свипы → R-COMMIT `feat(app-461s): T2 — луч от бедра растёт из ствола и упирается
+      в тело`.
+
+### Task T3: засечки разброса
+
+**Files:**
+- Modify: `client/Assets/Scripts/Presentation/AimRayView.cs` (два поля-чайлда, отрисовка,
+  **выключатель на всех путях**)
+- Modify: `client/Assets/Scripts/Editor/EditorBootstrapUtils.cs` (**новый хелпер** `EnsureWorldLine`)
+- Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs` (две константы имён, два чайлда,
+  две ссылки, **перевод трёх существующих мест на хелпер**)
+
+**Interfaces:**
+
+```csharp
+// EditorBootstrapUtils — НОВЫЙ хелпер по образцу GetOrCreateMaterial (:106) и
+// EnsureVisual (:148): существование-гард снаружи, одноразовые настройки
+// внутри, self-heal материала безусловный.
+/// ⚠ ЗАВОДИТСЯ ПОТОМУ, ЧТО БЛОК УЖЕ СТОИТ В ФАЙЛЕ ДВАЖДЫ ПОСИМВОЛЬНО
+/// ОДИНАКОВО (StageOneSceneBootstrap.cs:1537-1563 — конус, :1591-1616 — луч),
+/// а с двумя засечками стал бы ЧЕТЫРЕЖДЫ. Правило 2 запрещает четвёртую
+/// копию; правило 1 запрещает "скопирую ещё раз, потом вынесу".
+/// Возвращает LineRenderer и поднимает `dirty`, если что-то создал.
+public static LineRenderer EnsureWorldLine(GameObject parent, string childName,
+    Material material, int positionCount, float width, ref bool dirty);
+```
+
+```csharp
+// AimRayView — ДВА чайлда, каждый со своим LineRenderer на две точки.
+[SerializeField] LineRenderer _notchLeft;
+[SerializeField] LineRenderer _notchRight;
+```
+
+⛔ **ОДНИМ `LineRenderer` ДВА РАЗДЕЛЬНЫХ ШТРИХА НЕ НАРИСОВАТЬ** (Р492): он рисует **одну ломаную**,
+и между штрихами появился бы соединяющий отрезок; трюк с нулевой шириной в узлах держится на
+кривой ширины, которую следующий правщик снимет не заметив. ⚠ Проверка — **пункт вехи 14**, потому
+что EditMode до этого не достаёт.
+
+- [ ] **Step 1 (хелпер и перевод существующих мест):** `EnsureWorldLine` в `EditorBootstrapUtils`;
+      на него переводится **блок луча** (`:1591-1616`), и им же создаются **два новых чайлда**
+      засечек — итого **три** места.
+      ⛔ **Блок конуса (`:1537-1563`) на хелпер НЕ переводится, и это решение, а не пропуск:**
+      T5 удаляет сам объект конуса целиком, и перевод за один таск до удаления был бы работой,
+      которую следующий же таск выбрасывает. ⚠ Довод за хелпер от этого не слабеет: он
+      заводится потому, что **посимвольно одинаковый блок уже стоит в файле дважды**
+      (`:1537-1563` и `:1591-1616`), а с двумя засечками стал бы **четырежды**; после T5 копий
+      остаётся **одна — сам хелпер**.
+- [ ] **Step 2 (бутстрап):** две константы имён (`NotchLeftObjectName = "NotchLeft"`,
+      `NotchRightObjectName = "NotchRight"`), два чайлда **под объектом `AimRay`** через
+      `EnsureWorldLine` с **материалом луча** (`aimRayMat`), `positionCount = 2`; две ссылки через
+      `EditorBootstrapUtils.SetRef(aimRaySo, "_notchLeft", …)` — тем же блоком, что уже проводит
+      `_runner`/`_aimProvider`/`_gameFeel`/`_rayMaterial` (`:1629-1632`).
+      ⚠ **Сцена, забутстрапленная ДО этой задачи, чайлдов не имеет** — вид обязан переживать
+      несвязанные ссылки, как это уже делает `MuzzleFlashView` с сокетом. Пункт гейта: null-чек.
+- [ ] **Step 3 (отрисовка — вид НЕ РЕШАЕТ НИЧЕГО):**
+
+```csharp
+float strokeLength = math.max(_gameFeel.AimRayNotchMinLength,
+    _gameFeel.AimRayNotchFrac * line.NotchHalfWidth);
+AimLine.Notches(in line, strokeLength, out float2 a0, out float2 a1,
+    out float2 b0, out float2 b1);
+// Высота засечек — высота ЛИНИИ: они стоят НА луче, а не на полу.
+Vector3 up = Vector3.up * line.Height;
+_notchLeft.SetPosition(0, SimSpace.ToWorld(a0) + up);
+_notchLeft.SetPosition(1, SimSpace.ToWorld(a1) + up);
+_notchRight.SetPosition(0, SimSpace.ToWorld(b0) + up);
+_notchRight.SetPosition(1, SimSpace.ToWorld(b1) + up);
+```
+
+  ⛔⛔ **ЦВЕТ И ШИРИНА ПРИМЕНЯЮТСЯ К КАЖДОМУ ИЗ ТРЁХ РЕНДЕРЕРОВ ЯВНО, И ЭТО НАХОДКА КРУГА 2**
+  (Р499): цвет луча живёт **не в материале**, а в per-renderer `MaterialPropertyBlock` (`:186-187`),
+  ширина — в `startWidth`/`endWidth` того же рендерера (`:169`). Общий `sharedMaterial` дал бы
+  засечкам **запечённый циан** и дефолтную толщину. ⇒ тот же `_block` и та же ширина —
+  на `_line`, `_notchLeft` и `_notchRight`.
+  ⚠ **`SetPosition` по точкам, а не `SetPositions(new Vector3[2])`** — иначе тест 27 (аллокации)
+  честен, а вид аллоцирует каждый кадр. Образец кэшированного буфера (`_conePoints`) этой же
+  задачей удаляется вместе с конусом, так что копировать неоткуда — сказано здесь.
+- [ ] **Step 4 (⛔⛔ ВЫКЛЮЧАТЕЛЬ — НАХОДКА КРУГА 2, И ОН СТОИТ НА ВСЕХ ПУТЯХ):**
+
+```csharp
+// ⛔⛔ У ЧАЙЛД-ОБЪЕКТА СВОЙ enabled (урок 726): гашение _line их НЕ КАСАЕТСЯ.
+// Оставь как есть — и засечки переживут прицельный режим, паузу, экран
+// смерти, рюкзак, кадры без куклы и переедут в СЛЕДУЮЩИЙ МАТЧ.
+// ⭐ И гашение исполняется ВЫКЛЮЧАТЕЛЕМ, а не нулевой длиной: LineRenderer с
+// двумя совпавшими точками рисует вырожденный квад, а не пустоту.
+bool notchesOn = drawn && !aimHeld && strokeLength > 0f;
+_notchLeft.enabled = notchesOn;
+_notchRight.enabled = notchesOn;
+```
+
+  ⚠ **Правило пишется ОДНОЙ строкой и зовётся на КАЖДОМ из путей**, включая оба ранних возврата
+  (`!AimActive` `:135`, `!TryGetMuzzle` `:152`) — там `drawn = false`. Проверка — **пункт вехи 6**.
+- [ ] **Step 5:** R-COMPILE → `EXIT=0`; R-APPLY → `EXIT=0` + ГЕЙТ-ЛОГ; **YAML-проверка `Main.unity`**:
+      под объектом `AimRay` два чайлда с `LineRenderer`, `positionCount: 2`, материал — тот же,
+      что у луча.
+- [ ] **Step 6:** коммит артефактов → **R-IDEM** → `git status --porcelain -- client/` и
+      `git diff -- client/` пусты. ⛔ **Тестов бутстрапа в наборе нет вовсе** — это единственный
+      свидетель идемпотентности.
+- [ ] **Step 7:** R-TEST полный → **1933/1933/0**.
+- [ ] **Step 8:** свипы → R-COMMIT `feat(app-461s): T3 — засечки разброса на луче`.
+
+**Гейт фазы Ф-B:** 1933/1933/0; R-APPLY и R-IDEM сошлись; свипы чисты; два ревьюера на каждый
+таск; `bd note`; push ветки.
+
+---
+
+## Фаза Ф-C — данные, прибор и снятие круга (T4 → T5)
+
+⚠ **T4 РАНЬШЕ T5 НАМЕРЕННО, И ЭТО ПОРЯДОК ИЗ СПЕКИ §10:** цвет, засечки и прибор нужны на том же
+экране, где **ещё есть круг**, — так владелец увидит обе картинки подряд, а не через коммит.
+⛔⛔ **И ПРИБОР СТОИТ ДО ВЕХИ, А НЕ ПОСЛЕ** — это прямое следствие урока 716: в 97-й правка посадки
+следа прошла TDD, шесть мутаций и двух ревьюеров и **не изменила картинку ни на пиксель**; оба
+коммита откачены. Здесь «появилась ли линия» видно глазом, а **высоту, упор, расхождение и ширину
+конуса глазом не измерить**.
+
+### Task T4: доставка трёх полей в ассет и прибор
+
+⚠ **Сами три поля уже объявлены в T2 Step 3** (запись 5 «Отклонений»: их читают T2 и T3, и при
+порядке спеки те бы не скомпилировались). Здесь — **всё, что делает их живыми и измеримыми**:
+переезд маркер-ключа, доставка в `.asset`, прибор.
+
+**Files:**
+- Modify: `client/Assets/Scripts/Data/GameFeelConfig.cs` (**переезд маркер-ключа** на последнее из
+  трёх полей, объявленных в T2 после `WaveAnnounceFlashColor` `:584`; «superseded by» у прежнего)
+- Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs` (`EnsureAssetHasKey` `:1115` —
+  аргумент; третья ссылка `DevOverlay` `:2529-2535`)
+- Modify: `client/Assets/Scripts/Presentation/DevOverlay.cs` (поле `_aimRayView`, строка прибора,
+  **бюджет панели** `:131`)
+- Modify (через бутстрап, руками — **НЕТ**): `client/Assets/Data/GameFeelConfig.asset`
+
+**Interfaces (объявлены в T2 Step 3, приведены здесь целиком — вместе с обоими требованиями
+механизма, которые исполняет ЭТОТ таск):**
+
+```csharp
+// GameFeelConfig — ТРИ поля, дописанные ПОСЛЕ ПОСЛЕДНЕГО ПОЛЯ класса
+// (WaveAnnounceFlashColor :584), а не после методов.
+/// app-461s (спека §3.4/§3.6): цвет луча ОТ БЕДРА и геометрия засечек.
+/// ⛔ [ColorUsage(false, true)] ОБЯЗАТЕЛЕН — без него LDR-пикер зажмёт каналы
+/// в [0,1] при первом же открытии инспектора, и HDR-жёлтый потускнеет. Это
+/// уже чинилось в этом классе (RemotePlayerEmission :384 несёт тот же
+/// атрибут по той же причине).
+/// ⚠ СВИДЕТЕЛЬ У ЭТОГО ТРЕБОВАНИЯ ТОЛЬКО DoD: рефлективного сторожа над
+/// GameFeelConfig в наборе нет вовсе.
+[ColorUsage(false, true)] public Color AimRayHipColor = new Color(3.2f, 2.6f, 0.2f);
+/// Длина штриха засечки = max(MinLength, Frac x полуширина конуса).
+/// ⛔ ДОЛЯ, А НЕ АБСОЛЮТ, И ЭТО НАХОДКА КРУГА 2: полный зазор между засечками
+/// ДО ОТКРЫТИЯ ОГНЯ на десяти метрах равен 0.52 м, и штрих в 0.35 м слил бы
+/// пару в ОДНУ МЕТКУ ровно тогда, когда решение и принимается — до первого
+/// выстрела.
+[Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
+[Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;   // sync-marker key — keep LAST
+```
+
+⛔⛔ **ДВА ТРЕБОВАНИЯ МЕХАНИЗМА, И ВТОРОЕ РЕШАЕТ, ДОЕДУТ ЛИ ПОЛЯ ДО АССЕТА ВООБЩЕ.**
+`EditorBootstrapUtils.EnsureAssetHasKey` (`:270-274`) — **текстовая** проверка
+`File.ReadAllText(assetPath).Contains(markerField)`, и поле, добавленное **после** маркера, ассет
+не дирти́т **никогда**. Сегодняшний ключ — `WaveAnnounceFlashColor` (`:1115`), и он в ассете
+**уже есть** ⇒ проверка сегодня **no-op**. ⇒ Комментарий `// sync-marker key — keep LAST`
+переезжает на **последнее из трёх** новых полей, аргумент в `:1115` меняется на него же, у
+прежнего дописывается «superseded by» — **четыре вещи, и ни одну нельзя забыть**.
+⚠ «Последнее» — **конвенция файла**, а не механика (`SetDirty` флашит весь набор), но нарушать её
+нельзя: следующий читатель ищет ключ по конвенции.
+⚠ **`GameFeelConfig` — не балансный SO:** он не входит в `SimConfig` и симуляцией не читается
+(ADR-002 A27) ⇒ валидация его не касается, **эталонов он не двигает** (рулинг 318).
+
+**Прибор — одна строка, шесть показаний:**
+
+```
+AimRay: on  h 1.00  d 12.4  Δ 0.85  cone 5.50°  hw 0.96  stop Body(Legs)
+```
+
+| Поле | Что | Откуда |
+|---|---|---|
+| `on/off` | рисуется ли луч в этом кадре | `_runner.AimActive && !AimHeld` |
+| `h` | высота линии: 1.00 стоя, 0.45 в слайде | `line.Height` |
+| `d` | длина линии от дула до упора | `line.Length` |
+| ⭐ `Δ` | зазор «сокет куклы ↔ симуляционное дуло» в плане | **`_aimRayView.MuzzleGapMeters`** (T2 Step 4) |
+| ⭐ `cone` | угол конуса в градусах | `degrees(atan(hw / notchDistance))` — ⚠ **производится из пары, а не читается вторым полем**: `Spread` из `Presentation` не виден после T5 |
+| `hw` | полуширина на дистанции засечек | `line.NotchHalfWidth` |
+| `stop` | `Range` / `Barrier` / `RingWall` / `Body(зона)` | `line.Stop`, `line.Zone` |
+
+⚠ **Прибор говорит про БЕДРО** — при удержании ПКМ печатает прочерк, как оверлей уже печатает
+прочерк вместо `StateHash` на сетевом бэкенде. ⚠ **`Stop` и `Zone` в релизной сборке читателя не
+имеют, и это осознанно.**
+⭐ **Почему `cone` и `hw` вообще нужны:** без них разговор на вехе про «бег и слайд ухудшают
+кучность» упирается в глаз, а числа на сетевом стенде **не крутятся** (§3.7 спеки).
+
+- [ ] **Step 1 (⛔ ЧЕТЫРЕ ВЕЩИ ПЕРЕЕЗДА МАРКЕРА, И НИ ОДНУ НЕЛЬЗЯ ЗАБЫТЬ):** комментарий
+      `// sync-marker key — keep LAST` переезжает на **`AimRayNotchMinLength`**; аргумент
+      `EnsureAssetHasKey` в `StageOneSceneBootstrap.cs:1115` меняется с `"WaveAnnounceFlashColor"`
+      на `"AimRayNotchMinLength"`; у прежнего дописывается «superseded by app-461s»; **сверить
+      глазами, что новое поле физически последнее в классе**.
+      ⚠ Сверить и атрибуты, поставленные в T2: `[ColorUsage(false, true)]` на цвете, `[Range]` на
+      обеих ручках.
+- [ ] **Step 2:** третья ссылка `DevOverlay` в бутстрапе — `SetRef(devOverlaySo, "_aimRayView", aimRayView)`
+      рядом с двумя существующими (`:2531-2532`). ⚠ **Локальная переменная `aimRayView` уже в
+      области видимости** (`:1620`), но объявлена **выше** блока `DevOverlay` (`:2523`) — порядок
+      проверить глазами, а не предположить.
+- [ ] **Step 3:** строка прибора в `DevOverlay` + **правка посчитанного бюджета панели**.
+      ⚠ **Бюджет живёт ИНЛАЙНОМ перед `GUILayout.BeginArea`** (`:119-131`), а не в шапке класса, и
+      он **посчитан, а не угадан**: «~7 px per character» по ширине и «~20 px per laid-out line»
+      по высоте, при `new Rect(10f, 10f, 380f, 880f)`. ⇒ Добавляется **одна** строка ⇒ высота
+      880 → **900**, и комментарий дополняется тем же способом счёта. ⛔ **Клипнутая панель —
+      панель, которую нельзя прочесть**, что и есть весь смысл прибора.
+- [ ] **Step 4:** R-COMPILE → `EXIT=0`; R-APPLY → `EXIT=0` + ГЕЙТ-ЛОГ.
+- [ ] **Step 5 (⛔ ГЕЙТ ТАСКА — R-ASSET):**
+      `/usr/bin/grep -c "AimRayHipColor\|AimRayNotchFrac\|AimRayNotchMinLength" client/Assets/Data/GameFeelConfig.asset`
+      → **3**. ⛔ **Ноль означает, что маркер-ключ не переехал**, и поля не доедут до ассета
+      никогда — это **стоп и возврат в Step 1**, а не «поправим потом».
+      ⚠ И глазами: у цвета в YAML **HDR-компоненты > 1** (иначе `[ColorUsage]` не сработал).
+- [ ] **Step 6:** коммит артефактов → **R-IDEM** → пусто.
+- [ ] **Step 7:** R-TEST полный → **1933/1933/0**. ⛔ **И гейт эталонов явно** — правка `.asset`
+      их не трогает (рулинг 318), но это **проверяется**, а не предполагается.
+- [ ] **Step 8:** свипы → R-COMMIT `feat(app-461s): T4 — три ручки целеуказателя и прибор в
+      дев-оверлее`.
+
+### Task T5: круг и точка на полу убраны
+
+**Files:**
+- Modify: `client/Assets/Scripts/Presentation/CrosshairView.cs` (поле `_cone` `:43`, метод
+  `UpdateCone` `:254-269`, буфер `_conePoints` `:61`, константа `ConeSegments` `:37`, обе ветки
+  `_cone.enabled` `:139`/`:231`; **весь блок маркера под `aimHeld`**; шапка)
+- Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs` (идемпотентное **удаление**
+  объекта `SpreadCone` `:1537-1563`, строка материала `spreadConeMat`, константа
+  `SpreadConeObjectName` `:297`, ссылка `_cone` `:1569`)
+- Modify: `client/Assets/Scripts/Simulation/Combat/Spread.cs` и `SprayPattern.cs`
+  (`public` → `internal` **целиком**)
+
+**Что уходит из `CrosshairView`:** поле `_cone`, метод `UpdateCone`, буфер `_conePoints`,
+константа `ConeSegments`, обе ветки `_cone.enabled`, `using Ring.Simulation.Combat` (**становится
+мёртвым**).
+
+⛔⛔ **И ВЕСЬ БЛОК МАРКЕРА УХОДИТ ПОД `aimHeld`, А ГАСИТЬ ОДНУ ВЕТКУ МАЛО — ЭТО НАХОДКА КРУГА 2.**
+Позиционирование диска стоит в ветке `!aimHeld` (`:183-185`), но **масштаб** (`:206-207`) и
+**цвет** (`:223-225`) пишутся **на обеих**, а эджевая логика звукового тика (`:213-215`) читает
+зону каждый кадр. Оставь их — и невидимый диск продолжит получать записи **тридцать раз в
+секунду**, ровно против довода, ради которого ветку и снимают. ⇒ Под `aimHeld` уходит **весь блок
+от чтения точки до `SetPropertyBlock`**; наружу остаются `UpdateCursor()` и
+`_markerRenderer.enabled = aimHeld`.
+
+⚠ **ПОРЯДОК СТРОК — ОТДЕЛЬНЫЙ ПУНКТ, ПОТОМУ ЧТО СЕГОДНЯ ОН ОБРАТНЫЙ:** включение рендерера стоит
+на `:143` (`_markerRenderer.enabled = true;`), а объявление `bool aimHeld` — **ниже**, на `:145`.
+⇒ Либо объявление поднимается на строку выше, либо строка включения переезжает вниз. Исполнитель
+выбирает и **записывает выбор в отчёт таска**.
+
+⚠ **В ПРИЦЕЛЕ МАРКЕР ОСТАЁТСЯ** (Н45 читается буквально: вопрос задавался про **бедро**, а Н37
+закрепил прицельный режим «как сегодня») — точка прицела, зонная окраска, пульс, звуковой тик.
+⇒ **От бедра `CrosshairView` не рисует ничего**, и роль класса сужается до двух: владелец
+OS-курсора (единственный писатель `Cursor.visible` в проекте, `:110`) и прицельный маркер. Это
+пишется в его шапку.
+⚠ **И дока класса станет ложной ещё в одном месте:** утверждение «радиус конуса — единственное
+место, где класс читает снимок» (шапка `:29`) после правки неверно — класс не читает **ни снимок,
+ни `Config`** вовсе.
+
+**Следствие для видимости.** `Spread` и `SprayPattern` были `public` **под названного
+потребителя** — `CrosshairView` (шапка `Spread.cs:11-16` называет его дословно). ⛔ **Понижается
+`Spread` ЦЕЛИКОМ, а не один член:** его же шапка запрещает раскалывать один конус по двум уровням
+доступа («splitting one cone across two access levels would say the two halves are different kinds
+of thing»). `SprayPattern` — так же.
+⚠ **Засечки этого не отменяют:** полуширину считает **новый член самого `Spread`**, и зовут его
+изнутри **той же сборки** (`AimLine.Solve`). Внешнего читателя у конуса не остаётся — **проверяется
+свипом**, а не предполагается.
+⚠ **`ShotGeometry` остаётся `public`:** `ShotSolution` читается из `Ring.Presentation.Net`, и
+раскалывать тип с его фабрикой запрещает та же дока. Но её шапка обосновывает публичность
+**исчезающим ретиклом** — правится в T6.
+⚠ **Тесты не задеты:** `InternalsVisibleTo("Ring.Simulation.Tests")` уже стоит.
+
+- [ ] **Step 1 (свип ДО правки — инвентарь внешних читателей конуса):**
+      `/usr/bin/grep -rn "Spread\.\|SprayPattern\." client/Assets/Scripts/ --include=*.cs` →
+      записать в отчёт **все** места. ⛔ Ожидание: вне `Ring.Simulation` остаётся **ноль** после
+      снятия `UpdateCone`. Ненулевой результат — **стоп и разбор**, а не «понижу и посмотрю».
+- [ ] **Step 2 (`CrosshairView`):** снять пять сущностей конуса **и** `using`; весь блок маркера
+      под `aimHeld`; поправить порядок строк; переписать шапку (две ложные записи + PD15 в T6).
+      ⛔ **`ConeSegments` и бутстрап правятся ОДНИМ шагом** — `StageOneSceneBootstrap.cs:1556`
+      читает `CrosshairView.ConeSegments`, и удаление константы **ломает компиляцию бутстрапа**.
+- [ ] **Step 3 (бутстрап — удаление ИДЕМПОТЕНТНОЕ):** объект `SpreadCone` удаляется, если найден;
+      снимаются строка `SetRef(crosshairSo, "_cone", spreadCone)` (`:1569`), создание материала
+      `spreadConeMat` и константа `SpreadConeObjectName` (`:297`).
+      ⚠ **Сам `.mat` остаётся на диске**, и это решение (Р483): механизм A27 (сиротские ключи,
+      которые вычистит ближайшая перезапись) сюда **не переносится** — там у ключей не было
+      писателя, здесь писатель есть и удаляется.
+- [ ] **Step 4 (видимость):** `Spread` и `SprayPattern` → `internal` **целиком**; шапка `Spread`
+      правится: «три потребителя» (T1) → **все три внутри сборки**, и публичность больше не
+      нужна.
+- [ ] **Step 5:** R-COMPILE → `EXIT=0` + ГЕЙТ-ЛОГ; R-APPLY → `EXIT=0`;
+      **YAML-проверка `Main.unity`**: объекта `SpreadCone` нет, набор `m_Name` в остальном не
+      двинулся (правило 14).
+- [ ] **Step 6:** коммит артефактов → **R-IDEM** → пусто. ⛔ **И R-IDEM здесь важнее обычного:**
+      удаление, не сделанное идемпотентным, на втором `Apply` либо упадёт, либо снова создаст
+      объект.
+- [ ] **Step 7:** R-TEST полный → **1933/1933/0**. ⚠ Свип `CrosshairView|SpreadCone|ConeSegments`
+      по тестам даёт **один** файл, и там это комментарий про `AimActive` ⇒ красных быть не должно.
+- [ ] **Step 8 (⛔ ПРОВЕРКА DoD ЧТЕНИЕМ, А НЕ ПРОГОНОМ):** прочитать `LateUpdate` целиком и
+      убедиться, что **невидимому маркеру не пишется ничего** — ни масштаба, ни цвета, ни
+      позиции, ни чтения зоны. Это пункт DoD спеки, и тестом он не покрывается.
+- [ ] **Step 9:** свипы → R-COMMIT `feat(app-461s): T5 — круг разброса и точка на полу убраны`.
+
+**Гейт фазы Ф-C:** 1933/1933/0; **R-ASSET дал 3**; R-IDEM сошёлся дважды; свип внешних читателей
+конуса пуст; эталоны и md5 не двинулись; два ревьюера на каждый таск; push.
+
+---
+
+## Фаза Ф-D — документы, сборка и веха (T6 → T7 → T8)
+
+### Task T6: доки `app-sr83` и отмена PD15
+
+⚠ **Инвентарь собирается СВИПОМ, а не по памяти** (урок 471: на Ф9 Этапа 3 план называл восемь
+записей и три документа, свип дал восемнадцать и пять).
+⛔ **ЧИСЛО МЕСТ НЕ ПИНИТСЯ, И ЭТО РЕШЕНИЕ СПЕКИ (Р487):** нота `app-sr83` называла **одиннадцать**
+мест, свипы ревьюеров дали **двадцать** упоминаний в **девяти** файлах, из них по геометрии —
+тринадцать-пятнадцать, и **четыре файла нота не называла**. ⇒ Инвентарь есть **результат свипа
+таска**; отрицательный результат по файлу — **тоже результат**.
+
+**Files:** по результату свипа. Заведомо в списке: `AimProvider.cs`, `AimRayView.cs`,
+`CrosshairView.cs`, `SimulationRunner.cs`, `AudioDirector.cs`, `InputSampler.cs`,
+`ShotGeometry.cs` (шапка).
+
+- [ ] **Step 1 (свип ДО правки):**
+      `/usr/bin/grep -rn "WeaponSystem" client/Assets/Scripts/Presentation/ client/Assets/Scripts/PresentationNet/ --include=*.cs`
+      → инвентарь в `$SDD/task-461s-6-sweep.md`, **с указанием, какие из них про геометрию
+      выстрела**, а какие — законные упоминания оружейной подсистемы. ⛔ **Без `head`** (700).
+- [ ] **Step 2 (правка адреса):** каждое место про геометрию переводится с `WeaponSystem` на
+      **`ShotGeometry.Solve`** (там она живёт с `app-8dv` T3).
+- [ ] **Step 3 (PD15):** метка снимается **только из `CrosshairView`** (четыре места: `:16`, `:29`,
+      `:227`, `:250`); в `AimRayView` та же мысль записана **своими словами** — там шапка уже
+      переписана в T2 Step 6, и здесь только сверяется, что запрета не осталось.
+- [ ] **Step 4 (четыре шапки):**
+      (1) **`CrosshairView`** — роль класса сужена до двух (курсор + прицельный маркер), запись
+      «конус — единственное место, где класс читает снимок» снята, PD15 снят;
+      (2) **`AimRayView`** — сверка после T2;
+      (3) **`ShotGeometry`** — публичность обосновывается **исчезающим ретиклом**, а ретикла
+      больше нет; настоящее обоснование — `ShotSolution` читается из `Ring.Presentation.Net`;
+      (4) **`Spread`** — сверка после T1/T5.
+- [ ] **Step 5:** R-COMPILE → `EXIT=0`. ⚠ **Свип `sweeps.sh` смотрит только
+      `client/Assets/**/*.cs`** — этот таск целиком в нём, а вот T7 придётся свипать руками.
+- [ ] **Step 6:** свипы → R-COMMIT `docs(app-461s): T6 — доки Presentation адресуют геометрию по
+      новому месту, PD15 снят`.
+      ⚠ **`app-sr83` закрывается здесь**, а не на вехе: её предмет — доки, и он выполнен.
+
+### Task T7: амендменты ADR
+
+⚠ **ADR «по месту» не править — только амендментом** (250).
+⚠ **Нумерация — по документам, не сквозная** (проверено чтением из **ВЕТКИ**, не из main): ADR-001
+→ последний **A15**, ADR-002 → последний **A29**, ADR-003 → последний **A8**. ⇒ Заход добавляет
+**ADR-001 A16** и **ADR-003 A9**.
+⛔ **ADR-002 амендмента НЕ ТРЕБУЕТ, и это записанное решение (Р490):** A29(б) дословно относит к
+авторитетным «урон, смерть, крен, отброс, факт попадания и направление отражения», добавляя
+**зону попадания**. Заход вводит клиентское вычисление зоны — но **только как показание
+дев-прибора**: в игровые решения оно не попадает (CR 3 не двигается), в user-facing картинку тоже
+— **луч от бедра зоной не красится решением Н39**, и это сторож правила. Авторитетная зона
+по-прежнему приходит событием. ⇒ Запись A29(б) остаётся верной **дословно**, и в §9 плана на неё
+даётся ответ, а не правка.
+
+**Files:** `docs/adr/ADR-001-Концепт.md` (§14), `docs/adr/ADR-003-Сеттинг.md` (§11).
+
+**ADR-001 A16 — ТРЕМЯ ПУНКТАМИ:**
+
+- **(а) уточняет A1(а):** слова «ретикл — круг на полу» снимаются. От бедра ретикла-круга нет;
+  вместо него — целеуказатель из ствола, включённый всегда (Н37/Н41), **и засечки разброса на
+  нём** (Н46), которые несут ту же ширину конуса, что несло кольцо: они растут от бега (×1.5),
+  слайда (×2) и накопленной отдачи. ⚠ Точки-маркера на полу от бедра **тоже нет** (Н45).
+  ⛔ **Записать надо и отступление от жанровой нормы:** индикатор разброса обычно живёт отдельным
+  ретиклом в **экранном** пространстве, а здесь сращён с лучом в **мировом** — решение владельца,
+  и цена его названа (ракурс сжимает поперечную ось в `sin 55° = 0.82`).
+- **(б) отвечает на A15 — но НЕ ЗАКРЫВАЕТ ЕЁ ДОЛГ.** ⛔⛔ **Это находка круга 2 спеки и рулинг
+  359.** A15 записала долг «ретикл под ФОРМУ рисунка» с условием «отдельной задачей **после
+  плейтеста, когда числа рисунка настроены**»; **условие не наступило**, и решение Н46 его не
+  касалось. Засечки закрывают **половину** потребности — **ширину**, которую A15 и признавала
+  честной; форму рисунка они не показывают и **наследуют тот самый дефект**, ради которого долг
+  заведён: симметричная фигура вокруг знакопеременной кривой о следующем выстреле не говорит.
+  ⚠ Ведущая ось рисунка — **горизонталь** (амплитуда 1.0 против 0.35), и теряется именно она.
+  ⇒ **Долг A15 остаётся отложенным.** Одновременно A15 спрашивала, «нужен ли отдельный указатель
+  высоты ствола» — **да, и это луч**.
+  ⚠ **Запись фиксирует механизм, а не вердикт вехи** (прецедент — ADR-002 A29): амендменты пишутся
+  до плейтеста, и если владелец от луча или засечек откажется, это правится вторым амендментом.
+- **(в) ⛔ ИСПРАВЛЯЕТ КОЛОНКУ «ОТ БЕДРА В СЛАЙДЕ» ТАБЛИЦЫ A15.** Там стоит ровно **половина**
+  стоячей колонки — то есть угол удвоен, а высота дула **оставлена стоячей**. В слайде дуло
+  опускается до **0.45**, и подъём нужен **0.90 м**, а не 0.35.
+
+  | Цель | Низ головы | От бедра стоя | В слайде (A15) | **В слайде (верно)** |
+  |---|---|---|---|---|
+  | сборщик | 1.35 | 10.4 м | ~~5.2 м~~ | **13.4 м** |
+  | чейзер | 2.12 | 33.3 м | ~~16.6 м~~ | **24.8 м** |
+  | элита | 2.76 | 52.4 м | — | **34.3 м** (⚠ **добавление**) |
+  | ганнер | 3.24 | 66.6 м | ~~33.3 м~~ | **41.5 м** |
+  | Директор | 3.70 | 80.3 м | — | **48.3 м** (⚠ **добавление**) |
+
+  ⇒ **Вывод A15 не ломается, а УСИЛИВАЕТСЯ:** от бедра хедшот по мобам недостижим тем более, а в
+  слайде он **труднее**, чем стоя. ⚠ **Для элиты и Директора это ДОБАВЛЕНИЕ строк, а не
+  исправление:** в таблице A15 их нет вовсе (Р488).
+  ⭐ **И для задачи это довод:** в слайде ось ствола ещё ниже, значит «попадаю не туда» там сильнее.
+
+**ADR-003 A9 — три строки словаря §9.** ⚠ **Замеры снимаются ДО правки, по образцу A7/A8** (они
+оба несут строку «замер на день записи»):
+
+| Термин кода/дизайна | В мире | Запрещённые синонимы |
+|---|---|---|
+| `AimRay` | **целеуказатель** | «лазер» — диегетики у луча в ADR нет; слово живёт в коде как метафора и в термин мира **не поднимается** |
+| `AimLine` | **линия огня** | «прицельная линия» — второй лексики на то же понятие не заводим |
+| `AimRayNotch` | **засечка разброса** | ⛔ **`Gate`** — занят словарём под «створ» (A3); «ворота», «штрих» — из прозы убраны |
+
+- [ ] **Step 1 (замеры ДО правки — они идут В ТЕКСТ амендмента):**
+      свип `AimRay\|AimLine\|целеуказател\|засечк` по трём ADR → ожидание **ноль**;
+      свип `laser\|лазер` по `client/Assets/Scripts` и `Tests` → ожидание **семь** (⚠ одно из них
+      — в шапке самого `AimRayView`: «reads as a laser growing out of his sternum»; это
+      **метафора**, а не термин, и §6.2 handoff'а числит её законным совпадением);
+      свип `Notch` по коду **до T1** → ожидание **ноль**;
+      ⛔ свип `Gate` по ADR → ожидание **строка словаря A3 «`Gate` \| створ»** — ровно та, из-за
+      которой имя и было исправлено (урок 724).
+      **Все четыре числа записываются в текст амендмента**, а не только в отчёт.
+- [ ] **Step 2:** внести **ADR-001 A16** (три пункта) и **ADR-003 A9** (три строки).
+- [ ] **Step 3 (⛔ проверка, что исходный текст не тронут):** `git diff -- docs/adr/` показывает
+      **только добавления в секции Amendments**. Правка §9 словаря A15 идёт **пунктом A16(в)**, а
+      не редактированием таблицы на месте.
+- [ ] **Step 4 (⛔ пересчёт чисел ПЕРЕД записью — урок 727):** пять дистанций A16(в) пересчитать
+      питоном заново, из `atan((низ головы − 0.45) / …)`, и **сверить с таблицей выше**. Колонка
+      A15 выглядела правдоподобно (ровно половина) и была неверна — именно поэтому число в
+      источнике истины проверяется **пересчётом**, а не чтением.
+- [ ] **Step 5:** ⚠ **свип `docs/` — РУКАМИ**: `sweeps.sh` смотрит только `client/Assets/**/*.cs`.
+      Проверить кириллицу-в-коде не нужно (это документы), но нужно — что запрещённых терминов
+      словаря не появилось.
+- [ ] **Step 6:** R-COMMIT `docs(app-461s): T7 — амендменты ADR-001 A16 и ADR-003 A9`.
+
+### Task T8: сборка и веха (СТОП)
+
+⚠ **Исполняется ГЛАВНЫМ АГЕНТОМ ЛИЧНО** — сборки, стенд, живой забег субагентам запрещены.
+
+⭐⭐ **СЕРВЕРНЫЙ ОБРАЗ ПЕРЕСОБИРАТЬ НЕ НАДО, И ЭТО ПРОВЕРЯЕТСЯ, А НЕ ПРЕДПОЛАГАЕТСЯ:** заход не
+трогает `SimConfig`, поэтому `simConfigHash` остаётся `0xA9C54A7B2FA787EF` — **снять из лога
+сервера при подъёме стенда** (663: проверять по артефакту, не по записке). Пересобирается
+**Linux-клиент дев**; образ `brolin/ring-server-dev:882a965` уже лежит на хосте (сверено живым
+`ssh` на старте этой сессии: стенд погашен, `7777/udp` свободен).
+
+- [ ] **Step 1:** R-BUILD `LinuxClientDev` **фоном** (норма 40–55 с); вердикт — **по строке
+      «Exiting batchmode successfully»**, не грепом `error`.
+- [ ] **Step 2 (сверка по артефакту, а не по записке — 663):**
+      `strings -a builds/linux-client-dev/Ring_Data/Managed/Ring.Simulation.dll | grep -c AimLine`
+      → **не ноль**. ⚠ У актуальных дев-сборок `strings … | grep -c SprayVariance` даёт **1**, у
+      релизных **0** — этот же приём применяется к новому имени.
+- [ ] **Step 3 (стенд — ТОЛЬКО ПО СЛОВУ ВЛАДЕЛЬЦА):** живой замер хоста **до** любого слова про
+      стенд (675); подъём по `RUNBOOK.md` с обязательным `RING_DEV_IMAGE`; `simConfigHash` из лога
+      **в отчёт**.
+- [ ] **Step 4 (ВЕХА — СТОП, плейтест владельца по §5 спеки, пятнадцать пунктов):**
+
+  1. ⭐⭐ **Луч виден всегда и ведёт за курсором** (Н37).
+  2. ⭐⭐ **Стало понятно, почему урон приходит не туда:** видно, что ствол проходит **под головой**
+     ганнера, элиты и Директора.
+  3. ⭐ **Упор читается:** тело, стена, обод; не мешает ли дёрганье конца в толпе.
+  4. **Луч растёт из ствола модели** (Н40), прибор показывает `Δ` (**0.6…1.05 м**; наклон до
+     **5.1°** на пяти метрах в слайде).
+  5. **Жёлтый от бедра, зонный в прицеле** — не путается ли; ⚠ **и засечки того же цвета, что
+     луч**, а не циановые (жертва мутации).
+  6. **Луч гаснет там, где игра прицела не просит:** пауза, экран смерти, рюкзак — ⚠ **и засечки
+     гаснут вместе с ним**. ⚠ **И не гаснет в дэше** (90 мс) — врёт ли это.
+  7. ⭐⭐ **Засечки работают как замена кругу** (Н46): видно ли по ним, что бег и слайд ухудшают
+     кучность, и что очередь разводит отдача. ⚠ Числа: полуширина на десяти метрах — **0.26 м до
+     огня**, **0.96 м** в очереди стоя, **1.45** на бегу, **1.94** в слайде.
+  8. **Слайд:** луч опускается до **0.45**.
+  9. **Прибор:** строка `AimRay`. ⚠ **Ожидаемый сюрприз назван заранее:** на сетевом стенде живьём
+     крутятся **только** `GameFeelConfig`-числа (цвет и засечки); высота, длина и барьер —
+     серверные, `ApplyConfig` их игнорирует.
+  10. **Длина при пустой линии:** **78.75 м** против «2/3 видимого радиуса» = 30 м. ⚠ Видно около
+      **25 м**, поэтому различие проявится вблизи упоров.
+  11. **Не мешает ли луч в бою:** не перекрывает ли картинку, не рябит ли на спрее, не спорит ли
+      с трассером, **читается ли вспышка попадания** при постоянно горящей эмиссии.
+  12. **Засечки только от бедра — так и надо?** В прицеле их нет намеренно; конус там тоже есть
+      (потолок **5.50°**, а не 4.01° — 4.01 это только слагаемое отдачи).
+  13. ⭐⭐ **Где мышь?** Точки на полу нет (Н45), OS-курсор скрыт, а луч через экранную точку
+      курсора **не проходит** — ствол на 1.0 м проецируется при наклоне камеры 55° на **0.70 м**
+      земной дистанции «вверх по экрану» (в слайде **0.32**); якорем работает **пара засечек**,
+      стоящая на дистанции курсора. ⚠ Возврат точки — **одна строка**.
+  14. **Длина засечки** (`Frac 0.5`, пол `0.08` м): не крупные ли, не мелкие ли; ⚠ **и нет ли между
+      штрихами соединяющего отрезка**.
+  15. **Переход бедро↔прицел:** не рвёт ли картинку — конец луча прыгает с упора на точку курсора
+      (на цели в восьми метрах это **десятикратное** изменение длины), меняется цвет, появляется
+      маркер, исчезают засечки.
+
+  ⚠ **PvP-пункты `app-per9` соло-забегом НЕ закрываются** — долг CR 7 остаётся.
+- [ ] **Step 5:** фидбек → `bd note`; числа-правки → `.asset` **бутстрапом** отдельным
+      `chore`-коммитом; **DoD решает только владелец**.
+- [ ] **Step 6:** `bd close app-461s` и `bd close app-sr83` с эвиденсом; `bd export`; jsonl-дрифт
+      chore-коммитом.
+- [ ] **Step 7:** ⛔ **`app-94sk` — СЛЕДУЮЩАЯ, но только после закрытия `app-461s`.** Санкция Н44
+      ждёт её и на этот заход **не тратится**.
+      ⛔ **Т37 эпика `app-88jb` (side-quests, PR, закрытие) — НЕ этой сессии.**
+
+**Гейт фазы Ф-D:** амендменты внесены в два документа, исходные тексты не тронуты; Linux-клиент
+дев собран и **сверен по артефакту**; `simConfigHash` в отчёте **из лога**; веха принята
+владельцем; два bd закрыты с эвиденсом; деревья чисты, ветка запушена и сверена `ls-remote`.
+
+---
+
+## Декомпозиция bd (создать ДО T1, после апрува плана)
+
+```bash
+cd "$APP_REPO"
+bd create "Ф-A: линия огня как чистая функция и полуширина конуса (T1)"        -t task -p 2
+bd create "Ф-B: луч от бедра и засечки разброса (T2, T3)"                      -t task -p 2
+bd create "Ф-C: три ручки GameFeelConfig, прибор, снятие круга и точки (T4, T5)" -t task -p 2
+bd create "Ф-D: доки app-sr83, амендменты ADR, сборка и веха (T6-T8)"          -t task -p 2
+# для каждого: bd dep add <ФN> app-461s --type parent-child
+# цепочка:     bd dep add <ФN+1> <ФN>          (blocks, порядок фаз выше)
+# app-sr83 закрывается в Ф-D по T6 (её предмет — доки, и он выполнен там)
+```
+
+⚠ **`app-461s` уже IN_PROGRESS и заклеймлена 10.09** — повторно клеймить не нужно.
+⛔ **`app-94sk` НЕ создаётся и НЕ клеймится этим заходом** — она следующая, и санкция Н44 ждёт её.
+
+## Распределение мутаций спеки §4.3 по таскам
+
+⛔ **Жертвы M301–M322 не переназначать** — они выверены двумя кругами self-review спеки.
+Новые мутации плана начинаются с **M323**.
+
+**Прогоняемые — все двадцать две, и все на T1 Step 12** (все живут в чистых функциях, которые
+этот таск и пишет):
+
+| Мутация (форма — ОСЛАБЛЕНИЕ) | Названная жертва |
+|---|---|
+| **M301** линия игнорирует тела | тест 5 `ABodyOnTheLineStopsItBeforeTheWallBehind` |
+| **M302** потолок силуэта слайдящей цели не учитывается (`StackTop` вместо `SlideProfileTop`) | тест 11 `ASlidingCollectorDoesNotStopTheLine` |
+| **M303** высотный гейт барьера не спрашивается (`BarrierStops` не зовётся) | тест 13 `ABarrierBelowTheMuzzleDoesNotHold` |
+| **M304** предел дальности снят | тест 2 `AnEmptyArenaStopsTheLineAtTheRangeLimit` |
+| **M305** своё тело не исключено | тест 12 `MyOwnBodyIsExcluded` |
+| **M306** широкая фаза убрана: ранжирование по `t` **части** | ⭐⭐ тест 19 `TheOrderIsByBodyCircle_NotByPart` |
+| **M307** отказ `Resolve` не исключает кандидата (нет перескана) | тест 7 `ARefusedBodyDoesNotScreenTheOneBehindIt` |
+| **M308** направление считается от **дула**, а не от сборщика | тест 16 `ACursorNearerThanTheMuzzleDoesNotFlipTheDirection` |
+| **M309** высота линии всегда стоячая | тест 1 `TheLineIsHorizontalAtTheMuzzleHeight` **и** тест 10 `InASlideTheAxisPassesLower` |
+| **M310** гейт сборщиков — `Hp > 0` вместо `Alive` | тест 14 `CollectorsAreGatedOnAlive_MobsAreNot` |
+| **M311** обод не спрашивается | тест 4 `TheRingWallStopsTheLine_WhenNothingElseDoes` |
+| **M312** тело всегда побеждает барьер | тест 8 `ABarrierNearerThanABodyWins_AndViceVersa` |
+| **M313** тай-брейк не строгий (`<=` вместо `<`) | тест 9 `AnExactTieGoesToTheCandidateAskedFirst` |
+| **M314** `MuzzlePlan` игнорирует `MuzzleOffset` | тест 3 `TheLineStartsAtTheMuzzle_NotAtTheHero` |
+| **M315** радиус снаряда не участвует (`padR = 0`) | тест 6 `ABodyOffTheLineDoesNotStopIt` |
+| **M316** `HipHalfWidth` не делегирует конусу (множители теряются) | тест 20 `HipHalfWidth_DelegatesToTheCone` |
+| **M317** полуширина не масштабируется дистанцией | тест 21 `HipHalfWidth_IsLinearInDistance` |
+| **M318** кламп угла снят (`tan` за `π/2`) | тест 23 `HipHalfWidth_IsClampedAtTheSliderCeiling` |
+| **M319** `NotchDistance` берётся от **упора**, а не `min(упор, курсор)` | ⭐⭐ тест 24 `NotchesStandAtMinOfStopAndCursor` |
+| **M320** штрих отложен от **оси**, а не от границы конуса | тест 25 `TheTwoNotchesStandOnTheConeEdges` |
+| **M321** перпендикуляр взят от направления **на курсор**, а не от направления линии | тест 25, второй ассерт |
+| **M322** длина штриха — голый `Frac × hw` без метрового пола | тест 26 `TheNotchStrokeHasAFloor` |
+
+**Итого прогоняемых: 22, и все на T1.**
+
+**Гейтом, а не прогоном — одна (по образцу M269 плана `app-8dv`):**
+
+| **M323** 🆕 | `SimulationRunner.RenderMuzzleSimPos` не делегирует `AimLine.MuzzlePlan` — копия формулы остаётся и расходится | **T2 Step 5.** ⛔ Тестом не покрыть: `SimulationRunner` — `MonoBehaviour`, EditMode его не заводит. Гейт — свип `normalizesafe.*MuzzleOffset` по `Presentation/` → **ноль** |
+
+**⛔ ШЕСТЬ МУТАЦИЙ ЖИВУТ В `MonoBehaviour`-СТРОКАХ, И ЖЕРТВА У КАЖДОЙ — ПУНКТ ВЕХИ, А НЕ ТЕСТ.**
+Спека v3 говорила «три» и одну из них приписала тесту, который её не убивает; круг 2 это исправил:
+
+| Мутация | Почему EditMode не достаёт | Жертва |
+|---|---|---|
+| Луч растёт не из сокета куклы, а из центра сборщика | `AimRayView.TryGetMuzzle` | **веха 4** |
+| От бедра применён зонный цвет вместо жёлтого (и засечки цианят) | `AimRayView`, `MaterialPropertyBlock` | **веха 5** |
+| Засечки рисуются и в прицельном режиме | `AimRayView`, `notchesOn` | **веха 12** |
+| Засечки не гаснут вместе с лучом (`enabled` не пишется на ранних возвратах) | у чайлда свой `enabled` (урок 726) | **веха 6** |
+| ⛔ **Вычисление линии уезжает под гейт `AimActive`** (то есть под тот же гейт, что рисование) ⇒ кэш становится произвольно старым | строка в `AimProvider.LateUpdate` | **веха 6** |
+| Между штрихами нарисован соединяющий отрезок (обе засечки собраны одним `LineRenderer`) | `LineRenderer` рисует одну ломаную | **веха 14** |
+
+⚠ **Пятая строка записана здесь ОДНОЗНАЧНО, потому что в спеке §4.3 она сформулирована
+двусмысленно** («Линия решается при `Ready`, а не при `AimActive`» читается и как мутация, и как
+верное поведение). Верное поведение — **под `Ready`** (§3.3 и Р478: пишем всегда, рисуем по
+`AimActive`); мутация — **перенести вычисление под `AimActive`**.
+⚠ **И шестая строка — исправление v3:** она утверждала, что мутацию убивает тест через чистую
+функцию `IsAimActive`. Это неверно: функция вернёт одно и то же значение до и после порчи строки
+вызова, а сама строка живёт в `MonoBehaviour`.
+
+⚠ **Тасков БЕЗ мутаций пять, и у каждого назван критерий вместо неё:** T3 (R-APPLY + R-IDEM +
+YAML-проверка сцены), T4 (**R-ASSET даёт 3**), T5 (свип внешних читателей конуса пуст + R-IDEM +
+чтение `LateUpdate` глазами), T6 (свип до и после), T7 (ADR — кода нет), T8 (сборка, артефакт,
+плейтест).
+
+## Отклонения от спеки (правило 22) — **пять** записей
+
+1. ⭐⭐ **`Δ` ПРИБОРА ТРЕБУЕТ ТРЕТЬЕЙ ССЫЛКИ У `DevOverlay`, И СПЕКА ЭТО ОТРИЦАЕТ.**
+   §3.8 пишет: «ссылка на провайдера **уже есть** и **уже проведена** бутстрапом — новой проводки
+   не требуется». **Для пяти показаний из шести это верно** (`on`, `h`, `d`, `cone`, `hw`, `stop`
+   выводятся из кэша `AimProvider`), **а для `Δ` — нет**, и это проверено чтением файлов лично:
+   `DevOverlay` несёт ровно **два** `[SerializeField]` — `_runner` (`:35`) и `_aimProvider`
+   (`:36`), — и бутстрап проводит ровно их (`:2531-2532`). А `Δ` есть зазор между **сокетом
+   куклы** и симуляционным дулом, и позиция сокета живёт в
+   `ViewRegistry.TryGetPlayerView(...).MuzzleSocket`, куда из всего проекта ходит **только**
+   `AimRayView.TryGetMuzzle` (`:196-205`).
+   ⇒ **Лечение (T2 Step 4 + T4 Step 2):** `AimRayView` публикует `MuzzleGapMeters` — факт о
+   **нарисованном** луче, — и `DevOverlay` получает **третью** ссылку `_aimRayView`.
+   ⭐ **Дом выбран по правилу «факт живёт там, где он известен»:** у `AimProvider` ссылки на
+   `ViewRegistry` нет вовсе, и заводить её ради одного показания значило бы научить провайдер
+   кукле — при том что провайдер отвечает на вопрос **симуляции**.
+   ⛔ **Отказаться от `Δ` нельзя:** это ровно тот прибор, ради которого урок 716 и вводится
+   (риск Р-C: расхождение до 0.45 м поперёк и до 5.1° на пяти метрах), и на нём стоит **пункт
+   вехи 4**.
+
+2. ⭐ **КЭШ ЛИНИИ СЧИТАЕТСЯ ОДНОЙ СТРОКОЙ ДО ВЕТВЛЕНИЯ, А НЕ «В ОБЕИХ ВЕТКАХ».**
+   §3.3 требует «каждый кадр, в обеих ветках, под гейтом `Ready`» — **требование верное**, но его
+   буквальное исполнение даёт два одинаковых вызова, то есть дубль (правило 2). Проверено по
+   коду: `planeAimSimPos` вычисляется **до** ветвления (`AimProvider.cs:110`), а бедровая ветка
+   кончается `return` (`:127`). ⇒ **Одна строка сразу после `:110`** исполняет требование
+   точнее, чем две, и та же цель («кэш никогда не бывает старым») достигается по построению.
+   ⚠ Довод спеки от этого не слабеет: он был про **когда**, а не про **сколько раз**.
+
+3. ⛔⛔ **ФОРМА ЗАГЛУШКИ — КОНСТАНТА, А НЕ `NotImplementedException` (против Р503).**
+   Р503 и §4.1 требуют класть `AimLine.cs` и член `Spread` «сразу с сигнатурами, бросающими
+   `NotImplementedException`», и обосновывают это тем, что иначе первый прогон даст **ошибку
+   компиляции**, а она ≠ RED (332/498/630). **Первая половина верна и исполняется** — заглушки
+   кладутся тем же шагом, что тесты (рулинг 358). **Вторая половина сама себе противоречит:**
+   бросок — ошибка **исполнения**, а правило 332/498/630 в том же handoff'е записано как «ошибка
+   компиляции **ИЛИ ИСПОЛНЕНИЯ** ≠ RED». То есть `NotImplementedException` переносит тот же
+   дефект на шаг позже: красной фазы снова не будет, будет двадцать восемь исключений.
+   ⇒ **Заглушка — КОНСТАНТА**, по канону репозитория: `own-shot-prediction-plan` T1 Step 2
+   («заглушка `SprayPattern` — `Draw` возвращает **константу `float2.zero`** … ⛔ КОНСТАНТЫ, не
+   „почти реализация“») и T7 Step 2 («⛔ КОНСТАНТНОЕ поведение»).
+   ⚠ **И цена этого решения названа честно, а не замолчана:** на константной заглушке четыре
+   негативные фикстуры (6, 11, 12, 13) проходят «по совпадению» — поэтому Step 1a требует у
+   каждой премиссу `Length == предел дальности`, а Step 3 называет **оба** числа (24/0 с
+   премиссами, 20/4 без них) **до** прогона.
+
+4. **МУТАЦИИ M319–M322 ГОНЯЮТСЯ НА T1, А НЕ НА T3.**
+   §10 спеки приписывает их таску T3 вместе с `AimLine.Notches`. Но §4.4 той же спеки кладёт их
+   жертвы — тесты 24, 25, 26 — **в `AimLineTests`**, то есть в таск T1, и говорит прямо:
+   «остальные **24** — фикстуры `AimLineTests`». Обе строки одновременно исполнимы только в одном
+   порядке: чистые функции засечек (`NotchDistance`, `NotchHalfWidth`, `Notches`) реализует T1, и
+   мутации по ним гоняет он же. Иначе T1 заканчивается с двумя красными — против гейта «ноль
+   красных на выходе каждого таска», который этот план держит на **всех** восьми.
+   ⇒ **T3 остаётся чисто презентационным** (хелпер, два чайлда, ссылки, отрисовка, выключатель), и
+   его критерий — R-APPLY + R-IDEM + YAML-проверка сцены, а не мутации.
+
+5. ⛔ **ТРИ ПОЛЯ `GameFeelConfig` ОБЪЯВЛЯЮТСЯ В T2, А НЕ В T4 — ИНАЧЕ T2 И T3 НЕ СОБЕРУТСЯ.**
+   §10 спеки кладёт «три поля `GameFeelConfig` (+`[ColorUsage]`)» в **T4**, а T2 читает
+   `AimRayHipColor` (цвет от бедра, Н37) и T3 — `AimRayNotchFrac`/`AimRayNotchMinLength` (длина
+   штриха). Порядок спеки при буквальном исполнении даёт **ошибку компиляции на T2**, а она
+   ≠ RED (332/498/630) и просто ломает таск.
+   ⇒ **Объявление — одним блоком в T2 Step 3**, у первого читателя; поля класса живут в одном
+   месте файла, и дробить их по трём таскам было бы хуже.
+   ⚠ **T4 при этом не пустеет и остаётся тем, ради чего он есть:** переезд маркер-ключа (четыре
+   вещи), доставка полей в `.asset` и её **гейт R-ASSET**, третья ссылка `DevOverlay`, строка
+   прибора и пересчитанный бюджет панели. ⛔ **И порядок «T4 раньше T5» этим не двигается** —
+   он остаётся дословно спековым, вместе с его доводом (владелец видит замену на том же экране,
+   где ещё есть круг).
+
+## Соответствие спеке (сводно)
+
+§0 дисциплина чисел (и **три** расхождения источников) → Global Constraints · §0.2 части тела →
+фикстуры T1 · §0.3 находка против A15 → **T7 A16(в)** · §1 цель и границы → Goal; «вне задачи»
+исполняется по построению (ни один таск не трогает `app-94sk`, `app-umeg`, `app-77s7`,
+`app-per9`, вариант «б», фиксированную длину) · §2 решения Н37–Н46 → T2 (Н37 цвет и «всегда»,
+Н38 упор, Н39 зона, Н40 сокет), T3 (Н46 засечки), T4 (Н42 прибор), T5 (Н41 круг, Н45 точка),
+T6 (Н43 доки), Global Constraints (Н44 — санкция **не тратится**) · §3.1 слои и дисциплина →
+Global Constraints + Files каждого таска · §3.2 линия огня как чистая функция → **T1** ·
+§3.3 Presentation: луч от бедра → **T2** · §3.4 цвет → T2 Step 3 · §3.5 круг и точка уходят →
+**T5** · §3.6 засечки → **T1** (чистые функции) + **T3** (рисование) · §3.7 живая правка чисел на
+вехе → T8 пункт 9 · §3.8 прибор → **T4** (+ отклонение 1) · §3.9 данные `GameFeelConfig` →
+**объявление T2, доставка и маркер-ключ T4** (отклонение 5) · §3.10 доки и PD15 → **T6** ·
+§3.11 чего не делаем → вне плана по построению ·
+§4.1 два ожидаемых красных → таблица «Что красное на каждом таске» + T1 Step 3 ·
+§4.2 эталоны не двигаются → Global Constraints + гейт T1 Step 14 (+ T4 Step 7) ·
+§4.3 мутации M301–M322 и шесть `MonoBehaviour`-мутаций → таблицы выше ·
+§4.4 тесты 1–29 → T1 (1–19 и 24–26 в `AimLineTests`; 20–23 в `WeaponTests`; 27 в
+`AllocationTests`; 28 и 29 — Step 13) · §5 веха, пятнадцать пунктов → **T8 Step 4** ·
+§6 decision log Р471–Р504 → исполняется по месту, ссылки в тексте тасков ·
+§6a шестнадцать разобранных находок → не переоткрываются ·
+§7 DoD → гейты фаз (сводка ниже) · §8 риски → таблица ниже · §9 амендменты → **T7** ·
+§10 декомпозиция восьми тасков → фазы Ф-A…Ф-D **с одним отклонением** (мутации M319–M322 на T1,
+запись 4) и **без перестановок**: порядок T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8 сохранён
+дословно, включая «T4 раньше T5».
+
+**Пункты DoD §7, забранные поимённо:** «24 + 4 + строка зелёные, 22 мутации убиты» → T1 Steps
+11–12; ⭐⭐ «тест 28 зелёный» и ⭐ «тест 29 зелёный» → **T1 Step 13** (оба — швы, и без них заход
+недоказан); ⭐⭐ «тест 24 зелёный» → T1 Step 11; «луч виден без ПКМ… в прицеле поведение не
+изменилось» → T2 + веха 1/15; «засечки того же цвета и толщины, гаснут на **всех** путях, между
+штрихами ничего не нарисовано» → T3 Steps 3–4 + вехи 5/6/14; «круг удалён из кода **и из сцены**,
+R-IDEM» → T5 Steps 3/6; ⭐ «точки на полу от бедра нет, и невидимому маркеру не пишется ничего» →
+**T5 Step 8 — проверка ЧТЕНИЕМ**, тестом она не покрывается; «`Spread`/`SprayPattern` internal,
+`ShotGeometry` public с исправленной докой» → T5 Step 4 + T6 Step 4; ⛔ «все три поля в `.asset`,
+`grep` после `Apply`» → **T4 Step 5 (R-ASSET)**; «прибор снят с живого запуска» → T8; «`app-sr83`:
+свип **до** правки» → T6 Step 1; «амендменты внесены, свип до и после» → T7 Steps 1/3; «эталоны
+зелёные, md5 не изменился, санкция не израсходована» → гейт T1 Step 14; «сборка Linux-клиента,
+образ **не требуется**» → T8 Steps 1–3.
+
+## Риски спеки §8 — где каждый смягчается
+
+| # | Риск | Где смягчается в плане |
+|---|---|---|
+| **Р-A** | Луч обещает точность, которой от бедра нет, и не показывает упреждение (0.38 с на 20 м) | Цена названа **до** кода (§3.2 спеки, повторено в Goal); пункты вехи **3** и **11**; ⭐ откат — **вернуть гейт `AimHeld` одной строкой** (T2 Step 1 её и снимает) |
+| **Р-B** | Засечки читаются как «пуля ляжет между ними» или как бракет «цель захвачена» на теле | Оба прочтения названы в T3; пункты вехи **7** и **12**; ⭐ **гасятся полями без правки кода** (`AimRayNotchFrac = 0`, T4) |
+| **Р-C** | Нарисованная линия расходится с расчётной: до 0.45 м поперёк, до 5.1° на 5 м | ⭐⭐ **Прибор печатает `Δ`** — T2 Step 4 + T4 Step 3, и ради этого сделано отклонение 1; пункт вехи **4** |
+| **Р-D** | **Игрок теряет курсор** — точки нет, OS-курсор скрыт, луч идёт на 0.70 м «выше» мыши | Засечки стоят на **дистанции курсора** и работают якорем (T1 Step 10, Р496); пункт вехи **13**; ⭐ возврат точки — **одна строка** в T5 |
+| **Р-E** | Конец луча дёргается в толпе | Пункт вехи **3**; лечится фиксированной длиной «2/3 видимого радиуса» **без правки линии** (Н37, отложено на веху) |
+| **Р-F** | На стенде числа луча не крутятся живьём | §3.7 названа в T8 пункт **9** как «ожидаемый сюрприз»: живьём крутятся только `GameFeelConfig`-числа, серверные — нет |
+| **Р-G** | Проход по телам дорог оффлайн (`MaxMobs 1350`), и теперь идёт **каждый кадр**, включая паузу | Широкая фаза + ноль аллокаций (**тест 27**, T1 Step 5); порядок **27 тысяч операций** за кадр назван числом в T2 |
+| **Р-H** | Луч не даст владельцу того, ради чего заводился (урок 716) | ⛔⛔ **Прибор ставится ДО вехи** — T4, а не «потом»: высота, упор, расхождение и ширина конуса становятся **числом**, а не впечатлением |
+
+## Self-review плана (личный, до субагентов)
+
+**1. Покрытие спеки.** Пройден каждый раздел §0–§10 **проходом по спеке**, а не по памяти;
+таблица «Соответствие спеке» составлена этим проходом. Все **29 тестов** §4.4 разложены по таскам
+поимённо (24 из них — с именами фикстур и премиссами в Step 1a); все **22 мутации** §4.3 получили
+таск, шаг и жертву; **шесть `MonoBehaviour`-мутаций** получили пункты вехи; **два ожидаемых
+красных** §4.1 названы вместе с разбором «сколько именно красных на шаге-заглушке».
+
+**2. Свип плейсхолдеров.** Проведён по списку `writing-plans` («TBD», «позже», «упрощённо»,
+«аналогично таску N», код без тела). **Осознанно оставлены три места, и у каждого назван точный
+критерий приёмки:**
+(а) тела фикстур 4–19 и 24–26 даны **таблицей премисс**, а не кодом — их геометрия целиком
+определяется числами §0.2 спеки, и вписывать координаты значило бы завести **второй дом** этих
+чисел; критерий приёмки — колонка «Премисса, без которой тест — сторож»;
+(б) точный текст амендментов ADR (T7) — он пишется **по свипу**, и свип может дать больше, чем
+ожидается, что прямо предписано (урок 471);
+(в) числа вехи, которые владелец крутит живьём (T8) — они по построению не могут быть в плане.
+
+**3. Согласованность типов и имён — сверена ПО КОДУ, а не по спеке.** Открыты и прочитаны лично:
+`AimRayView` (весь, 207 строк), `AimProvider` (`LateUpdate` `:101-162`, `ResolveImpactWorldPoint`
+`:199-215`, публичные свойства `:532-562`), `CrosshairView` (`:110-269`), `Spread` (весь),
+`SimulationRunner` (`:171`, `:335`, `:353`, `:427-453`, `:605-624`), `ProjectileFlight`
+(`StepResult` `:97-143`, `Step` `:152-200`, `BarrierStops` `:410-478`), `ProjectileSystem`
+(широкая фаза `:279-370`, мин-скан и перескан `:391-464`), `HitZones` (`StackTop` `:94`,
+`Resolve` `:156-165`, `Overlaps` `:310`), `Geometry` (`SegmentCircle` `:17`,
+`SegmentCircleInterval` `:48`, `SweepArena` `:941`), `ShotGeometry` (`ShotSolution` `:23-83`,
+`Solve` `:138-204`), `RenderSnapshot` (`:59-70`, конструктор `:342`, `Player` `:326`),
+`SimSpace` (весь), `TracerProjectiles` (`:840-860` — прецедент вызова `Step`/`BarrierStops` из
+чужой сборки), `GameFeelConfig` (маркер-ключ `:584`, `AimRay*` `:213-215`, `:296-297`,
+`[ColorUsage]` `:384`), `DevOverlay` (`:35-36`, бюджет `:119-131`, `:332-355`),
+`StageOneSceneBootstrap` (`:297-298`, конус `:1537-1569`, луч `:1591-1637`, ключи `:1111-1116`,
+`DevOverlay` `:2517-2535`), `EditorBootstrapUtils` (`GetOrCreateMaterial` `:106`, `SetRef` `:60`,
+`EnsureAssetHasKey` `:270`), `WeaponTests` (`HipSpread_RunAndSlideMultipliers` `:260-292`),
+`AllocationTests` (`:21`, `:72`, `:471`), `BarrierHeightTests` (`Field` `:24-34`), `TestConfigs`
+(`:63-71`, `:651`, фабрики `:8/658/673/740`), `DeterminismTests` (три константы `:516`, `:1608`,
+`:1806`), четыре ADR **из ветки**.
+**Найдено и учтено при написании:**
+- у `DevOverlay` **нет** третьей ссылки, и `Δ` без неё не считается (отклонение 1);
+- `_cachedImpactWorldPoint` пишется в обеих ветках (`:126` и `:161`) — аналогия спеки верна, но
+  дубль не нужен: точка до ветвления даёт то же (отклонение 2);
+- `_markerRenderer.enabled = true` стоит **выше** объявления `bool aimHeld` (`:143` против `:145`)
+  — порядок строк назван отдельным пунктом T5;
+- `CrosshairView.ConeSegments` читает **бутстрап** (`:1556`) — удаление константы ломает его
+  компиляцию, обе правки идут одним шагом;
+- `RenderSnapshot` строится единственным конструктором `new RenderSnapshot(in cfg)`, и прецеденты
+  ручной сборки в тестах есть (`ResultsTests.cs:805`, `FramePresenceTests.cs:42`);
+- `HitZones` — `internal class` с `public` членами, то есть из `AimLine` (та же сборка) он виден,
+  а из `Presentation` — нет; это и есть довод §3.2 спеки, проверенный по объявлению `:22`;
+- при `VelZ = 0` напольный кандидат `Step` не срабатывает по построению (`:192` — гейт
+  `if (p.VelZ < 0f)`), то есть утверждение спеки проверено, а не принято на веру.
+
+**4. Порядок фаз исполним, и одну ошибку эта проверка нашла — в самом плане.** `AimLine` и
+`Spread.HipHalfWidth` (T1) нужны провайдеру (T2); кэш провайдера и `AimRayView` (T2) нужны
+засечкам (T3). ⛔ **А вот три поля `GameFeelConfig` спека кладёт в T4, тогда как читают их T2
+(цвет) и T3 (две ручки) — то есть ни один из двух не собрался бы.** Найдено проходом «что
+использует то, чего ещё нет», исправлено **записью 5 «Отклонений»**: объявление уехало в T2 Step 3,
+у первого читателя; T4 сохранил всё остальное, включая свой гейт R-ASSET и порядок «T4 раньше T5».
+Дальше: снятие круга (T5) после того, как замена уже видна (T4) — порядок из спеки; доки (T6)
+после всех правок кода, потому что описывают их результат; амендменты (T7) после T1–T6; сборка и
+веха (T8) — после всего.
+
+**5. Гранулярность.** Восемь тасков; таск — один тестируемый деливерабл со своим RED → verify FAIL
+→ GREEN → verify PASS → мутация/гейт → приёмка → коммит. ⚠ Самый тяжёлый — **T1** (15 шагов):
+он неделим, потому что 28 фикстур пишутся под **один** контракт, и разрезать их значило бы
+оставить половину без реализации, то есть закончить полутаск красным.
+
+**6. Что план проверил в самой спеке и нашёл.** Пять записей «Отклонений» родились из личной
+проверки, а не из чтения: отсутствие третьей ссылки у `DevOverlay` — из открытия файла; точка
+вычисления кэша — из чтения `LateUpdate` целиком; форма заглушки — из столкновения Р503 с
+правилом 332/498/630 в том же handoff'е; место мутаций M319–M322 — из столкновения §10 с §4.4
+самой спеки; место объявления трёх полей — из прохода «что использует то, чего ещё нет».
+⚠ **Ни одна не меняет ни одного решения владельца Н37–Н46 и ни одного числа задачи**, и ни одна
+не трогает границы скоупа: спорят они с **порядком и механикой**, а не с предметом.
+⚠ **Три из пяти — это места, где спека утверждает факт о коде**, и все три проверены открытием
+файла, а не рассуждением (уроки 693/703/722: ни своей ссылке на факт кода, ни аналогии с соседом
+верить нельзя).
+
+## ⭐ Вопросы владельцу (решения, которые план не принимает сам)
+
+1. ⭐⭐ **Прибор получает третью ссылку — и это единственное, что план добавил к спеке по
+   существу.** Спека обещала, что проводка не нужна; проверка показала, что для `Δ` — нужна
+   (одна строка `SetRef` в бутстрапе и одно публичное свойство у `AimRayView`).
+   **Цена — три строки кода и один R-APPLY.** Альтернатива — отказаться от `Δ`, и тогда цена
+   решения Н40 («луч растёт из сокета куклы, а не из расчётного дула») останется **неизмеренной**:
+   мы знаем, что расхождение до 0.45 м поперёк и до 5.1° на пяти метрах, но на вехе не сможем
+   сказать, сколько его **в этом кадре**. Ровно на этом обжёгся заход 97-й (урок 716).
+   ⇒ **Рекомендация — ставить ссылку.**
+
+2. ⭐ **Три ручки, которые ты будешь крутить живьём:** `AimRayHipColor` (жёлтый, стартово
+   HDR `(3.2, 2.6, 0.2)` — той же яркости, что соседние эмиссивные), `AimRayNotchFrac 0.5` и
+   `AimRayNotchMinLength 0.08`. **Все три — `GameFeelConfig`, то есть крутятся на стенде
+   мгновенно, без пересборки.** ⚠ А вот высота, длина луча и барьер — **серверные**, и живьём не
+   двинутся: это §3.7 спеки и пункт вехи 9.
+
+3. **Длина луча, когда на линии пусто — 78.75 м, и это может оказаться много.** Альтернатива из
+   Н37 — «2/3 видимого радиуса» (около 30 м). ⚠ Видно около **25 м**, поэтому разница проявится
+   только вблизи упоров. **Цена перехода — одно число в SO, если решать после вехи** (по CR 6
+   оно приедет полем), и ноль правок линии.
+
+4. **Точка на полу от бедра убрана (Н45), и риск Р-D назван определённым:** OS-курсор в бою скрыт,
+   а луч через экранную точку мыши **не проходит** — он идёт на 0.70 м «выше» неё (в слайде 0.32).
+   Якорем работает пара засечек на дистанции курсора. **Если на вехе мышь потеряется — возврат
+   точки стоит одну строку** (маркер гасится, а не удаляется — это записано в T5).
+
+5. **Засечек в прицельном режиме нет намеренно** (Н37 закрепил «в прицеле как сегодня»), хотя
+   конус там тоже есть — до **5.50°**. Вопрос вехи 12: нужны ли.
+
+6. ⛔ **Санкция на перепин эталонов (Н44) этим заходом НЕ ТРАТИТСЯ и ждёт `app-94sk`.** Если по
+   ходу T1–T8 выяснится, что эталон всё-таки двинулся — это **стоп и вопрос тебе**, а не рабочий
+   момент: заход не меняет ни строки поведения в симуляции, и такой сдвиг означал бы, что мы
+   тронули что-то, чего не собирались.
