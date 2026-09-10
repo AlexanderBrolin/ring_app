@@ -553,11 +553,13 @@ namespace Ring.Simulation.Tests
         /// the four notch points. Every one of them answers in structs; the
         /// arrays they read belong to the config, the frame and the caller.
         ///
-        /// ⛔ ON THE CONSTANT STUB THIS IS A GUARD RATHER THAN A WITNESS, and
-        /// it is said here rather than left for the next reader to work out
-        /// (rule 427): a body returning `default` allocates nothing whatever
-        /// the world holds. It becomes a witness the moment Solve grows its
-        /// real scan -- which is the same task, one step later.
+        /// ⚠ IT WAS A GUARD ON THE RED PHASE AND IS A WITNESS NOW, and the
+        /// history is worth a line rather than being left for the next reader
+        /// to re-derive (rule 427): while Solve was still the constant stub of
+        /// this task's RED step it returned `default` and allocated nothing
+        /// whatever the world held, so this fixture could not have failed and
+        /// said so. Since the GREEN step Solve walks its real two-stage scan
+        /// across the crowd below, and the window now measures something.
         [Test]
         public void AimLineSolveAndNotches_DoNotAllocateGC()
         {

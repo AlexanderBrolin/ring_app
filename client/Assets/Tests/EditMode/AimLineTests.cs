@@ -48,6 +48,15 @@ namespace Ring.Simulation.Tests
         static (float t, int kind, int index)[] Scratch(in SimConfig cfg)
             => new (float t, int kind, int index)[cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers];
 
+        /// A barrier top bound to HOLD the line: the muzzle's height, the
+        /// round's own radius on top of it (the height gate pads by that at
+        /// both ends) and a meter to spare. ⚠ Every fixture here states its own
+        /// Arena.BarrierTop -- the shared baseline keeps it at zero for the
+        /// goldens' sake -- and three of them want the SAME number, so it is
+        /// written once instead of three times.
+        static float BarrierTopThatHolds(in SimConfig cfg)
+            => cfg.Hero.MuzzleHeight + cfg.Weapon.ProjectileRadius + 1f;
+
         [Test]
         public void TheLineIsHorizontalAtTheMuzzleHeight()   // test 1, M309
         {
@@ -214,7 +223,7 @@ namespace Ring.Simulation.Tests
         static (SimConfig cfg, RenderSnapshot snap) BarrierAndBody(float obstacleX, float bodyX)
         {
             SimConfig cfg = TestConfigs.OpenField();
-            cfg.Arena.BarrierTop = cfg.Hero.MuzzleHeight + cfg.Weapon.ProjectileRadius + 1f;
+            cfg.Arena.BarrierTop = BarrierTopThatHolds(in cfg);
             TestConfigs.PutObstacle(ref cfg, new float2(obstacleX, 0f), 1f);
             RenderSnapshot snap = Snap(in cfg, mobs: 1);
             snap.Mobs[0] = new MobState { Id = 1, Type = MobType.Chaser,
@@ -230,7 +239,7 @@ namespace Ring.Simulation.Tests
             // ⚠ THE FIXTURE STATES ITS OWN BarrierTop -- a wall that has to
             // HOLD must be stated as holding, and the shared baseline states
             // nothing (it keeps the number at 0 for the goldens' sake).
-            cfg.Arena.BarrierTop = cfg.Hero.MuzzleHeight + cfg.Weapon.ProjectileRadius + 1f;
+            cfg.Arena.BarrierTop = BarrierTopThatHolds(in cfg);
             TestConfigs.PutWall(ref cfg, new float2(wallX, -4f), new float2(wallX, 4f), 0.5f);
             var body = new float2(10f, 0f);
             var snap = Snap(in cfg, mobs: 1);
@@ -604,7 +613,11 @@ namespace Ring.Simulation.Tests
             HitPart chaserCorpus = cfg.Chaser.Parts[1];
             const float offset = 0.46f;
             const float gap = 0.29f;
-            float aX = cfg.Weapon.MuzzleOffset + 8f;
+            // How far A's center stands DOWN THE LINE from the muzzle: the
+            // fixture's own input, and what the length expectation below is
+            // measured from.
+            const float toA = 8f;
+            float aX = cfg.Weapon.MuzzleOffset + toA;
 
             float padBody = cfg.Gunner.Radius + cfg.Weapon.ProjectileRadius;
             float padPartA = gunnerLegs.Radius + cfg.Weapon.ProjectileRadius;
@@ -636,6 +649,24 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(AimStop.Body, line.Stop, "ни одно из двух тел не остановило линию");
             Assert.AreEqual(gunnerLegs.Zone, line.Zone,
                 "кандидаты ранжированы по частям, а не по кругам тел");
+
+            // ⛔⛔ AND THE LENGTH IS PINNED HERE, BECAUSE NOTHING ELSE IN THE SET
+            // PINS IT. On a body stop `Length` is the first contact with the
+            // PART struck, not the entry into the body circle the candidates
+            // were RANKED by -- two roles of one `t`, and the shot itself keeps
+            // them apart the same way. This fixture is the only place in the
+            // file where the two numbers differ at all: on a chaser they are
+            // identically equal (its corpus is as wide as its body), and in the
+            // seam fixture the difference sinks under a tolerance of one
+            // projectile step. Without this assertion a mutant reporting the
+            // circle's own `t` passes all 24 fixtures.
+            // ⚠ IT DOES NOT REPLACE THE ZONE ASSERTION ABOVE: that one pins the
+            // ORDER of the candidates (M306), this one pins the CONVENTION of
+            // the length.
+            Assert.Greater(backCircle - backPart, Eps,
+                "премисса фикстуры: две конвенции длины здесь расходятся — иначе ассерт ниже ничего не свидетельствует");
+            Assert.AreEqual(toA - backPart, line.Length, Eps,
+                "длина луча взята по кругу тела, а не по первому контакту с задетой частью");
         }
 
         // ---- third group (Step 1b): the notches ----
@@ -665,8 +696,7 @@ namespace Ring.Simulation.Tests
             // over, and then the notches ride the stop.
             const float wallX = 3f;
             SimConfig walled = TestConfigs.OpenField();
-            walled.Arena.BarrierTop =
-                walled.Hero.MuzzleHeight + walled.Weapon.ProjectileRadius + 1f;
+            walled.Arena.BarrierTop = BarrierTopThatHolds(in walled);
             TestConfigs.PutWall(ref walled, new float2(wallX, -4f), new float2(wallX, 4f), 0.5f);
             Assert.Greater(walled.Arena.BarrierTop,
                 walled.Hero.MuzzleHeight + walled.Weapon.ProjectileRadius,
@@ -713,9 +743,17 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, math.dot(midA - line.NotchAt, line.Dir), Eps,
                 "штрих стоит не на дистанции засечек");
             Assert.AreEqual(0f, math.dot(a1 - a0, line.Dir), Eps,
-                "штрих отложен не поперёк линии");
+                "первый штрих отложен не поперёк линии");
             Assert.AreEqual(stroke, math.distance(a0, a1), Eps,
-                "длина штриха не равна переданной");
+                "длина первого штриха не равна переданной");
+            // ⚠ THE SECOND STROKE IS EXAMINED IN FULL TOO, and it is not
+            // symmetry for symmetry's sake: with only its middle asserted, a
+            // mutant laying THIS pair ALONG the line instead of across it
+            // passes every other assertion in the fixture.
+            Assert.AreEqual(0f, math.dot(b1 - b0, line.Dir), Eps,
+                "второй штрих отложен не поперёк линии");
+            Assert.AreEqual(stroke, math.distance(b0, b1), Eps,
+                "длина второго штриха не равна переданной");
         }
 
         [Test]
