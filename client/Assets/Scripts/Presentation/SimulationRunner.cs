@@ -445,12 +445,16 @@ namespace Ring.Presentation
         /// precisely because this point is a bare offset ahead of the hero and
         /// visibly not the gun in his hand. What it is still good for is the
         /// question the simulation itself answers from it.
+        ///
+        /// app-461s T2: the arithmetic itself moved into
+        /// `Ring.Simulation.Combat.AimLine.MuzzleSimPos`, the home of that
+        /// formula for the picture (the aim-line answer T1 shipped shares it
+        /// too) — this method is a plain delegation now, character for
+        /// character the same formula it carried before, not a new
+        /// dependency.
         public float2 RenderMuzzleSimPos(float2 aimSimPos)
-        {
-            float2 pos = RenderCurr.Player.Pos;
-            return pos + math.normalizesafe(aimSimPos - pos, new float2(1f, 0f))
-                * Config.Weapon.MuzzleOffset;
-        }
+            => AimLine.MuzzleSimPos(RenderCurr.Player.Pos, aimSimPos, Config.Weapon.MuzzleOffset,
+                out _);
 
         public long Seed { get; private set; }
         public bool ConfigTweaked;

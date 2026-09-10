@@ -82,6 +82,26 @@ namespace Ring.Presentation
         // as the ray's dot) and two independent restatements of one flight
         // would eventually disagree.
         Vector3 _cachedImpactWorldPoint;
+        // app-461s T2: the line of fire from the hip — start of the answer
+        // AimLine.Solve gives back. Readers are AimRayView (the ray plus its
+        // notches) and DevOverlay's readout (T4); same one-render-frame-old
+        // contract as every sibling cache above (K15), since this class runs
+        // AFTER the views that read it.
+        AimLineSolution _cachedHipLine;
+        // ⛔ SCRATCH FOR THE TWO-STAGE SCAN WITH A RE-SCAN (AimLine.Solve's own
+        // doc): a pure function owns no world of its own, so the candidate
+        // buffer belongs to the CALLER — the same shape ProjectileSystem
+        // takes its world-owned array as a parameter, except this array
+        // belongs to THIS MonoBehaviour instead of a SimulationWorld.
+        // ⛔⛔ LENGTH IS CHECKED, NOT `??=`: the projectile system's own buffer
+        // is safe because it lives inside SimulationWorld and is rebuilt with
+        // the world; this provider is a scene object that survives every
+        // restart while the config it sizes the buffer from is re-read from
+        // assets across them. Skipping the length check is the exact defect
+        // NetworkSimBackend's own buffer doc already names by symptom: a
+        // second Restart at a larger Arena.MaxPlayers puts an index past the
+        // end of an array sized for the old cap, on every frame afterward.
+        (float t, int kind, int index)[] _aimLineScratch;
 
         void Awake()
         {
@@ -108,6 +128,22 @@ namespace Ring.Presentation
             if (_runner == null || !_runner.Ready) return;
 
             float2 planeAimSimPos = ComputePlaneAimSimPos();
+            // ⛔⛔ COMPUTED HERE, BEFORE THE BRANCH BELOW, AND EXACTLY ONCE
+            // (app-461s T2). Gating this behind the branch and `AimHeld` —
+            // the reading a v3 draft of this task's spec asked for — would
+            // leave the cache ARBITRARILY STALE: release the aim button after
+            // five seconds of aiming and the very first hip frame would draw
+            // a five-second-old line; after a pause, a death or a restart, a
+            // line from the PREVIOUS MATCH. `_cachedImpactWorldPoint` below is
+            // written on both branches for the identical reason. ⇒ One rule:
+            // WRITE ALWAYS, DRAW BY `AimActive` — that gate lives in the view.
+            int scratchNeed = _runner.Config.Arena.MaxMobs + _runner.Config.Arena.MaxPlayers;
+            if (_aimLineScratch == null || _aimLineScratch.Length < scratchNeed)
+                _aimLineScratch = new (float t, int kind, int index)[scratchNeed];
+            _cachedHipLine = AimLine.Solve(_runner.RenderCurr.Player.Pos, planeAimSimPos,
+                _runner.RenderMuzzleHeight, _runner.Config,
+                _runner.RenderCurr, _runner.RenderCurr.LocalPlayerIndex, _aimLineScratch);
+
             if (!_runner.LastFrameInput.AimHeld)
             {
                 // Э1 unchanged: CurrentAimSimPos still tracks the plane cast every
@@ -326,8 +362,8 @@ namespace Ring.Presentation
         /// between the two, inside the column, and any barrier on the plan line
         /// really does stop it. Above that column the flat answer starts
         /// refusing shots that would land — with the shipped numbers that band
-        /// is the top 0.42 m of a Gunner's head belt (`MobGunnerConfig` head top
-        /// 3.5 against a grown column of 3.08), and only when the barrier also
+        /// is the top 1.12 m of a Gunner's head belt (`MobGunnerConfig` head top
+        /// 4.20 against a grown column of 3.08), and only when the barrier also
         /// sits in the last sixth or so of the muzzle→aim line, which is what it
         /// takes for a climbing round to be over the crown by the time it gets
         /// there. The refusal is the deliberate direction of that error, the
@@ -571,5 +607,14 @@ namespace Ring.Presentation
         /// above the round's ground-contact height, which is every shot at a
         /// body. Cached once per render frame like everything else here (K15).
         public Vector3 CurrentImpactWorldPoint => _cachedImpactWorldPoint;
+
+        /// app-461s T2: this frame's line of fire from the hip — the answer
+        /// `Ring.Simulation.Combat.AimLine.Solve` gives back, written every
+        /// `Ready` frame regardless of `AimHeld` (see `LateUpdate`'s own
+        /// comment for why an unconditional write is the correct one).
+        /// Readers: `AimRayView` (the ray plus its notches) and `DevOverlay`'s
+        /// readout (app-461s T4). Cached once per render frame like every
+        /// other value here (K15).
+        public AimLineSolution CurrentHipLine => _cachedHipLine;
     }
 }

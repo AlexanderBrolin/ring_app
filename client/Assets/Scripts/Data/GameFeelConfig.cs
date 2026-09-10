@@ -583,6 +583,33 @@ namespace Ring.Data
         [Range(0f, 10f)] public float WaveAnnounceSeconds = 1.5f;
         public Color WaveAnnounceFlashColor = new Color(1f, 0.85f, 0.35f); // sync-marker key — keep LAST
 
+        // app-461s (spec §3.4/§3.6): the hip-fire aim ray's color and the
+        // geometry of its notches. Declared here, at the class's task T2,
+        // rather than at the later task that delivers them into the .asset,
+        // because T2 (the color) and T3 (both notch handles below) already
+        // need to read them — declaring them at the later task would leave
+        // T2/T3 unable to compile at all, which is worse than a red test.
+        // ⛔ [ColorUsage(false, true)] IS MANDATORY — without it the LDR
+        // color picker clamps every channel into [0,1] the moment the
+        // inspector opens, and an HDR yellow like this one fades on the spot.
+        // This class already carries the same fix once, for the same reason
+        // (`RemotePlayerEmission` above, same attribute on its own line).
+        [ColorUsage(false, true)]
+        public Color AimRayHipColor = new Color(3.2f, 2.6f, 0.2f);
+        // The notch stroke's length is AimLine.NotchStroke(hw, Frac, MinLength).
+        // ⛔ A FRACTION, NOT AN ABSOLUTE LENGTH: the full gap between the two
+        // notches before opening fire, at ten meters, is 0.52 m (half-width
+        // 0.26 m each way), and a flat 0.35 m stroke would leave only 0.17 m
+        // between the inner ends — the pair would read as a single mark
+        // exactly when the decision it exists to inform is being made, before
+        // the first shot. A full merge happens at stroke >= 2 x hw.
+        // ⚠ BOTH HANDLES SILENCE IT TOGETHER, NOT EITHER ALONE: at Frac = 0
+        // the length still equals MinLength and the notches keep drawing —
+        // the view's own switch looks at strokeLength > 0f, so turning the
+        // notches off with no code change takes Frac = 0 AND MinLength = 0.
+        [Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
+        [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;
+
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
         /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and
         /// `PersistentPropsDirector` sizes that mob's corpse and its gib parts
