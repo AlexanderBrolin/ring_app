@@ -66,8 +66,11 @@ namespace Ring.Presentation
     /// player is looking at, at whatever height the animated hand is holding it
     /// — including mid-slide, which the ternary above approximated with a second
     /// number. No doll (the opening frames, or after this player dies) means no
-    /// ray, switched off exactly the way `!Ready`/`!AimHeld` already switch it
-    /// off. The ray's far END was untouched by that task and is Stage 2 Task
+    /// ray, switched off through `SetDrawn` exactly like the other two gates
+    /// this view keeps (app-461s T2 fix round 1: `!AimActive`, and the
+    /// first-frame guard against a restart's own stale cache — `!AimHeld` is
+    /// no longer one of the three since that task made the ray hip-visible).
+    /// The ray's far END was untouched by that task and is Stage 2 Task
     /// 45c's own subject (`app-bej`).
     ///
     /// THE TWO ENDS ANSWER DIFFERENT QUESTIONS, AND THAT IS DELIBERATE (Stage 2

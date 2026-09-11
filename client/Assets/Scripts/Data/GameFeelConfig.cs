@@ -603,12 +603,21 @@ namespace Ring.Data
         // between the inner ends — the pair would read as a single mark
         // exactly when the decision it exists to inform is being made, before
         // the first shot. A full merge happens at stroke >= 2 x hw.
-        // ⚠ BOTH HANDLES SILENCE IT TOGETHER, NOT EITHER ALONE: at Frac = 0
-        // the length still equals MinLength and the notches keep drawing —
-        // the view's own switch looks at strokeLength > 0f, so turning the
-        // notches off with no code change takes Frac = 0 AND MinLength = 0.
+        // ⚠ BOTH HANDLES WILL HAVE TO SILENCE IT TOGETHER, NOT EITHER ALONE
+        // (app-461s T3 draws the notches; this field ships in T2 because T3
+        // already needs to read it): at Frac = 0 the length still equals
+        // MinLength and the notches would keep drawing — T3's own switch is
+        // meant to look at strokeLength > 0f, so turning the notches off with
+        // no code change will take Frac = 0 AND MinLength = 0.
         [Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
         [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;
+        // app-461s T2 fix round 1: the `// sync-marker key — keep LAST` comment
+        // above, on `WaveAnnounceFlashColor`, does NOT move here yet even
+        // though this field is now physically last in the class — moving it
+        // is T4's work, together with `EnsureAssetHasKey`'s own argument in
+        // `StageOneSceneBootstrap`, so the two never fall out of step. Until
+        // then these three fields live only as C# defaults and never reach
+        // the `.asset` at all.
 
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
         /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and

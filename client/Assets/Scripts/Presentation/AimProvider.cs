@@ -102,6 +102,11 @@ namespace Ring.Presentation
         // second Restart at a larger Arena.MaxPlayers puts an index past the
         // end of an array sized for the old cap, on every frame afterward.
         (float t, int kind, int index)[] _aimLineScratch;
+        // app-461s T2 fix round 1: the last `RenderSnapshot.Tick` this class
+        // has seen, read by `Update` below to tell a restart apart from an
+        // ordinary frame. -1 so tick 0 of the very first match ever played
+        // never reads as a regression.
+        int _lastHipLineTick = -1;
 
         void Awake()
         {
@@ -116,6 +121,54 @@ namespace Ring.Presentation
             // layer mask they are handed.
             for (int i = 0; i < 32; i++)
                 Physics.IgnoreLayerCollision(AimProxyLayer, i, true);
+        }
+
+        /// app-461s T2 fix round 1 (review circle, owner ruling against spec
+        /// decision Р504): a restart's OWN frame draws the hip line from the
+        /// NEW muzzle to the OLD match's endpoint, and `LateUpdate`'s own
+        /// "write always" rule (its comment above) does not close this —
+        /// that rule closes staleness ACROSS several ordinary frames (release
+        /// the aim button, or pause, and the cache would otherwise sit
+        /// unwritten), not this ONE-FRAME race: `AimRayView` runs at
+        /// `[DefaultExecutionOrder(10)]`, this class at `(100)`, so on the
+        /// very frame a restart happens the view still reads whatever this
+        /// class wrote in ITS `LateUpdate` call LAST frame — the previous
+        /// match's line — before this class gets a chance to recompute this
+        /// frame. `AimLine.MuzzleSimPos`'s `normalizesafe` never hands back a
+        /// zero `Dir`, so that stale line is never `default` either, and the
+        /// existing first-frame guard in `AimRayView` (which only catches
+        /// `default`) cannot tell "never computed" apart from "computed for a
+        /// DIFFERENT match".
+        /// ⇒ `Update` — which the engine runs for every object before
+        /// `LateUpdate` runs for ANY object, regardless of execution order —
+        /// checks `RenderSnapshot.Tick` for the one signal a restart always
+        /// gives: a rewind. `SimulationRunner` restarts from ITS OWN `Update`
+        /// (`[DefaultExecutionOrder(-50)]`, i.e. before this class's `Update`
+        /// in the very same phase), and `ISimBackend.Restart` recaptures both
+        /// snapshot halves synchronously before returning — so by the time
+        /// this method runs, `RenderCurr.Tick` already belongs to the new
+        /// match. Finding it lower than the last one seen resets the cache to
+        /// `default` HERE, strictly before any `LateUpdate` of this same
+        /// frame — including `AimRayView`'s — so the view's own existing
+        /// guard fires and hides the ray for exactly that one frame; the
+        /// unconditional `Solve` call in `LateUpdate` below still runs this
+        /// same frame regardless and leaves the cache correct again for the
+        /// next one.
+        /// ⚠ THIS IS A TICK COMPARISON, NOT A NEW SEAM: spec decision Р504
+        /// rejected subscribing to `WorldRestarted` on the argument that the
+        /// cache rewrites itself every frame and needs no restart-specific
+        /// hook. That argument covers the VALUE (it is never stale for more
+        /// than the ordinary one-render-frame lag every cache here already
+        /// carries), not this execution-order gap between two components that
+        /// both already run every frame — reading `Tick`, a number the frame
+        /// hands over regardless, closes the gap without adding an event.
+        void Update()
+        {
+            if (_runner == null || !_runner.Ready) return;
+
+            int currentTick = _runner.RenderCurr.Tick;
+            if (currentTick < _lastHipLineTick) _cachedHipLine = default;
+            _lastHipLineTick = currentTick;
         }
 
         void LateUpdate()
@@ -133,15 +186,27 @@ namespace Ring.Presentation
             // the reading a v3 draft of this task's spec asked for — would
             // leave the cache ARBITRARILY STALE: release the aim button after
             // five seconds of aiming and the very first hip frame would draw
-            // a five-second-old line; after a pause, a death or a restart, a
-            // line from the PREVIOUS MATCH. `_cachedImpactWorldPoint` below is
-            // written on both branches for the identical reason. ⇒ One rule:
-            // WRITE ALWAYS, DRAW BY `AimActive` — that gate lives in the view.
-            int scratchNeed = _runner.Config.Arena.MaxMobs + _runner.Config.Arena.MaxPlayers;
+            // a five-second-old line; after a pause, a line frozen for as long
+            // as the pause lasts. `_cachedImpactWorldPoint` below is written
+            // on both branches for the identical reason. ⇒ One rule: WRITE
+            // ALWAYS, DRAW BY `AimActive` — that gate lives in the view.
+            // ⚠ A RESTART IS A SEPARATE CASE, CLOSED ABOVE, NOT HERE: writing
+            // unconditionally keeps this cache correct from THIS point in
+            // every ordinary frame, but on a restart's own frame `AimRayView`
+            // reads it before this method gets to run at all — `Update`'s own
+            // doc above has the full account of why "write always" alone
+            // does not reach that one frame.
+            // app-461s T2 fix round 1: one copy of the built config for this
+            // block, the same house rule `TryAimProxy` below already keeps —
+            // `Config` forwards to the backend by value, and `SimConfig` is a
+            // large enough struct that re-reading the property three times
+            // over is worth naming once instead.
+            SimConfig config = _runner.Config;
+            int scratchNeed = config.Arena.MaxMobs + config.Arena.MaxPlayers;
             if (_aimLineScratch == null || _aimLineScratch.Length < scratchNeed)
                 _aimLineScratch = new (float t, int kind, int index)[scratchNeed];
             _cachedHipLine = AimLine.Solve(_runner.RenderCurr.Player.Pos, planeAimSimPos,
-                _runner.RenderMuzzleHeight, _runner.Config,
+                _runner.RenderMuzzleHeight, config,
                 _runner.RenderCurr, _runner.RenderCurr.LocalPlayerIndex, _aimLineScratch);
 
             if (!_runner.LastFrameInput.AimHeld)
@@ -361,12 +426,16 @@ namespace Ring.Presentation
         /// point (`ProjectileSystem` adds no gravity), so its whole height stays
         /// between the two, inside the column, and any barrier on the plan line
         /// really does stop it. Above that column the flat answer starts
-        /// refusing shots that would land — with the shipped numbers that band
-        /// is the top 1.12 m of a Gunner's head belt (`MobGunnerConfig` head top
-        /// 4.20 against a grown column of 3.08), and only when the barrier also
-        /// sits in the last sixth or so of the muzzle→aim line, which is what it
-        /// takes for a climbing round to be over the crown by the time it gets
-        /// there. The refusal is the deliberate direction of that error, the
+        /// refusing shots that would land — with the shipped numbers (fix
+        /// round 1, app-461s: `Arena.BarrierTop` 3, `Weapon.ProjectileRadius`
+        /// 0.02, grown column 3.02) that band is 1.18 m tall, and it is WIDER
+        /// than a Gunner's own head belt (`MobGunnerConfig` head top 4.20,
+        /// belt 3.24-4.20, 0.96 m): the band covers that entire head belt plus
+        /// the top 0.22 m of the body belt below it. It costs a shot only when
+        /// the barrier also sits in the last sixth or so of the muzzle→aim
+        /// line, which is what it takes for a climbing round to be over the
+        /// crown by the time it gets there. The refusal is the deliberate
+        /// direction of that error, the
         /// same one `ProjectileSystem`'s own gate chose: this bug is about the
         /// picture promising what the round cannot do, so the picture stays on
         /// the cautious side of it. When the owner's post-MVP low cover lands
