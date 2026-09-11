@@ -12,10 +12,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 41284991a24b45d0ba6e8a5e34ae78d9, type: 3}
   m_Name: GameFeelConfig
   m_EditorClassIdentifier: Ring.Data::Ring.Data.GameFeelConfig
-  HitstopSeconds: 0.04
-  HitstopScope: 1
-  MaxHitstopRatio: 0.35
-  HitstopCatchUpSeconds: 0.05
   FlashDuration: 0.08
   TraumaHit: 0.2
   TraumaDeath: 0.35
@@ -84,13 +80,11 @@ MonoBehaviour:
   StaminaBarLowColor: {r: 1, g: 0.25, b: 0.15, a: 1}
   StaminaBarLowThreshold: 0.25
   StaminaDeniedPulseSeconds: 0.2
-  HeadHitstopScale: 1.4
   ZoneHitPitchOffset: 0.06
   GibHeadImpulseSpeed: 6
   GibExplosionSpeed: 4
   GibPartsFifoLimit: 24
   GibPhysicsSeconds: 3
-  AimProxyHeadRadiusFrac: 0.8
   AimRayAlpha: 0.35
   AimRayWidth: 0.03
   AimDotScale: 0.15
@@ -121,3 +115,6 @@ MonoBehaviour:
   ContainerVisualScale: 1
   WaveAnnounceSeconds: 1.5
   WaveAnnounceFlashColor: {r: 1, g: 0.85, b: 0.35, a: 1}
+  AimRayHipColor: {r: 3.2, g: 2.6, b: 0.2, a: 1}
+  AimRayNotchFrac: 0.5
+  AimRayNotchMinLength: 0.08

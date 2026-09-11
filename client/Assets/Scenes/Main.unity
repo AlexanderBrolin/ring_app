@@ -10896,6 +10896,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Ring.Presentation::Ring.Presentation.DevOverlay
   _runner: {fileID: 1959383180}
   _aimProvider: {fileID: 1959383182}
+  _aimRayView: {fileID: 673512234}
 --- !u!4 &1809078016
 Transform:
   m_ObjectHideFlags: 0
