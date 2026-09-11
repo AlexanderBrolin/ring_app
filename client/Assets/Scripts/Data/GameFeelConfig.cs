@@ -621,7 +621,34 @@ namespace Ring.Data
         // handle and the upper half is legitimate for a deliberately blunt
         // look, this note simply says what it costs.
         [Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
-        [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f; // sync-marker key — keep LAST
+        // Was the sync-marker key, superseding `WaveAnnounceFlashColor` above,
+        // until `AimRayScreenReachFrac` below superseded it in turn (app-461s,
+        // owner decision Н47).
+        [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;
+
+        // app-461s, OWNER DECISION Н47 ("the ray is nice, just make it
+        // shorter"): how far out the hip ray is allowed to be drawn, as a
+        // fraction of what the collector can actually SEE in that direction.
+        // ⚠ A FRACTION OF A RUNTIME MEASUREMENT, NOT A LENGTH IN METERS, AND
+        // THAT IS THE WHOLE POINT OF THE FIELD. The owner's own words for the
+        // quantity were "2/3 of the visible radius... the visible radius is
+        // what the player sees on the monitor with the client running, and
+        // depending on resolution and monitor it differs a little" — so the
+        // meters cannot live here. `AimRayView` measures them per frame off
+        // the camera's own view frustum, in the direction of the ray, and
+        // this handle scales that answer.
+        // ⚠ IT IS A CEILING, NEVER A REPLACEMENT FOR THE STOP: a body, a
+        // barrier or the rim still ends the ray wherever the simulation says
+        // it does, and this only shortens what is left — "everything as it
+        // is now, the ray just has to be shorter" (Н47).
+        // ⚠ THERE IS NO "OFF" VALUE AND NONE IS NEEDED: at the top of the
+        // range (1) the ray reaches exactly the edge of the screen, and a
+        // meter beyond that edge is a meter nobody can see, so a cap at 1
+        // already costs the picture nothing that an uncapped ray would have
+        // given. The bottom of the range does NOT collapse the ray either —
+        // the view floors the drawn length at the notch distance so the two
+        // spread marks can never hang in the air past its end.
+        [Range(0f, 1f)] public float AimRayScreenReachFrac = 2f / 3f; // sync-marker key — keep LAST
 
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
         /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and

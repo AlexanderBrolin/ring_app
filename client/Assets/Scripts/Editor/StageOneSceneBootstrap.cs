@@ -1124,7 +1124,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "SprayVariance"); // app-8dv (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayNotchMinLength"); // app-461s (was WaveAnnounceFlashColor, app-ggvz Т7)
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayScreenReachFrac"); // app-461s Н47 (was AimRayNotchMinLength, app-461s T4; was WaveAnnounceFlashColor, app-ggvz Т7)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RewindPictureTicks"); // app-88jb Т24 (was RelaxIterations, app-88jb Т22)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -1654,6 +1654,12 @@ namespace Ring.Editor
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_rayMaterial", aimRayMat);
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_notchLeft", notchLeft);
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_notchRight", notchRight);
+            // app-461s (owner decision Н47): the SAME camera CrosshairView's
+            // billboarding and AimProvider's own cast already read (`mainCamera`
+            // local var, still in scope) — the ray's screen-length ceiling is a
+            // question about this camera's view frustum, measured per frame
+            // because the answer moves with resolution and aspect ratio.
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_camera", mainCamera);
             if (aimRayRefsChanged)
             {
                 aimRaySo.ApplyModifiedPropertiesWithoutUndo();

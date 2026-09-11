@@ -154,6 +154,23 @@ namespace Ring.Presentation
             // of the thing, and doubly so for a gauge whose entire job is to
             // make a number readable that the picture alone does not carry
             // (owner lesson 716).
+            // app-461s Н47: the gauge gained a CONDITIONAL seventh reading,
+            // `cap` — the drawn length on the frames the screen ceiling
+            // shortens the ray — and it lands on the FIRST of those two rows,
+            // which changes the width arithmetic and not the height. WIDTH,
+            // re-counted: ` cap 16.7` is 9 characters, taking the worst-case
+            // first row from `AimRay: on  h 1.20  d 78.8  Δ 0.15` (34) to
+            // `AimRay: on  h 1.20  d 78.8 cap 16.7  Δ 0.15` (43), or 44 if a
+            // muzzle height ever reaches two digits — 301-308 px at this
+            // panel's own ~7 px per character, against the same ~364 px of
+            // usable width. So the FIRST row is the wider of the two now (43
+            // against the second row's 40), and it still clears the budget by
+            // roughly eight characters; the split into two rows stays
+            // mandatory, since 43 + 40 back on one line is 83 characters.
+            // HEIGHT: unchanged at 920. `cap` adds characters to an existing
+            // row, never a row — and `GUILayout.Label` lays the text out
+            // itself, so the only way it could cost a line is by wrapping,
+            // which the width count above is exactly what rules out.
             GUILayout.BeginArea(new Rect(10f, 10f, 380f, 920f), GUI.skin.box);
 
             GUILayout.Label($"FPS: {_fps:F0}");
@@ -370,6 +387,13 @@ namespace Ring.Presentation
         /// 72-74 characters on one line, wider than this panel's own budget
         /// (see the width arithmetic on `GUILayout.BeginArea` above) —
         /// `on/h/d/Δ` first, `cone/hw/stop` second.
+        /// ⚠ SEVEN READINGS SINCE app-461s Н47, NOT SIX, AND THE SEVENTH IS
+        /// CONDITIONAL: `cap` joins the first line only on the frames the
+        /// screen ceiling actually shortens the drawn ray. It is the only
+        /// witness this task has — `AimRayView` is a `MonoBehaviour`, so
+        /// EditMode cannot reach the arithmetic at all, and the picture alone
+        /// cannot tell a ray cut by the screen from a ray that simply ran into
+        /// something. The width arithmetic above was re-counted for it.
         string AimRayLine()
         {
             // A DIFFERENT REASON THAN THE ONE BELOW (fix-round 1, Minor 1):
@@ -419,8 +443,27 @@ namespace Ring.Presentation
             // would borrow the authoritative-hit vocabulary (A1/A7) for a
             // line that hits nothing.
             string stop = line.Stop == AimStop.Body ? $"body({line.Zone})" : line.Stop.ToString();
+            // app-461s (owner decision Н47): `d` is still the SIMULATION's
+            // answer — the reach the line was solved to — and the screen
+            // ceiling never touches it (`AimLine` knows nothing of a camera).
+            // What the ceiling changes is how much of that is DRAWN, so the
+            // fact gets its own reading, taken off the view the same way `Δ`
+            // is (`AimRayView.DrawnLengthMeters`).
+            // ⚠ PRINTED ONLY WHILE IT ACTUALLY BITES, which is what makes it
+            // readable as an event rather than as decoration: an unwired
+            // camera, an ortho projection, a cursor closer than two thirds of
+            // the way to the screen edge — all of them leave the drawn length
+            // equal to `d`, and all of them print nothing here. The NaN of a
+            // frame that draws no hip ray fails this comparison too, so the
+            // `off` line stays exactly as wide as it was.
+            // ⚠ THE 1 cm SLACK IS NOT COSMETIC: the drawn length is rebuilt
+            // through a world-space round trip, so an uncapped frame can miss
+            // `line.Length` by an ulp or two and would otherwise flicker `cap`
+            // on and off at a distance where nothing is being cut at all.
+            float drawn = _aimRayView.DrawnLengthMeters;
+            string cap = drawn < line.Length - 0.01f ? $" cap {drawn:F1}" : string.Empty;
 
-            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}  Δ {gap}\n" +
+            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}{cap}  Δ {gap}\n" +
                 $"  cone {cone}  hw {line.NotchHalfWidth:F2}  stop {stop}";
         }
 
