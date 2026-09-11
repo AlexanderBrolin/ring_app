@@ -112,7 +112,13 @@ namespace Ring.Presentation
     /// camera's own view frustum, per frame, in the DIRECTION OF THE RAY —
     /// the rig looks down at a pitch, so the ground runs much further away up
     /// the screen than down it, and one averaged radius would be wrong for
-    /// both (`TryScreenReach`).
+    /// both (`TryFrustumExit`).
+    /// ⛔ THE CEILING DOES NOT OVERRULE THE SPREAD MARKS, AND SINCE FIX
+    /// ROUND 1 IT DOES NOT LOSE TO THEM BLINDLY EITHER: the floor that
+    /// holds the ray out to the notches applies only while the notches are
+    /// being drawn, and is itself clipped to the edge of what the camera
+    /// shows. `DrawnLength`'s own doc carries both halves and why each one
+    /// is needed.
     /// ⛔ AND `Ring.Simulation` IS NOT TOLD ABOUT ANY OF IT (Critical Rule 1):
     /// `AimLine` knows nothing of a camera or a resolution and must not, so
     /// `line.Length` stays whatever the simulation answered — the dev readout,
@@ -127,6 +133,42 @@ namespace Ring.Presentation
     /// `ProjectSettings/MonoManager.asset` in the project, the ray's start could
     /// otherwise come from this frame or the previous one, and which of the two
     /// could differ between runs.
+    /// WHAT ENDED THE HIP RAY THIS FRAME (app-461s Н47, fix round 1) — one
+    /// answer out of `AimRayView.DrawnLength`, and the dev readout's only way
+    /// to tell the three rules apart. Round one shipped a single "shorter than
+    /// the simulation said" flag, which in an empty field was true on almost
+    /// every frame and told the owner nothing about WHICH rule was doing it.
+    /// ⚠ Declared beside the view rather than nested in it, same shape
+    /// `PlayerSlotPicture` keeps next to `ViewRegistry` — and for the same
+    /// reason: the enum is half of a pure function's answer, so it belongs to
+    /// the rule rather than to the component.
+    public enum AimRayLimit : byte
+    {
+        /// Nothing shortened the ray: it is as long as the simulation's own
+        /// answer, and `AimLineSolution.Stop` already says what ended it
+        /// there (a body, a barrier, the rim, or plain range). The screen is
+        /// not in the picture at all, which is also the value every frame
+        /// that draws no hip ray carries.
+        Stop,
+
+        /// The screen ceiling cut it — `GameFeelConfig.AimRayScreenReachFrac`
+        /// of the visible reach in this direction. THE ONE STATE OWNER
+        /// DECISION Н47 EXISTS TO PRODUCE.
+        Ceiling,
+
+        /// The notch floor held it out PAST that ceiling, because the cursor
+        /// is further away than the ceiling and the two spread marks stand on
+        /// the cursor. Not a failure: the marks must not hang past the ray's
+        /// end.
+        Notch,
+
+        /// The notch floor was itself clipped to the edge of the visible
+        /// area: the cursor is out past what the camera shows AT THE RAY'S
+        /// HEIGHT, so the marks are off-screen anyway and following them
+        /// would only put the ray's end off-screen with them.
+        Edge,
+    }
+
     [DefaultExecutionOrder(10)]
     [RequireComponent(typeof(LineRenderer))]
     public sealed class AimRayView : MonoBehaviour
@@ -156,7 +198,7 @@ namespace Ring.Presentation
         // ⚠ MUST SURVIVE BEING UNWIRED: a scene bootstrapped before this task
         // carries no value here at all, and that has to read as "no ceiling"
         // (the pre-Н47 picture), never as a ray of length zero — see
-        // `TryScreenReach`'s first line, the same null-guard shape
+        // `ScreenReach`'s first line, the same null-guard shape
         // `_notchLeft`/`_notchRight` above already rely on.
         [SerializeField] Camera _camera;
 
@@ -209,17 +251,28 @@ namespace Ring.Presentation
         public float MuzzleGapMeters { get; private set; } = float.NaN;
 
         /// app-461s (Н47): how long the HIP ray was ACTUALLY drawn this frame,
-        /// in the same plane meters `AimLineSolution.Length` speaks — the dev
-        /// readout's only way to show that the screen ceiling bit, since
-        /// nothing else on the panel changes when it does (`DevOverlay`'s
-        /// `cap` reading, which appears only while this is shorter than
-        /// `line.Length`).
+        /// in the same plane meters `AimLineSolution.Length` speaks. Read
+        /// together with `DrawnLimit` below and never alone — the number is
+        /// meaningless until you know which of the three rules produced it.
         /// ⚠ NaN ON EVERY FRAME THE HIP RAY IS NOT THE THING BEING DRAWN —
         /// the three early returns below (paused, the death screen, no doll,
         /// a cold aim cache) and the AIMED branch alike, since aimed the far
         /// end is a world point rather than a length along this line. Same
         /// contract, same dash in the readout, as `MuzzleGapMeters` above.
         public float DrawnLengthMeters { get; private set; } = float.NaN;
+
+        /// app-461s Н47 fix round 1: WHICH rule produced `DrawnLengthMeters`.
+        /// ⛔ THE PAIR IS THE INSTRUMENT, AND THE ROUND-ONE READOUT WAS NOT.
+        /// That one printed the drawn length whenever it fell short of
+        /// `line.Length` — but in an empty field `line.Length` is the round's
+        /// whole 78.75 m of range while the notches stand at the cursor, so
+        /// the condition was true on virtually every hip frame whether the
+        /// ceiling had bitten or not, and when the cursor sat past the ceiling
+        /// the number printed was the CURSOR's distance under a label that
+        /// said "ceiling". An instrument that cannot tell its two states apart
+        /// cannot witness the one change this task made, and this view has no
+        /// other witness on the screen.
+        public AimRayLimit DrawnLimit { get; private set; } = AimRayLimit.Stop;
 
         void Awake()
         {
@@ -249,22 +302,27 @@ namespace Ring.Presentation
         /// block needs the pair. So the decision to pass `notches: true` is
         /// the caller's, and it requires BOTH references — see `LateUpdate`'s
         /// `drawNotches`.
-        /// Both dev readouts at once (app-461s Н47), for the reason `SetDrawn`
-        /// above exists: they are reset together on every path out of
-        /// `LateUpdate` that draws no hip ray, and a second caller-remembered
-        /// line is a second thing to forget. Each one's own doc says what the
-        /// NaN means to its reader.
-        void ClearReadouts()
-        {
-            MuzzleGapMeters = float.NaN;
-            DrawnLengthMeters = float.NaN;
-        }
-
         void SetDrawn(bool ray, bool notches)
         {
             _line.enabled = ray;
             if (_notchLeft != null) _notchLeft.enabled = notches;
             if (_notchRight != null) _notchRight.enabled = notches;
+        }
+
+        /// All three dev readouts at once (app-461s Н47), for the reason
+        /// `SetDrawn` above exists: they are reset together on every path out
+        /// of `LateUpdate` that draws no hip ray, and a second
+        /// caller-remembered line is a second thing to forget. Each one's own
+        /// doc says what its blank value means to its reader.
+        /// ⚠ `AimRayLimit.Stop` IS THE BLANK VALUE FOR THE THIRD, and it has
+        /// to pair with the NaN rather than stand on its own: `DevOverlay`
+        /// prints the length only for the three limits that are not `Stop`, so
+        /// a limit left behind from a drawn frame would print a stale NaN.
+        void ClearReadouts()
+        {
+            MuzzleGapMeters = float.NaN;
+            DrawnLengthMeters = float.NaN;
+            DrawnLimit = AimRayLimit.Stop;
         }
 
         void LateUpdate()
@@ -385,7 +443,7 @@ namespace Ring.Presentation
             // it here would draw a ray diving out of the barrel into the
             // ground, exactly the lie this task exists to stop telling.
             // app-461s Н47: and that hip end is now `line.End` only while the
-            // screen agrees — the length is `ScreenCappedLength`'s, so the
+            // screen agrees — the length is `DrawnLength`'s, so the
             // point is rebuilt from the origin and the direction rather than
             // read off the `End` property. Same point whenever the ceiling
             // does not bite.
@@ -407,9 +465,10 @@ namespace Ring.Presentation
                 // anyway would only be able to pull the ray SHORT of
                 // `CrosshairView`'s marker disc, which stands on that very
                 // point: the same "a mark left hanging past the end of the
-                // ray" failure the notch floor below exists to prevent, for
-                // no gain at all.
+                // ray" failure the notch floor exists to prevent, for no gain
+                // at all.
                 DrawnLengthMeters = float.NaN;
+                DrawnLimit = AimRayLimit.Stop;
             }
             else
             {
@@ -429,8 +488,15 @@ namespace Ring.Presentation
                 // come out in meters.
                 Vector3 lineOrigin = SimSpace.ToWorld(line.Start) + lineUp;
                 Vector3 lineDir = SimSpace.ToWorld(line.Dir);
-                float drawnLength = ScreenCappedLength(in line, lineOrigin, lineDir);
+                // ⛔ `drawNotches` IS PASSED, NOT ASSUMED (fix round 1): the
+                // floor that holds the ray out to the spread marks must not
+                // apply on the frames nobody is drawing marks — see
+                // `DrawnLength`'s own doc for what that costs otherwise.
+                float drawnLength = DrawnLength(line.Length, line.NotchDistance,
+                    ScreenReach(lineOrigin, lineDir), _gameFeel.AimRayScreenReachFrac,
+                    drawNotches, out AimRayLimit limit);
                 DrawnLengthMeters = drawnLength;
+                DrawnLimit = limit;
                 aimPoint = lineOrigin + lineDir * drawnLength;
             }
 
@@ -514,45 +580,107 @@ namespace Ring.Presentation
             }
         }
 
-        /// The length the HIP ray is drawn at (app-461s, owner decision Н47) —
-        /// `line.Length` verbatim whenever the screen has nothing to say about
-        /// it, and the owner's fraction of the visible reach whenever it does.
+        /// WHICH OF THREE RULES ENDS THE HIP RAY, AND HOW LONG IT COMES OUT
+        /// (app-461s, owner decision Н47; fix round 1 made it a pure static
+        /// and gave it the `limit` half). Pure and static SO THAT IT HAS A
+        /// WITNESS: `Ring.Simulation.Tests` references `Ring.Presentation`,
+        /// and the precedents for a view's numeric decision living out here
+        /// where EditMode can reach it are `ViewRegistry.PictureFor` and
+        /// `HudController.WaveAnnounceTimerAfter`. Round one left the
+        /// arithmetic inside `LateUpdate` on the belief that a
+        /// `MonoBehaviour`'s rule cannot be tested at all, which was simply
+        /// wrong about this project.
         ///
-        /// ⛔⛔ THE NOTCH DISTANCE IS A FLOOR, AND THAT IS THE COORDINATOR'S
-        /// CALL RATHER THAN A READING OF Н47: the two spread marks stand at
-        /// the CURSOR's own distance (`AimLine`'s `NotchDistance`) and are
-        /// what the player anchors the mouse against, and the cursor is free
-        /// to sit further out than two thirds of the way to the screen edge —
-        /// right at the edge, in fact, which is where a player pushing for
-        /// range puts it. Cutting the ray shorter than the notches would
-        /// leave that pair hanging in empty air past its end, which is a
-        /// worse picture than a ray a little longer than asked for. So the
-        /// ceiling wins against `Length` and loses against `NotchDistance`.
-        /// ⚠ WHICH MEANS THE CEILING IS NOT ALWAYS HONORED, BY DESIGN. When
-        /// the cursor is out past it the ray reaches the notches and stops
-        /// there — still far shorter than the 78.75 m of range it used to
-        /// draw, and still ending on something the player can see.
-        /// ⚠ AND `line.Length` IS NOT TOUCHED BY ANY OF THIS (Critical Rule
-        /// 1): the dev readout's `d`, the cone angle and the notches are all
-        /// still the simulation's own answer. This return value is a drawing
+        /// THE THREE RULES, IN THE ORDER THEY APPLY:
+        /// 1. THE SIMULATION'S OWN STOP (`length`) is the starting point and
+        ///    the longest the ray can ever be. A body, a barrier or the rim
+        ///    still ends it wherever the simulation says — Н47 asked for a
+        ///    CEILING, never for a replacement ("everything as it is now, the
+        ///    ray just has to be shorter").
+        /// 2. THE SCREEN CEILING (`reach`) cuts it. This is the
+        ///    whole of decision Н47: in an empty field the ray used to run the
+        ///    round's full 78.75 m of range across a visible band of ground
+        ///    about 25 m wide, so it left the screen in every match.
+        /// 3. THE NOTCH FLOOR holds it back OUT to the notches — but only
+        ///    while the notches are actually drawn, and never past the edge of
+        ///    what the camera shows. Both halves of that sentence are fix
+        ///    round 1's, and both are explained below.
+        ///
+        /// ⛔⛔ THE FLOOR IS CONDITIONAL ON `drawNotches`, WHICH ROUND ONE
+        /// MISSED: the two spread marks can be silenced with no code change
+        /// (`AimRayNotchFrac` and `AimRayNotchMinLength` both at zero,
+        /// `GameFeelConfig`'s own documented way), and a scene bootstrapped
+        /// before the task that added them carries no notch renderers at all.
+        /// An unconditional floor would then hold the ray out to a cursor
+        /// whose marks nobody is drawing — which switches decision Н47 off
+        /// entirely for every cursor past two thirds, in the exact
+        /// configurations where the ray is the only thing on screen.
+        ///
+        /// ⛔⛔ AND THE FLOOR IS ITSELF CAPPED AT `reach`, THE FULL VISIBLE
+        /// DISTANCE WITH NO FRACTION APPLIED. The cursor is a point on the
+        /// FLOOR while the ray and its marks ride the line's own height, so
+        /// they project HIGHER up the screen than the cursor does: for a
+        /// cursor in the top few percent of the frame the ray's end and both
+        /// notches are already past the top edge. There the floor would be
+        /// protecting an anchor that is not on screen to anchor anything, and
+        /// would reproduce the very defect Н47 exists to remove. Capped at
+        /// `reach` the rule reads: cursor within the frame, the ray reaches
+        /// its marks; cursor past what the camera shows, the ray ends at the
+        /// edge instead of running off it.
+        ///
+        /// ⚠ `reach` AT OR BELOW ZERO IS THE DOCUMENTED "THE SCREEN HAD NO
+        /// ANSWER" VALUE (`TryFrustumExit` writes zero on every one of its
+        /// false paths), and it returns `length` unchanged — the pre-Н47
+        /// picture, never a collapsed ray. NaN takes the same path, because
+        /// `!(reach > 0f)` is false for it.
+        /// ⚠ AND `length` ITSELF IS NEVER TOUCHED (Critical Rule 1): the dev
+        /// readout's `d`, the cone angle and the notch positions are all still
+        /// the simulation's own answer. What comes back here is a drawing
         /// length and nothing else.
-        float ScreenCappedLength(in AimLineSolution line, Vector3 origin, Vector3 dir)
+        public static float DrawnLength(float length, float notchDistance, float reach,
+            float screenFrac, bool drawNotches, out AimRayLimit limit)
         {
-            // NO REACH, NO CEILING — every degenerate case funnels through
-            // this one line and lands on the pre-Н47 picture (a ray as long as
-            // the simulation says), never on a collapsed one. `TryScreenReach`
-            // lists them.
-            if (!TryScreenReach(origin, dir, out float reach)) return line.Length;
-            float ceiling = reach * _gameFeel.AimRayScreenReachFrac;
-            return math.max(line.NotchDistance, math.min(line.Length, ceiling));
+            limit = AimRayLimit.Stop;
+            if (!(reach > 0f)) return length;
+
+            float drawn = length;
+            float ceiling = reach * screenFrac;
+            if (ceiling < drawn)
+            {
+                drawn = ceiling;
+                limit = AimRayLimit.Ceiling;
+            }
+            if (!drawNotches) return drawn;
+
+            // ⚠ THE ANCHOR IS CLAMPED TO `length` FIRST, AND THAT IS NOT THE
+            // SAME KIND OF DEAD BRANCH AS A CONFIGURATION NOBODY USES: today
+            // `AimLine` builds `notchDistance` as `min(length, toCursor)`, so
+            // the clamp changes no shipped frame — but this is a public pure
+            // function, and without it a caller that does not hold that
+            // invariant gets a ray drawn straight THROUGH the body that
+            // stopped it. One `min` against a paragraph asking every future
+            // caller to remember.
+            // ⚠ AND IT IS WHAT KEEPS THE READOUT'S TWO LABELS HONEST: with
+            // the anchor clamped, `floor < anchor` can only mean the SCREEN
+            // clipped it, which is exactly what `Edge` claims.
+            float anchor = math.min(notchDistance, length);
+            float floor = math.min(anchor, reach);
+            if (floor > drawn)
+            {
+                drawn = floor;
+                limit = floor < anchor ? AimRayLimit.Edge : AimRayLimit.Notch;
+            }
+            return drawn;
         }
 
         /// How far a ray leaving `origin` along unit `dir` travels before it
-        /// crosses out of this camera's view frustum — the runtime "visible
-        /// radius" owner decision Н47 asks for two thirds of, measured IN THE
-        /// DIRECTION OF THE RAY and AT THE RAY'S OWN HEIGHT, both of which are
-        /// already baked into the two arguments. False means "no usable
-        /// answer", which every caller must read as "draw the ray as it was".
+        /// crosses out of the frustum `planes` bound — the runtime "visible
+        /// radius" owner decision Н47 asks for a fraction of, measured IN THE
+        /// DIRECTION OF THE RAY and AT THE RAY'S OWN HEIGHT, both of which the
+        /// caller bakes into the two vectors. False, with `distance` at zero,
+        /// means "no usable answer", which `DrawnLength` reads as "no
+        /// ceiling". Pure and static for the same reason `DrawnLength` above
+        /// is: EditMode can build six `Plane`s and ask.
         ///
         /// ⭐ FRUSTUM PLANES RATHER THAN A SEARCH OVER `WorldToScreenPoint`:
         /// the question "where does this segment leave the screen" has a
@@ -560,59 +688,78 @@ namespace Ring.Presentation
         /// each — while a bisection over projected points would cost dozens of
         /// matrix transforms per rendered frame to land on the same number
         /// approximately.
-        /// ⚠ ALL SIX PLANES, NOT THE FOUR SIDES. Taking only the sides would
-        /// mean hardcoding Unity's documented index order (left, right, down,
-        /// up, near, far) into this loop, and there is nothing to buy with
-        /// that dependency: the far plane sits at the camera's far clip, a
-        /// thousand meters out against a line that is 78.75 m long at most, and
-        /// the near plane sits ~0.3 m from the lens, which a horizontal ray at
-        /// muzzle height can only approach after already leaving through the
-        /// bottom plane. Both are the true edge of what is visible in any case.
-        /// ⚠ THE SIGN TEST IS WHAT PICKS THE RIGHT CROSSINGS: the returned
-        /// planes face INWARD, so a negative `closing` is the ray heading OUT
-        /// through that plane and a positive one is it running deeper inside.
-        /// Only the outbound ones can end the visible part of the ray.
+        /// ⚠ ALL SIX PLANES, NOT THE FOUR SIDES — decided, not assumed. Taking
+        /// only the sides would mean hardcoding Unity's documented index order
+        /// (left, right, down, up, near, far) into this loop, and fix round
+        /// 1's review swept 48 600 frames across the whole range of camera
+        /// pitch and aspect ratio this project can produce: a side plane won
+        /// every single time, near and far never once. The dependency buys
+        /// nothing, so it is not taken.
+        /// ⚠ THE SIGN TEST IS WHAT PICKS THE RIGHT CROSSINGS: the planes face
+        /// INWARD, so a negative `closing` is the ray heading OUT through that
+        /// plane and a positive one is it running deeper inside. Only the
+        /// outbound ones can end the visible part of the ray.
         ///
-        /// THE DEGENERATE CASES, ONE BY ONE — every one of them answers false,
+        /// ⛔⛔ AN ORIGIN OUTSIDE ANY PLANE ANSWERS FALSE, AND THAT TEST IS
+        /// LOAD-BEARING RATHER THAN DEFENSIVE (fix round 1's finding). Without
+        /// it the loop still answers: the planes the origin is INSIDE of go on
+        /// producing positive crossings, so a ray that is nowhere near the
+        /// screen comes back with a confident ceiling measured off a frustum
+        /// it is not in — the review's own case put the origin 12 m below the
+        /// bottom plane and got a 17.43 m ceiling out of the NEAR plane. The
+        /// case is reachable, not theoretical: the rig damps toward the doll
+        /// (`CameraRig`), so a teleport or a respawn can leave the collector
+        /// outside the frame for a frame or two, and a ceiling invented there
+        /// would visibly snap the ray short.
+        ///
+        /// THE OTHER DEGENERATE CASES, ONE BY ONE — every one answers false,
         /// i.e. leaves the ray at its simulated length:
-        /// - NO CAMERA WIRED. A scene bootstrapped before this task; `_camera`
-        ///   is null and the ray keeps the picture it had then.
-        /// - AN ORTHOGRAPHIC CAMERA. The plane math would still produce a
-        ///   number (an ortho frustum is a box and its planes are honest), but
-        ///   Н47 is a judgment made while looking at THIS rig — a perspective
-        ///   camera at a 55° pitch — and a projection nobody has framed the ray
-        ///   under does not get a ceiling chosen for a different one.
+        /// - NO CAMERA WIRED. Caught by the caller (`ScreenReach`), on a scene
+        ///   bootstrapped before this task; the ray keeps the picture it had
+        ///   then.
         /// - THE RAY PARALLEL TO A PLANE. `ParallelEpsilon` drops that plane
-        ///   rather than dividing by ~0; if that leaves no plane at all, the
-        ///   loop finds no crossing and the method answers false.
-        /// - NO CROSSING AHEAD OF THE ORIGIN. `origin` outside the frustum
-        ///   already (the collector off-screen for a frame while the rig
-        ///   catches up) makes every candidate non-positive, and the ray keeps
-        ///   its full length rather than snapping to a re-entry point behind
-        ///   the collector.
-        /// - A ZERO OR NEGATIVE DISTANCE. Rejected by the same `t > 0f` test,
-        ///   which is also what keeps a NaN out of `nearest` — a NaN fails
-        ///   every comparison, so it can never be stored.
-        bool TryScreenReach(Vector3 origin, Vector3 dir, out float reach)
+        ///   rather than dividing by ~0; a ray parallel to every plane it
+        ///   could leave by finds no crossing at all and answers false.
+        /// - A ZERO OR NEGATIVE DISTANCE. Rejected by the `t > 0f` test, which
+        ///   is also what keeps a NaN out of `nearest` — a NaN fails every
+        ///   comparison, so it can never be stored.
+        public static bool TryFrustumExit(Plane[] planes, Vector3 origin, Vector3 dir,
+            out float distance)
         {
-            reach = 0f;
-            if (_camera == null || _camera.orthographic) return false;
-            GeometryUtility.CalculateFrustumPlanes(_camera, _frustumPlanes);
+            distance = 0f;
             float nearest = float.PositiveInfinity;
-            for (int i = 0; i < _frustumPlanes.Length; i++)
+            for (int i = 0; i < planes.Length; i++)
             {
-                Plane plane = _frustumPlanes[i];
+                Plane plane = planes[i];
+                // `GetDistanceToPoint` is the plane equation itself — positive
+                // on the inward side, since the normals face in.
+                float side = plane.GetDistanceToPoint(origin);
+                if (side < 0f) return false;
                 float closing = Vector3.Dot(plane.normal, dir);
                 if (closing >= -ParallelEpsilon) continue;
-                // `GetDistanceToPoint` is the plane equation itself — positive
-                // inside, since the normals face in — so this is the ordinary
-                // ray/plane solve, in meters because `dir` is unit length.
-                float t = -plane.GetDistanceToPoint(origin) / closing;
+                // The ordinary ray/plane solve, in meters because `dir` is
+                // unit length.
+                float t = -side / closing;
                 if (t > 0f && t < nearest) nearest = t;
             }
             if (float.IsPositiveInfinity(nearest)) return false;
-            reach = nearest;
+            distance = nearest;
             return true;
+        }
+
+        /// This frame's visible reach along the ray, or zero when the camera
+        /// cannot give one — the value `DrawnLength` reads as "no ceiling".
+        /// The arithmetic is `TryFrustumExit` above; what is left here is the
+        /// one thing a static cannot do, which is ask the camera.
+        /// ⚠ THE UNWIRED CAMERA MUST READ AS "NO CEILING", NEVER AS A RAY OF
+        /// LENGTH ZERO: a scene bootstrapped before this task carries no value
+        /// in `_camera` at all, and the pre-Н47 picture is the right answer
+        /// there.
+        float ScreenReach(Vector3 origin, Vector3 dir)
+        {
+            if (_camera == null) return 0f;
+            GeometryUtility.CalculateFrustumPlanes(_camera, _frustumPlanes);
+            return TryFrustumExit(_frustumPlanes, origin, dir, out float reach) ? reach : 0f;
         }
 
         /// The local player's own barrel mouth (Stage 2 Task 45b) — false when

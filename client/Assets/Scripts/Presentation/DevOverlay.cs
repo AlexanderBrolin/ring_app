@@ -154,22 +154,25 @@ namespace Ring.Presentation
             // of the thing, and doubly so for a gauge whose entire job is to
             // make a number readable that the picture alone does not carry
             // (owner lesson 716).
-            // app-461s Н47: the gauge gained a CONDITIONAL seventh reading,
-            // `cap` — the drawn length on the frames the screen ceiling
-            // shortens the ray — and it lands on the FIRST of those two rows,
-            // which changes the width arithmetic and not the height. WIDTH,
-            // re-counted: ` cap 16.7` is 9 characters, taking the worst-case
-            // first row from `AimRay: on  h 1.20  d 78.8  Δ 0.15` (34) to
-            // `AimRay: on  h 1.20  d 78.8 cap 16.7  Δ 0.15` (43), or 44 if a
-            // muzzle height ever reaches two digits — 301-308 px at this
-            // panel's own ~7 px per character, against the same ~364 px of
-            // usable width. So the FIRST row is the wider of the two now (43
-            // against the second row's 40), and it still clears the budget by
-            // roughly eight characters; the split into two rows stays
-            // mandatory, since 43 + 40 back on one line is 83 characters.
-            // HEIGHT: unchanged at 920. `cap` adds characters to an existing
-            // row, never a row — and `GUILayout.Label` lays the text out
-            // itself, so the only way it could cost a line is by wrapping,
+            // app-461s Н47: the gauge gained a CONDITIONAL seventh reading —
+            // `cap`/`notch`/`edge`, naming what shortened the DRAWN ray and
+            // how long it came out — and it lands on the FIRST of those two
+            // rows, which changes the width arithmetic and not the height.
+            // WIDTH, re-counted (fix round 1, for the three-label form): the
+            // widest of the three is `  notch 21.3`, 12 characters, taking
+            // the worst-case first row from `AimRay: on  h 1.20  d 78.8
+            // Δ 0.15` (34) to 46 — and 46 is a genuine ceiling rather than a
+            // guess, since `h` cannot exceed `5.00` (`HeroConfig`'s own
+            // `[Range(0f, 5f)]`), `d` cannot exceed `78.8` (the round's range)
+            // and the drawn length cannot exceed `d`. At this panel's own
+            // ~7 px per character that is 322 px against the same ~364 px of
+            // usable width, so the FIRST row is now the wider of the two (46
+            // against the second row's 40) and still clears the budget by six
+            // characters. The split into two rows stays mandatory: 46 + 40
+            // back on one line is 86 characters.
+            // HEIGHT: unchanged at 920. The label adds characters to an
+            // existing row, never a row — and `GUILayout.Label` lays the text
+            // out itself, so the only way it could cost a line is by wrapping,
             // which the width count above is exactly what rules out.
             GUILayout.BeginArea(new Rect(10f, 10f, 380f, 920f), GUI.skin.box);
 
@@ -388,12 +391,17 @@ namespace Ring.Presentation
         /// (see the width arithmetic on `GUILayout.BeginArea` above) —
         /// `on/h/d/Δ` first, `cone/hw/stop` second.
         /// ⚠ SEVEN READINGS SINCE app-461s Н47, NOT SIX, AND THE SEVENTH IS
-        /// CONDITIONAL: `cap` joins the first line only on the frames the
-        /// screen ceiling actually shortens the drawn ray. It is the only
-        /// witness this task has — `AimRayView` is a `MonoBehaviour`, so
-        /// EditMode cannot reach the arithmetic at all, and the picture alone
-        /// cannot tell a ray cut by the screen from a ray that simply ran into
-        /// something. The width arithmetic above was re-counted for it.
+        /// CONDITIONAL: `cap`/`notch`/`edge` joins the first line only on the
+        /// frames something other than the simulation's own stop ended the
+        /// drawn ray, and says which of the three it was. The width arithmetic
+        /// above was re-counted for it.
+        /// ⚠ IT IS NO LONGER THE ONLY WITNESS, and the sentence that said so
+        /// was wrong about this project (fix round 1): the decision itself is
+        /// pinned by `AimRayScreenTests` against `AimRayView.DrawnLength` and
+        /// `AimRayView.TryFrustumExit`, both pure statics, since
+        /// `Ring.Simulation.Tests` does reference `Ring.Presentation`. What is
+        /// left for this row is the half a test cannot hold — whether the
+        /// numbers on screen are the ones the owner wants to look at.
         string AimRayLine()
         {
             // A DIFFERENT REASON THAN THE ONE BELOW (fix-round 1, Minor 1):
@@ -448,22 +456,40 @@ namespace Ring.Presentation
             // ceiling never touches it (`AimLine` knows nothing of a camera).
             // What the ceiling changes is how much of that is DRAWN, so the
             // fact gets its own reading, taken off the view the same way `Δ`
-            // is (`AimRayView.DrawnLengthMeters`).
-            // ⚠ PRINTED ONLY WHILE IT ACTUALLY BITES, which is what makes it
-            // readable as an event rather than as decoration: an unwired
-            // camera, an ortho projection, a cursor closer than two thirds of
-            // the way to the screen edge — all of them leave the drawn length
-            // equal to `d`, and all of them print nothing here. The NaN of a
-            // frame that draws no hip ray fails this comparison too, so the
-            // `off` line stays exactly as wide as it was.
-            // ⚠ THE 1 cm SLACK IS NOT COSMETIC: the drawn length is rebuilt
-            // through a world-space round trip, so an uncapped frame can miss
-            // `line.Length` by an ulp or two and would otherwise flicker `cap`
-            // on and off at a distance where nothing is being cut at all.
-            float drawn = _aimRayView.DrawnLengthMeters;
-            string cap = drawn < line.Length - 0.01f ? $" cap {drawn:F1}" : string.Empty;
+            // is (`AimRayView.DrawnLimit` plus `DrawnLengthMeters`).
+            // ⛔⛔ THE LABEL IS THE READING, AND THE NUMBER ALONE IS NOT —
+            // THAT IS FIX ROUND 1's FINDING. Round one printed `cap` whenever
+            // the drawn length fell short of `d`, which in an empty field is
+            // nearly every hip frame whether the ceiling bit or not (`d` is
+            // the round's whole range there, while the notches stand at the
+            // cursor), and when the cursor sat past the ceiling the number
+            // under that label was the CURSOR's distance rather than the
+            // ceiling. Three rules can end this ray and the panel has to name
+            // which one did, or the next playtest cannot be judged by it.
+            // ⚠ `stop` ON THE SECOND ROW IS A DIFFERENT QUESTION AND KEEPS ITS
+            // NAME: that one is `AimLineSolution.Stop` — what the SIMULATION
+            // ran into — while this one is what shortened the DRAWING. They
+            // agree only when nothing here is printed at all.
+            // ⚠ NOTHING IS PRINTED FOR `Stop`, which is the common case and
+            // the whole reason the row does not grow: an aim at a body inside
+            // the ceiling, and every frame that draws no hip ray (the limit is
+            // reset to `Stop` alongside the NaN), leave the row exactly as
+            // wide as it was before this task.
+            string cut = _aimRayView.DrawnLimit switch
+            {
+                // The ceiling itself, which IS the drawn length in this case —
+                // the one reading the owner tunes `AimRayScreenReachFrac` by.
+                AimRayLimit.Ceiling => $"  cap {_aimRayView.DrawnLengthMeters:F1}",
+                // Held out to the cursor instead: the ceiling is shorter than
+                // this and deliberately not honored.
+                AimRayLimit.Notch => $"  notch {_aimRayView.DrawnLengthMeters:F1}",
+                // The cursor is past what the camera shows at the ray's
+                // height, so the ray ends at the edge of the visible area.
+                AimRayLimit.Edge => $"  edge {_aimRayView.DrawnLengthMeters:F1}",
+                _ => string.Empty,
+            };
 
-            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}{cap}  Δ {gap}\n" +
+            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}{cut}  Δ {gap}\n" +
                 $"  cone {cone}  hw {line.NotchHalfWidth:F2}  stop {stop}";
         }
 

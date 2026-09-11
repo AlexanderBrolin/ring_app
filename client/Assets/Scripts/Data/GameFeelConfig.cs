@@ -645,9 +645,17 @@ namespace Ring.Data
         // range (1) the ray reaches exactly the edge of the screen, and a
         // meter beyond that edge is a meter nobody can see, so a cap at 1
         // already costs the picture nothing that an uncapped ray would have
-        // given. The bottom of the range does NOT collapse the ray either —
-        // the view floors the drawn length at the notch distance so the two
-        // spread marks can never hang in the air past its end.
+        // given.
+        // ⚠ THE BOTTOM OF THE RANGE COLLAPSES THE RAY ONLY IF THE NOTCHES ARE
+        // SILENCED TOO, which is worth knowing before the handle is dragged
+        // there (app-461s Н47 fix round 1). While the two spread marks are
+        // drawn, the view floors the drawn length at the cursor so they can
+        // never hang in the air past the ray's end, and a zero here therefore
+        // still leaves a ray out to the cursor. Zero the two notch handles
+        // above as well and that floor is gone with them, so zero here draws
+        // nothing at all — three dials at zero reading as "no ray" is a
+        // coherent answer, but it is not the ray going quietly missing on one
+        // dial.
         [Range(0f, 1f)] public float AimRayScreenReachFrac = 2f / 3f; // sync-marker key — keep LAST
 
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
