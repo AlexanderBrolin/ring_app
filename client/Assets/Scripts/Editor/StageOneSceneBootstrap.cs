@@ -1115,7 +1115,7 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "SprayVariance"); // app-8dv (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
-            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "WaveAnnounceFlashColor"); // app-ggvz Т7 (was ContainerVisualScale, Stage 3 Task 31)
+            EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayNotchMinLength"); // app-461s (was WaveAnnounceFlashColor, app-ggvz Т7)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RewindPictureTicks"); // app-88jb Т24 (was RelaxIterations, app-88jb Т22)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -2567,6 +2567,11 @@ namespace Ring.Editor
             bool devOverlayRefsChanged = false;
             devOverlayRefsChanged |= EditorBootstrapUtils.SetRef(devOverlaySo, "_runner", runner);
             devOverlayRefsChanged |= EditorBootstrapUtils.SetRef(devOverlaySo, "_aimProvider", aimProvider);
+            // app-461s T4: the aim-ray gauge's `Δ` reading (doll socket vs.
+            // simulated muzzle) is a fact only the view knows — `AimProvider`
+            // carries no `ViewRegistry` reference to learn it from — so
+            // `DevOverlay` needs this third reference on top of the two above.
+            devOverlayRefsChanged |= EditorBootstrapUtils.SetRef(devOverlaySo, "_aimRayView", aimRayView);
             if (devOverlayRefsChanged)
             {
                 devOverlaySo.ApplyModifiedPropertiesWithoutUndo();

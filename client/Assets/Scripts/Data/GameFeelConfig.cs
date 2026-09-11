@@ -581,7 +581,9 @@ namespace Ring.Data
         // white base is legible at the HUD's small font size without
         // fighting either for the eye.
         [Range(0f, 10f)] public float WaveAnnounceSeconds = 1.5f;
-        public Color WaveAnnounceFlashColor = new Color(1f, 0.85f, 0.35f); // sync-marker key — keep LAST
+        // Was the sync-marker key, superseding `ContainerVisualScale` above,
+        // until `AimRayNotchMinLength` below superseded it in turn (app-461s T4).
+        public Color WaveAnnounceFlashColor = new Color(1f, 0.85f, 0.35f);
 
         // app-461s (spec §3.4/§3.6): the hip-fire aim ray's color and the
         // geometry of its notches. Declared here, at the class's task T2,
@@ -619,14 +621,7 @@ namespace Ring.Data
         // handle and the upper half is legitimate for a deliberately blunt
         // look, this note simply says what it costs.
         [Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
-        [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;
-        // app-461s T2 fix round 1: the `// sync-marker key — keep LAST` comment
-        // above, on `WaveAnnounceFlashColor`, does NOT move here yet even
-        // though this field is now physically last in the class — moving it
-        // is T4's work, together with `EnsureAssetHasKey`'s own argument in
-        // `StageOneSceneBootstrap`, so the two never fall out of step. Until
-        // then these three fields live only as C# defaults and never reach
-        // the `.asset` at all.
+        [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f; // sync-marker key — keep LAST
 
         /// THE one place an archetype becomes a visual scale (fix-round, Ф7
         /// review B-M5). `ViewRegistry` sizes the LIVE mob with it and

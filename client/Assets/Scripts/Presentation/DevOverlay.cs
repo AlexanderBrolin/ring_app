@@ -1,5 +1,6 @@
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 using System.IO;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEngine;
@@ -34,6 +35,12 @@ namespace Ring.Presentation
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AimProvider _aimProvider;
+        // app-461s T4 (plan deviation 1): the aim-ray gauge's `Δ` reading is
+        // the gap between the doll's muzzle socket and the simulated muzzle,
+        // and that fact lives only here — `AimProvider` carries no
+        // `ViewRegistry` reference to learn it from (`MuzzleGapMeters`'s own
+        // doc). A third reference, on top of the two above.
+        [SerializeField] AimRayView _aimRayView;
 
         float _fpsAccum;
         int _fpsFrames;
@@ -126,9 +133,14 @@ namespace Ring.Presentation
             // is deliberately wrapped in two) — fifteen text lines at the
             // default skin's ~20 px per laid-out line, i.e. ~306 px, taken as
             // 320 so the slack the original 560 already carried for the
-            // sixteen elements above it survives. A clipped panel is a panel
-            // that cannot be read, which is the whole point of the thing.
-            GUILayout.BeginArea(new Rect(10f, 10f, 380f, 880f), GUI.skin.box);
+            // sixteen elements above it survives.
+            // app-461s T4 (spec §3.8): one more row, the aim-ray gauge — at
+            // the same ~20 px per laid-out line this budget counts by, 880
+            // becomes 900. A clipped panel is a panel that cannot be read,
+            // which is the whole point of the thing, and doubly so for a
+            // gauge whose entire job is to make a number readable that the
+            // picture alone does not carry (owner lesson 716).
+            GUILayout.BeginArea(new Rect(10f, 10f, 380f, 900f), GUI.skin.box);
 
             GUILayout.Label($"FPS: {_fps:F0}");
             GUILayout.Label($"Tick: {_runner.CurrentTick}");
@@ -169,6 +181,8 @@ namespace Ring.Presentation
             GUILayout.Label(_runner.HasStateHash
                 ? $"StateHash: {_runner.StateHash:X16}"
                 : "StateHash: —");
+
+            GUILayout.Label(AimRayLine());
 
             DrawNetworkSection();
 
@@ -327,6 +341,51 @@ namespace Ring.Presentation
             // client sees of DroppedEntities.
             GUILayout.Label("Server-side (not on client): InputStarved,\n"
                 + "  InputOverwritten, DroppedEntities, EdgeRejected");
+        }
+
+        /// app-461s T4 (spec §3.8, owner lesson 716): the aim-ray gauge —
+        /// height, reach, doll/muzzle gap, cone angle, notch half-width and
+        /// stop, none of which the picture alone lets the owner measure. Six
+        /// readings off the hip line `AimProvider` caches every `Ready` frame
+        /// regardless of `AimHeld` (`CurrentHipLine`'s own doc), plus the one
+        /// fact only the view knows (`Δ`, `AimRayView.MuzzleGapMeters`'s own
+        /// doc — plan deviation 1: no reference to `ViewRegistry` exists on
+        /// `AimProvider` to learn it from otherwise).
+        string AimRayLine()
+        {
+            if (_aimProvider == null || _aimRayView == null) return "AimRay: —";
+            // THE GAUGE IS A HIP-FIRE INSTRUMENT (spec §3.8). While the right
+            // button is held, the drawn ray answers the AIMED question
+            // instead — far end and color both switch in
+            // `AimRayView.LateUpdate` — while `Δ` keeps measuring the HIP
+            // muzzle regardless, the wrong pair, off by up to 0.18 m at a
+            // high cover next to a collector (app-461s T2 review round). A
+            // dash here is the honest answer, not a missing feature.
+            if (_runner.LastFrameInput.AimHeld) return "AimRay: —";
+
+            AimLineSolution line = _aimProvider.CurrentHipLine;
+            // READ OFF THE VIEW, NOT RECOMPUTED: `AimActive && !AimHeld`
+            // would say "on" on frames with no doll at all, where the view
+            // itself has already gated the ray dark — `MuzzleGapMeters`
+            // already resets to NaN on every one of those exits (its own
+            // doc), so testing it here says exactly what is on screen.
+            bool on = !float.IsNaN(_aimRayView.MuzzleGapMeters);
+            // GUARD MANDATORY: `NotchDistance` is legitimately zero (the
+            // muzzle sits inside a body, or the cursor sits on the muzzle
+            // itself), and `hw / 0` is NaN right on the one readout this
+            // task exists to give.
+            string cone = line.NotchDistance <= 1e-4f
+                ? "—"
+                : $"{math.degrees(math.atan(line.NotchHalfWidth / line.NotchDistance)):F2}°";
+            // Lowercase `body(...)`, never `Body(...)` or `hit(...)`:
+            // `AimStop.Body` ("stopped by a body") and `HitZone.Body`
+            // ("torso") are different ideas sharing a name, and `hit(...)`
+            // would borrow the authoritative-hit vocabulary (A1/A7) for a
+            // line that hits nothing.
+            string stop = line.Stop == AimStop.Body ? $"body({line.Zone})" : line.Stop.ToString();
+
+            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}  " +
+                $"Δ {_aimRayView.MuzzleGapMeters:F2}  cone {cone}  hw {line.NotchHalfWidth:F2}  stop {stop}";
         }
 
         static void DrawIntCounter(string label, int value)
