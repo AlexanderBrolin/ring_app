@@ -118,3 +118,4 @@ MonoBehaviour:
   AimRayHipColor: {r: 3.2, g: 2.6, b: 0.2, a: 1}
   AimRayNotchFrac: 0.5
   AimRayNotchMinLength: 0.08
+  AimRayScreenReachFrac: 0.6666667

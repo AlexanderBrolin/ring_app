@@ -3624,6 +3624,7 @@ MonoBehaviour:
   _viewRegistry: {fileID: 1795406096}
   _notchLeft: {fileID: 2002812947}
   _notchRight: {fileID: 1966141810}
+  _camera: {fileID: 330585545}
 --- !u!120 &673512235
 LineRenderer:
   serializedVersion: 3
