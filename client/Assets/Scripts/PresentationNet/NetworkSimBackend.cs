@@ -603,8 +603,12 @@ namespace Ring.Presentation.Net
         /// making the flight arithmetic PUBLIC and SHARED —
         /// `ProjectileFlight.Step`/`BarrierStops`/`TryRicochet` are the very
         /// members `ProjectileSystem` itself calls, so the tracer cranks the
-        /// authority's own function rather than a copy of it. The layer least
-        /// able to check itself now has nothing of its own to check.
+        /// authority's own function rather than a copy of it. The third
+        /// objection is answered too, by `ShotGeometry.Solve` (app-8dv T3) --
+        /// exactly the public seam `WeaponSystem` never grew -- whose
+        /// `ShotSolution` `DrainPredictedShots` below reads straight off
+        /// `PredictedShotLog` for every ghost it spawns. The layer least able
+        /// to check itself now has nothing of its own to check.
         /// Since Т32 these rounds are also written on the PREDICTED tick rather
         /// than the render tick (`Advance`, Ruling 285), which is why they can
         /// legitimately run ahead of every other body in the same snapshot.

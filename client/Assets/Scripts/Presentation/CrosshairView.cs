@@ -22,8 +22,7 @@ namespace Ring.Presentation
     /// disc underneath it. The line of fire out of the muzzle now says the same
     /// thing where the player is already looking (`AimRayView`, whose notches
     /// stand on that SAME cone through `AimLine`/`Spread.HipHalfWidth`), and one
-    /// cone drawn twice would be two drawings to keep true -- moot now anyway,
-    /// because no cone is drawn here any more.
+    /// cone drawn twice is two drawings to keep true.
     ///
     /// AND THE SWITCH SITS ABOVE THE BLOCK RATHER THAN INSIDE IT: while
     /// `!AimHeld` the renderer goes off and the DRAWING below it is skipped for

@@ -220,10 +220,20 @@ namespace Ring.Presentation
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
                 _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // floor point, y=0
-                // Hip fire is flat (ShotGeometry.Solve's own `!AimHeld` branch spawns
-                // the round with no climb rate at all), so it never descends
-                // and the ground never cuts it — there is no correction to make
-                // and the two points coincide.
+                // No reader asks for `CurrentImpactWorldPoint` while
+                // `!AimHeld` any more: `AimRayView`'s own hip branch takes
+                // `line.End`/`Height` instead and documents "NEVER
+                // `CurrentImpactWorldPoint`" for exactly this case, and
+                // `CrosshairView` returns before it would ever reach its own
+                // read. Assigned anyway, for the same "keep the field
+                // finite/inert" reason `_cachedAimHeight` above is -- NOT
+                // because a hip-fired round is flat. `ShotGeometry.Solve`'s
+                // `!AimHeld` branch spawns with no climb of its own
+                // (`vel3.z == 0f`), but the spray block right after it adds
+                // one on both branches alike (`SprayPitchAmplitude` is
+                // nonzero on the shipped weapon, ADR-001 A15), so a hip-fired
+                // round generally does descend and the ground does cut it;
+                // this cache is simply never asked the question.
                 _cachedImpactWorldPoint = _cachedAimWorldPoint;
                 return;
             }
