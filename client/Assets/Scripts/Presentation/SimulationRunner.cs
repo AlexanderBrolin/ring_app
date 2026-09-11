@@ -582,15 +582,25 @@ namespace Ring.Presentation
         /// Whether the game is asking this client to AIM right now (Stage 2 Task
         /// 45c fix-round 1, G-4) — the single signal three surfaces key off, so
         /// they can never disagree about whether the player is in the fight: the
-        /// OS cursor (`CrosshairView.UpdateCursor`), the ground marker and its
-        /// spread cone (`CrosshairView.LateUpdate`) and the aim ray
+        /// OS cursor (`CrosshairView.UpdateCursor`), the AIMED-fire marker
+        /// (`CrosshairView.LateUpdate`) and the line of fire out of the muzzle
         /// (`AimRayView.LateUpdate`). One rule, one home, three readers — none
         /// of them keeps a copy of the state.
+        /// ⚠ THAT MIDDLE READER IS NEITHER A GROUND MARKER NOR PAIRED WITH A
+        /// CONE ANY MORE, and this sentence said it was until app-461s T5:
+        /// the floor-projected hip dot and the spread ring beside it are both
+        /// retired, and what `CrosshairView.LateUpdate` draws is a billboarded
+        /// disc shown only while `AimHeld`. The count of surfaces is unchanged
+        /// and so is every term below — only the middle one's description was.
         ///
         /// FOUR TERMS, EACH FOR ITS OWN REASON:
-        ///  - `Ready` — the backend has a picture at all. Every reader below
-        ///    also touches `Config`/the render pair, which is what that guard
-        ///    has always protected;
+        ///  - `Ready` — the backend has a picture at all. This property itself
+        ///    reads the render pair (the `Alive` term below), and `AimRayView`
+        ///    reads `Config` and the pair on top of that — which is what this
+        ///    guard has always protected. ⚠ `CrosshairView` stopped being an
+        ///    example of it at app-461s T5, and the wording here used to claim
+        ///    EVERY reader was one: the retired cone's radius was the single
+        ///    place that class ever read either of the two;
         ///  - `!Paused` — the pause menu is up. `Update` above returns before it
         ///    samples input while paused, so `LastFrameInput` is FROZEN: a right
         ///    button still held when Escape was pressed keeps `AimHeld` true
@@ -613,8 +623,9 @@ namespace Ring.Presentation
         ///    window is up in the strictest possible sense: `WeaponSystem.
         ///    CanFire` refuses the shot outright on `InventoryOpen`, with no
         ///    exception of the kind the dash and slide terms have, so the
-        ///    marker, the spread cone and the aim ray were all promising a shot
-        ///    the server would not fire.
+        ///    marker, the spread cone still standing then (app-461s T5 has
+        ///    since retired it) and the aim ray were all promising a shot the
+        ///    server would not fire.
         public bool AimActive
             => IsAimActive(Ready, Paused, RenderCurr.Player.Alive, InventoryOpen);
 

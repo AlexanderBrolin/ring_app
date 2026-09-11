@@ -18,9 +18,19 @@ namespace Ring.Simulation.Combat
     /// (HipHalfWidth below, for the notches standing on that line).
     /// ⚠ EVERY MEMBER DROPS WITH THE CLASS, not only the two that never had an
     /// outside reader: splitting one cone across two access levels would say
-    /// the two halves are different kinds of thing. WeaponSystem itself has
-    /// always been internal, and Simulation/AssemblyInfo.cs's single
-    /// InternalsVisibleTo keeps all of this in reach of Ring.Simulation.Tests.
+    /// the two halves are different kinds of thing. That rule is this header's
+    /// own and leans on no neighbor -- which is just as well, because the
+    /// neighbor two writings of this doc DID lean on says the opposite of what
+    /// was claimed for it. Read off the file rather than off memory:
+    /// WeaponSystem is a PUBLIC class whose members run across all three levels
+    /// -- CanFire and WouldFireThisTick public, Update/AdvanceNoSpawn/
+    /// IntervalFor/AddAmmo internal, Advance and SpawnShot with no modifier at
+    /// all. It is a witness for nothing here, and naming it as it is costs less
+    /// than deleting the sentence would, since deleting it is how the claim
+    /// came back the second time.
+    /// What DOES carry over is Simulation/AssemblyInfo.cs's single
+    /// InternalsVisibleTo, which keeps all of this in reach of
+    /// Ring.Simulation.Tests.
     internal static class Spread
     {
         /// Ceiling on the cone's half-angle: 89 degrees. ⚠ THE ANGLE IS

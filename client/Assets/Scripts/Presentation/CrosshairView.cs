@@ -27,10 +27,24 @@ namespace Ring.Presentation
     /// outlived, because no cone is drawn here any more.
     ///
     /// AND THE SWITCH SITS ABOVE THE BLOCK RATHER THAN INSIDE IT: while
-    /// `!AimHeld` the marker's renderer goes off and nothing below it runs that
-    /// frame. An invisible disc taking a position, a scale and a color thirty
-    /// times a second is the exact cost this removal is for, so hiding the disc
-    /// while still feeding it would have paid that cost for nothing.
+    /// `!AimHeld` the renderer goes off and the DRAWING below it is skipped for
+    /// that frame — no position, no orientation, no scale, no color and no read
+    /// of the aim zone. An invisible disc taking all of those once per FRAME is
+    /// the exact cost this removal is for, and hiding the disc while still
+    /// feeding it would have paid that cost for nothing. (Per frame, note, not
+    /// per tick: `LateUpdate` runs at the display's rate, so the bill was 60 and
+    /// up on an ordinary client rather than the simulation's 30 a second.)
+    /// ⚠ EXACTLY ONE LINE BELOW THE SWITCH STILL RUNS ON THAT PATH, and it is
+    /// not the marker's: `_prevHoverZone` is cleared so the head-hover tick
+    /// keeps an honest edge across a release of the aim button. Its own comment
+    /// down there carries the why and the one frame in which the new code and
+    /// the old differ.
+    /// ⚠ AND THE `AimActive` PATH ABOVE CLEARS NOTHING, which is inherited
+    /// rather than chosen: the pause menu, the death screen and the loot window
+    /// all return before that switch is reached, so aiming at a head, pressing
+    /// Escape and coming back to the same head gives no tick. The retired code
+    /// returned there without touching the detector too, so this is the shape
+    /// of the gap rather than a new one.
     ///
     /// П-3 (Task 19's resolution): `AimProvider` is this class's sole per-frame
     /// aim source -- no tick quantization. Since T5 it reads NEITHER the
@@ -148,11 +162,19 @@ namespace Ring.Presentation
             if (!aimHeld)
             {
                 // The ONE write the hip path keeps, and it is not the marker's:
-                // `AimProvider.CurrentAimZone` answers `HitZone.None` on every
-                // `!AimHeld` frame (its own class doc), so clearing the edge
-                // detector here hands it exactly what the block below used to
-                // hand it there. Without this line a release-and-re-aim onto a
-                // head the cursor never left would swallow the tick.
+                // without it a release-and-re-aim onto a head the cursor never
+                // left would swallow the tick.
+                // ⚠ NOT BIT FOR BIT WHAT THE BLOCK BELOW USED TO WRITE HERE,
+                // and the difference is one frame wide. `AimProvider` is pinned
+                // to `[DefaultExecutionOrder(100)]` and this class is not pinned
+                // at all, so the zone read below is the cache LAST frame's
+                // `AimProvider.LateUpdate` left: the retired code's FIRST hip
+                // frame therefore stored the previous AIMED frame's zone and
+                // only reached `HitZone.None` on the second. From the second hip
+                // frame on the two agree — `AimProvider` writes `None` for every
+                // `!AimHeld` frame of its own — and the tick lands on the same
+                // frame either way. What changed is the value the detector holds
+                // during that first frame, not when it fires.
                 _prevHoverZone = HitZone.None;
                 return;
             }
