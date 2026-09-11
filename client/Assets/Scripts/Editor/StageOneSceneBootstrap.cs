@@ -296,6 +296,9 @@ namespace Ring.Editor
         const string MarkerObjectName = "Marker";
         const string SpreadConeObjectName = "SpreadCone";
         const string AimRayObjectName = "AimRay"; // Task 20
+        // app-461s T3: the two cross strokes riding the ray, children of it.
+        const string NotchLeftObjectName = "NotchLeft";
+        const string NotchRightObjectName = "NotchRight";
         const string ArenaObjectName = "Arena";
         const string EventSystemObjectName = "EventSystem";
         const string HudObjectName = "HUD";
@@ -1584,8 +1587,11 @@ namespace Ring.Editor
 
             // Task 20 (spec Г5, PC6/PC8/QA10): the aim-assist ray — a two-point
             // world-space LineRenderer from the weapon's muzzle to the current
-            // aim point, visible only while AimHeld (AimRayView.LateUpdate). Its
-            // own root object, not a Crosshair child: CrosshairView never drives
+            // aim point. app-461s T2 (owner decisions Н34/Н41) made it visible
+            // ALWAYS, from the hip as well as while AimHeld, so this comment no
+            // longer claims otherwise — `AimRayView.LateUpdate` gates it on
+            // `AimActive`, a live doll and a warm aim cache instead. Its own
+            // root object, not a Crosshair child: CrosshairView never drives
             // it, and it carries no marker of its own (the Crosshair's existing
             // `_marker` doubles as the aim dot while AimHeld, PC8 above).
             GameObject aimRayGo = EditorBootstrapUtils.FindRootObject(scene, AimRayObjectName);
@@ -1601,22 +1607,18 @@ namespace Ring.Editor
             // `AddComponent<AimRayView>()` runs if one isn't already present
             // — creating the component here FIRST means that implicit add is
             // a no-op instead of silently pre-empting (and skipping) the
-            // one-time module setup below.
-            LineRenderer aimRayLine = aimRayGo.GetComponent<LineRenderer>();
-            if (aimRayLine == null)
-            {
-                aimRayLine = aimRayGo.AddComponent<LineRenderer>();
-                aimRayLine.useWorldSpace = true;
-                aimRayLine.positionCount = 2;
-                aimRayLine.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                aimRayLine.enabled = false; // AimRayView.LateUpdate only enables it while AimHeld
-                sceneDirty = true;
-            }
-            if (aimRayLine.sharedMaterial != aimRayMat)
-            {
-                aimRayLine.sharedMaterial = aimRayMat;
-                sceneDirty = true;
-            }
+            // one-time module setup inside the helper.
+            // app-461s T3: that setup now lives in `EnsureWorldLine`, shared
+            // with the two notch children below. `startDisabled: true` is the
+            // ray's own half of the split — it starts switched off and
+            // `AimRayView` turns it on the first frame it has something to
+            // draw; the notches carry no such one-time write.
+            // ⚠ The returned renderer is dropped on purpose: nothing here wires
+            // the ray's own `LineRenderer` anywhere — `AimRayView.Awake` picks
+            // it up off its own GameObject. The notches below DO keep theirs,
+            // because they are the two references this view cannot find itself.
+            EditorBootstrapUtils.EnsureWorldLine(
+                aimRayGo, aimRayMat, positionCount: 2, startDisabled: true, ref sceneDirty);
             AimRayView aimRayView = aimRayGo.GetComponent<AimRayView>();
             if (aimRayView == null)
             {
@@ -1624,12 +1626,36 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
+            // app-461s T3 (spec §3.6): the two cross strokes standing at the
+            // cursor's own distance, half a cone's width apart — what the
+            // collector reads the hip spread off once T5 takes the floor ring
+            // away. TWO renderers rather than one, and that is a decision:
+            // a single `LineRenderer` draws ONE polyline, so the two strokes
+            // would be joined by a segment across the whole cone.
+            // They share the ray's own material, and `AimRayView` pushes the
+            // ray's color and width onto all three every frame — the color
+            // lives in a MaterialPropertyBlock, not in the material, so
+            // sharing the asset alone would leave the notches at the baked
+            // cyan and at the default thickness.
+            sceneDirty |= EditorBootstrapUtils.EnsureChild(
+                aimRayGo.transform, NotchLeftObjectName, out Transform notchLeftTf);
+            LineRenderer notchLeft = EditorBootstrapUtils.EnsureWorldLine(
+                notchLeftTf.gameObject, aimRayMat, positionCount: 2, startDisabled: false,
+                ref sceneDirty);
+            sceneDirty |= EditorBootstrapUtils.EnsureChild(
+                aimRayGo.transform, NotchRightObjectName, out Transform notchRightTf);
+            LineRenderer notchRight = EditorBootstrapUtils.EnsureWorldLine(
+                notchRightTf.gameObject, aimRayMat, positionCount: 2, startDisabled: false,
+                ref sceneDirty);
+
             var aimRaySo = new SerializedObject(aimRayView);
             bool aimRayRefsChanged = false;
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_runner", runner);
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_aimProvider", aimProvider);
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_gameFeel", gameFeel);
             aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_rayMaterial", aimRayMat);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_notchLeft", notchLeft);
+            aimRayRefsChanged |= EditorBootstrapUtils.SetRef(aimRaySo, "_notchRight", notchRight);
             if (aimRayRefsChanged)
             {
                 aimRaySo.ApplyModifiedPropertiesWithoutUndo();
@@ -3757,15 +3783,13 @@ namespace Ring.Editor
             return changed;
         }
 
+        /// app-461s T3: the body moved to `EditorBootstrapUtils.EnsureChild`,
+        /// where the aim ray's notch children and `EnsureAimProxyCapsule` reach
+        /// it too. The wrapper stays for the name — a socket is what this file
+        /// makes out of a bare child — exactly as `EnsureCasingsLayer` stayed
+        /// over `EnsureUserLayer`.
         static bool EnsureSocketChild(Transform gun, string childName, out Transform socket)
-        {
-            socket = gun.Find(childName);
-            if (socket != null) return false;
-            var go = new GameObject(childName);
-            go.transform.SetParent(gun, false);
-            socket = go.transform;
-            return true;
-        }
+            => EditorBootstrapUtils.EnsureChild(gun, childName, out socket);
 
         /// Stage 2 Task 45b: the socket half of the doll prefab's self-heal.
         /// Separate from `SelfHealGunPoseOnPrefab` above for the reason this
@@ -4143,19 +4167,10 @@ namespace Ring.Editor
         static bool EnsureAimProxyCapsule(Transform root, string childName, float bottom,
             float top, float radius)
         {
-            bool changed = false;
-            Transform tf = root.Find(childName);
-            GameObject go;
-            if (tf == null)
-            {
-                go = new GameObject(childName);
-                go.transform.SetParent(root, false);
-                changed = true;
-            }
-            else
-            {
-                go = tf.gameObject;
-            }
+            // app-461s T3: find-or-create through the shared helper — the same
+            // block the gun sockets and the aim ray's notches use.
+            bool changed = EditorBootstrapUtils.EnsureChild(root, childName, out Transform tf);
+            GameObject go = tf.gameObject;
             if (go.layer != AimProvider.AimProxyLayer)
             {
                 go.layer = AimProvider.AimProxyLayer;

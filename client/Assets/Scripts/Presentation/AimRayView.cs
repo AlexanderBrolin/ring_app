@@ -15,7 +15,7 @@ namespace Ring.Presentation
     /// spread cone, aimed fire's honest picture is this ray"). Hip fire's
     /// honest picture is now this ray itself, growing out of the muzzle to
     /// wherever the shot would actually stop, plus the two notches it carries
-    /// (`_notchLeft`/`_notchRight`, drawn starting app-461s T3) standing where
+    /// (`_notchLeft`/`_notchRight`, drawn since app-461s T3) standing where
     /// the round's own spread puts them; aimed fire's honest picture is
     /// unchanged — this ray alone.
     /// Carries no dot/marker of its own (PC8): `CrosshairView`'s existing
@@ -244,7 +244,20 @@ namespace Ring.Presentation
                 MuzzleGapMeters = float.NaN;
                 return;
             }
-            SetDrawn(ray: true, notches: false);
+            // app-461s T3 (⛔ THE VIEW DECIDES NO NUMBER, plan deviation 8):
+            // the stroke's length is `AimLine`'s own pure function, handed the
+            // two dials out of the ScriptableObject. Keeping the formula here
+            // would put a numeric decision back into a MonoBehaviour, where
+            // EditMode cannot reach it.
+            float strokeLength = AimLine.NotchStroke(line.NotchHalfWidth,
+                _gameFeel.AimRayNotchFrac, _gameFeel.AimRayNotchMinLength);
+            // app-461s T3: the notches answer the HIP question — how wide the
+            // cone is at the cursor — so they stand down while the right
+            // button is held, where the ray alone is the honest picture
+            // (class doc). ⭐ Switched OFF rather than drawn at zero length: a
+            // `LineRenderer` whose two points coincide still draws a
+            // degenerate quad, not nothing.
+            SetDrawn(ray: true, notches: !aimHeld && strokeLength > 0f);
 
             // Stage 2 Task 45c (bd app-bej): aimed, the far end is where the
             // round COMES DOWN, not where the cursor points — the two part
@@ -294,6 +307,41 @@ namespace Ring.Presentation
             Color dimmed = rayColor * (_gameFeel.AimRayAlpha * alphaBoost);
             _block.SetColor("_BaseColor", new Color(dimmed.r, dimmed.g, dimmed.b, 1f));
             _line.SetPropertyBlock(_block);
+
+            // app-461s T3: the notches, in ONE guarded block — color, width and
+            // positions together.
+            // ⛔ THE GUARD COVERS ALL THREE WRITES, NOT JUST THE POSITIONS: a
+            // scene bootstrapped before this task has no children under
+            // `AimRay` at all, and `SetPropertyBlock` on an unwired reference
+            // would throw every single frame on exactly the scene the guard
+            // exists for (`TryGetMuzzle`'s own socket check is the precedent).
+            // The ray's own writes stay outside it — `[RequireComponent]`
+            // makes `_line` unmissable, and hiding the ray behind a missing
+            // child would be a worse failure than missing notches.
+            // ⛔ AND COLOR AND WIDTH ARE PUSHED EXPLICITLY RATHER THAN INHERITED
+            // FROM THE SHARED MATERIAL: the ray's color lives in the
+            // MaterialPropertyBlock above, never in the material asset, and its
+            // width lives in this renderer's own `startWidth`/`endWidth` — the
+            // shared `aimRayMat` alone would leave the notches at the baked
+            // cyan and at the default thickness.
+            if (_notchLeft != null && _notchRight != null)
+            {
+                _notchLeft.SetPropertyBlock(_block);
+                _notchRight.SetPropertyBlock(_block);
+                _notchLeft.startWidth = _notchLeft.endWidth = _gameFeel.AimRayWidth;
+                _notchRight.startWidth = _notchRight.endWidth = _gameFeel.AimRayWidth;
+                AimLine.Notches(in line, strokeLength, out float2 a0, out float2 a1,
+                    out float2 b0, out float2 b1);
+                // The strokes ride the LINE, not the floor: their height is the
+                // line's own, the muzzle height it was solved at.
+                // ⚠ Point by point rather than `SetPositions(new Vector3[2])` —
+                // the array form would allocate on every frame of every match.
+                Vector3 up = Vector3.up * line.Height;
+                _notchLeft.SetPosition(0, SimSpace.ToWorld(a0) + up);
+                _notchLeft.SetPosition(1, SimSpace.ToWorld(a1) + up);
+                _notchRight.SetPosition(0, SimSpace.ToWorld(b0) + up);
+                _notchRight.SetPosition(1, SimSpace.ToWorld(b1) + up);
+            }
         }
 
         /// The local player's own barrel mouth (Stage 2 Task 45b) — false when

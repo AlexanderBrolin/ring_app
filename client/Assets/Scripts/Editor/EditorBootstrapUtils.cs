@@ -57,6 +57,27 @@ namespace Ring.Editor
             return null;
         }
 
+        /// Find-or-create a named child under `parent`: handed back either way,
+        /// with the answer of whether it had to be created — the shape every
+        /// `Ensure*` of the bootstraps already speaks.
+        ///
+        /// PROMOTED OUT OF `StageOneSceneBootstrap.EnsureSocketChild` (app-461s
+        /// T3), which stays as a thin wrapper over this one, the same way
+        /// `EnsureCasingsLayer` became a wrapper over `EnsureUserLayer`. The
+        /// identical block also opens `EnsureAimProxyCapsule` in that file, and
+        /// the aim ray's two notch children would have wanted it a third time:
+        /// three copies of "look it up, make it if it is missing, say which
+        /// happened" is two copies too many.
+        public static bool EnsureChild(Transform parent, string name, out Transform child)
+        {
+            child = parent.Find(name);
+            if (child != null) return false;
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            child = go.transform;
+            return true;
+        }
+
         public static bool SetRef(SerializedObject so, string fieldName, Object value)
         {
             SerializedProperty prop = so.FindProperty(fieldName);
@@ -218,6 +239,49 @@ namespace Ring.Editor
                 changed = true;
             }
             return visual;
+        }
+
+        /// A world-space `LineRenderer` on an ALREADY RESOLVED host object
+        /// (app-461s T3): get-or-add the component, one-time module settings
+        /// inside the creation guard, unconditional material self-heal outside
+        /// it — the same existence-guard/self-heal split `GetOrCreateMaterial`
+        /// and `EnsureVisual` above already keep.
+        ///
+        /// ⛔ IT TAKES THE HOST, NOT A PARENT PLUS A NAME. The block it was
+        /// extracted from is the aim ray's, and the aim ray is a ROOT object of
+        /// the scene (`FindRootObject`), not a child of anything; its two notch
+        /// strokes, by contrast, are children (`EnsureChild`). Resolving the
+        /// object therefore stays with the caller, which is what lets both
+        /// kinds share this middle.
+        ///
+        /// ⛔ `startDisabled` IS A PARAMETER BECAUSE THE CALLERS DISAGREE ON IT.
+        /// The ray's one-time setup switches the renderer off (`AimRayView`
+        /// turns it back on the first frame it has something to draw), the
+        /// notches' setup does not. Once `AddComponent` moved in here the
+        /// caller lost sight of the "just created" branch — `ref bool changed`
+        /// does not report it, because the material self-heal raises the very
+        /// same flag — so without this parameter a fresh bootstrap would write
+        /// a scene whose three renderers sit in states the committed one does
+        /// not have.
+        public static LineRenderer EnsureWorldLine(GameObject host, Material material,
+            int positionCount, bool startDisabled, ref bool changed)
+        {
+            LineRenderer line = host.GetComponent<LineRenderer>();
+            if (line == null)
+            {
+                line = host.AddComponent<LineRenderer>();
+                line.useWorldSpace = true;
+                line.positionCount = positionCount;
+                line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                if (startDisabled) line.enabled = false;
+                changed = true;
+            }
+            if (line.sharedMaterial != material)
+            {
+                line.sharedMaterial = material;
+                changed = true;
+            }
+            return line;
         }
 
         /// Source-path guard for prefab factories (Б11): true when every named
