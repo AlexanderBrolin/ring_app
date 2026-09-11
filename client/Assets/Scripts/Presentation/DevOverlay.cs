@@ -35,11 +35,11 @@ namespace Ring.Presentation
 
         [SerializeField] SimulationRunner _runner;
         [SerializeField] AimProvider _aimProvider;
-        // app-461s T4 (plan deviation 1): the aim-ray gauge's `Δ` reading is
-        // the gap between the doll's muzzle socket and the simulated muzzle,
-        // and that fact lives only here — `AimProvider` carries no
-        // `ViewRegistry` reference to learn it from (`MuzzleGapMeters`'s own
-        // doc). A third reference, on top of the two above.
+        /// app-461s T4 (plan deviation 1): the aim-ray gauge's `Δ` reading is
+        /// the gap between the doll's muzzle socket and the simulated muzzle,
+        /// and that fact lives only here — `AimProvider` carries no
+        /// `ViewRegistry` reference to learn it from (`MuzzleGapMeters`'s own
+        /// doc). A third reference, on top of the two above.
         [SerializeField] AimRayView _aimRayView;
 
         float _fpsAccum;
@@ -129,18 +129,32 @@ namespace Ring.Presentation
             // the two halves of the server-side line (~44 each), so at the
             // default skin's ~7 px per character 380 holds them where 300 cut
             // them. HEIGHT: the section adds a 6 px spacer, a header, and
-            // thirteen rows occupying fourteen text lines (the server-side row
-            // is deliberately wrapped in two) — fifteen text lines at the
-            // default skin's ~20 px per laid-out line, i.e. ~306 px, taken as
-            // 320 so the slack the original 560 already carried for the
+            // fourteen rows occupying fifteen text lines (the server-side row
+            // is deliberately wrapped in two; fix-round 1 corrected this row
+            // count from thirteen to fourteen — six int counters below RTT/
+            // Tick/Bytes/Corrections, not five) — sixteen text lines at the
+            // default skin's ~20 px per laid-out line, i.e. 320 px exactly,
+            // the same 320 this budget already carried before the count was
+            // corrected — the row-count fix changes the prose, not the
+            // number — so the slack the original 560 already carried for the
             // sixteen elements above it survives.
-            // app-461s T4 (spec §3.8): one more row, the aim-ray gauge — at
-            // the same ~20 px per laid-out line this budget counts by, 880
-            // becomes 900. A clipped panel is a panel that cannot be read,
-            // which is the whole point of the thing, and doubly so for a
-            // gauge whose entire job is to make a number readable that the
-            // picture alone does not carry (owner lesson 716).
-            GUILayout.BeginArea(new Rect(10f, 10f, 380f, 900f), GUI.skin.box);
+            // app-461s T4 (spec §3.8, fix-round 1): the aim-ray gauge adds
+            // TWO rows, not one. WIDTH: the gauge's six readings measure
+            // 72-74 characters on a single line at realistic worst-case
+            // values (`cone 11.00°  hw 15.31  stop body(Head)`) — 504-518 px
+            // at this panel's own ~7 px per character, against ~364 px of
+            // usable width after padding (~52 characters), the same "300
+            // cuts it" failure this comment already measured once for the
+            // tick trio. Split in two by manual newline, exactly like the
+            // server-side row below: `on/h/d/Δ` on the first line, `cone/hw/
+            // stop` on the second — the wider half measures 40 characters,
+            // comfortably inside the budget. HEIGHT: two rows at ~20 px per
+            // laid-out line add 40 px, not 20 — 880 becomes 920. A clipped
+            // panel is a panel that cannot be read, which is the whole point
+            // of the thing, and doubly so for a gauge whose entire job is to
+            // make a number readable that the picture alone does not carry
+            // (owner lesson 716).
+            GUILayout.BeginArea(new Rect(10f, 10f, 380f, 920f), GUI.skin.box);
 
             GUILayout.Label($"FPS: {_fps:F0}");
             GUILayout.Label($"Tick: {_runner.CurrentTick}");
@@ -351,16 +365,30 @@ namespace Ring.Presentation
         /// fact only the view knows (`Δ`, `AimRayView.MuzzleGapMeters`'s own
         /// doc — plan deviation 1: no reference to `ViewRegistry` exists on
         /// `AimProvider` to learn it from otherwise).
+        /// ⚠ TWO LINES, MANUAL `\n`, SAME SHAPE AS THE SERVER-SIDE ROW BELOW
+        /// (fix-round 1): at realistic worst-case values the six readings run
+        /// 72-74 characters on one line, wider than this panel's own budget
+        /// (see the width arithmetic on `GUILayout.BeginArea` above) —
+        /// `on/h/d/Δ` first, `cone/hw/stop` second.
         string AimRayLine()
         {
-            if (_aimProvider == null || _aimRayView == null) return "AimRay: —";
+            // A DIFFERENT REASON THAN THE ONE BELOW (fix-round 1, Minor 1):
+            // an unwired scene (no `Apply` since this task) would otherwise
+            // print the exact same dash as aiming down sights, which reads
+            // as "aiming" on a scene that has never fired a shot.
+            if (_aimProvider == null || _aimRayView == null) return "AimRay: not wired";
             // THE GAUGE IS A HIP-FIRE INSTRUMENT (spec §3.8). While the right
             // button is held, the drawn ray answers the AIMED question
             // instead — far end and color both switch in
             // `AimRayView.LateUpdate` — while `Δ` keeps measuring the HIP
             // muzzle regardless, the wrong pair, off by up to 0.18 m at a
-            // high cover next to a collector (app-461s T2 review round). A
-            // dash here is the honest answer, not a missing feature.
+            // high cover next to a collector (app-461s T2 review round). And
+            // it is not `Δ` alone: the notches go dark too (`AimRayView`'s
+            // own `drawNotches` predicate), so every one of the six readings
+            // would describe a line that is not the one on screen. A single
+            // dash for the whole reading is the honest answer here, the same
+            // shape this file already uses for `StateHash: —` on a networked
+            // backend.
             if (_runner.LastFrameInput.AimHeld) return "AimRay: —";
 
             AimLineSolution line = _aimProvider.CurrentHipLine;
@@ -370,6 +398,14 @@ namespace Ring.Presentation
             // already resets to NaN on every one of those exits (its own
             // doc), so testing it here says exactly what is on screen.
             bool on = !float.IsNaN(_aimRayView.MuzzleGapMeters);
+            // A DASH FOR `Δ` ALONE HERE, NOT FOR THE WHOLE LINE (fix-round 1,
+            // Important): unlike the `AimHeld` case above, the other five
+            // readings stay valid on an `off` frame — `AimProvider` writes
+            // its cache every `Ready` frame regardless of whether the view
+            // found a doll to draw from — so only the one field the view
+            // itself reports as NaN gets the dash, per `MuzzleGapMeters`'s
+            // own doc ("the dev readout prints a dash for it").
+            string gap = on ? $"{_aimRayView.MuzzleGapMeters:F2}" : "—";
             // GUARD MANDATORY: `NotchDistance` is legitimately zero (the
             // muzzle sits inside a body, or the cursor sits on the muzzle
             // itself), and `hw / 0` is NaN right on the one readout this
@@ -384,8 +420,8 @@ namespace Ring.Presentation
             // line that hits nothing.
             string stop = line.Stop == AimStop.Body ? $"body({line.Zone})" : line.Stop.ToString();
 
-            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}  " +
-                $"Δ {_aimRayView.MuzzleGapMeters:F2}  cone {cone}  hw {line.NotchHalfWidth:F2}  stop {stop}";
+            return $"AimRay: {(on ? "on" : "off")}  h {line.Height:F2}  d {line.Length:F1}  Δ {gap}\n" +
+                $"  cone {cone}  hw {line.NotchHalfWidth:F2}  stop {stop}";
         }
 
         static void DrawIntCounter(string label, int value)
