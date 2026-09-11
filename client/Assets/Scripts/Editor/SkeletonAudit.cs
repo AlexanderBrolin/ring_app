@@ -69,6 +69,38 @@ namespace Ring.Editor
         /// between samples and coarse enough to stay quick on five bodies.
         const int TravelSamples = 32;
 
+        /// Bones that skin a mesh but are NOT the body, excluded from the reach
+        /// figure. Two families, and both were found by reading the first run's
+        /// own output rather than assumed:
+        ///
+        ///   * RIG CONTROLS — IK targets and pole vectors. They drive the
+        ///     solver, not the silhouette, and they travel absurdly: the
+        ///     gunner's `PoleTarget.L` reaches 6.42 m from his own axis in the
+        ///     death clip, against a drawn body under a meter wide. A reach
+        ///     taken over those would size the gather circle to a control point
+        ///     nobody can shoot.
+        ///   * FINGERS — real geometry, but no hit volume will ever hang on one
+        ///     (eleven volumes for the collector, and not a knuckle among
+        ///     them), while a fingertip is the furthest-travelling bone of the
+        ///     whole skeleton in a death animation.
+        ///
+        /// BOTH FIGURES ARE PRINTED, raw over every bone and body over this
+        /// filter, because their difference is what says whether the filter
+        /// caught what it was meant to catch (lesson 680).
+        static readonly string[] NonBodyBoneMarks =
+        {
+            "PoleTarget", "_PT", "_IK", "IK_",
+            "Index", "Middle", "Pinky", "Ring", "Thumb", "Palm",
+            "index_", "middle_", "pinky_", "ring_", "thumb_",
+        };
+
+        static bool IsBodyBone(string boneName)
+        {
+            for (int i = 0; i < NonBodyBoneMarks.Length; i++)
+                if (boneName.Contains(NonBodyBoneMarks[i])) return false;
+            return true;
+        }
+
         [MenuItem("Ring/Audit/Skeletons and Clips")]
         public static void Run()
         {
@@ -315,6 +347,9 @@ namespace Ring.Editor
                 + "(bone position spread in body space, root pinned), "
                 + $"sampling '{sampleTarget.name}'");
 
+            float bodyReach = 0f, bodyCrown = 0f, bodyRawReach = 0f;
+            string bodyReachName = "-", bodyReachClip = "-";
+
             AnimationMode.StartAnimationMode();
             try
             {
@@ -328,6 +363,9 @@ namespace Ring.Editor
                         max[i] = new Vector3(float.MinValue, float.MinValue, float.MinValue);
                     }
 
+                    float clipReach = 0f, clipCrown = 0f, clipRawReach = 0f;
+                    string reachName = "-";
+
                     for (int s = 0; s < TravelSamples; s++)
                     {
                         float t = clip.length * s / TravelSamples;
@@ -340,6 +378,17 @@ namespace Ring.Editor
                             Vector3 p = instance.transform.InverseTransformPoint(bones[i].position);
                             min[i] = Vector3.Min(min[i], p);
                             max[i] = Vector3.Max(max[i], p);
+
+                            // Horizontal distance from the body's vertical axis
+                            // — the plan-view reach a gather circle has to cover
+                            // — and the height, which is the crown in this pose.
+                            float reach = Mathf.Sqrt(p.x * p.x + p.z * p.z);
+                            if (reach > clipRawReach) clipRawReach = reach;
+                            if (IsBodyBone(bones[i].name))
+                            {
+                                if (reach > clipReach) { clipReach = reach; reachName = bones[i].name; }
+                                if (p.y > clipCrown) clipCrown = p.y;
+                            }
                         }
                     }
 
@@ -359,8 +408,29 @@ namespace Ring.Editor
                     report.AppendLine(
                         $"  {clip.name}: widest {widest:F3} m ({widestName}), "
                         + $"mean {(total / bones.Count):F3} m, "
-                        + $"bones moving >1 cm: {moving}/{bones.Count}{verdict}");
+                        + $"bones moving >1 cm: {moving}/{bones.Count}{verdict}, "
+                        + $"reach {clipReach:F3} m ({reachName}), raw {clipRawReach:F3} m, "
+                        + $"crown {clipCrown:F3} m");
+
+                    if (clipReach > bodyReach) { bodyReach = clipReach; bodyReachName = reachName; bodyReachClip = clip.name; }
+                    if (clipRawReach > bodyRawReach) bodyRawReach = clipRawReach;
+                    if (clipCrown > bodyCrown) bodyCrown = clipCrown;
                 }
+
+                // THE NUMBER THE BROAD PHASE IS ABOUT (bd `app-94sk`). A hit
+                // volume that follows the pose travels away from the body axis
+                // — a running leg most of all — and the projectile gather
+                // accepts a body by ONE circle before any part is walked. So
+                // the gather circle has to cover the FURTHEST any bone reaches
+                // in ANY frame of ANY clip this body plays; anything narrower
+                // drops that part out of the candidate set silently, which is
+                // the defect SimConfigBuilder's rule 4 already names for the
+                // static case.
+                report.AppendLine(
+                    $"  ⭐ REACH over every clip and phase: {bodyReach:F3} m "
+                    + $"({bodyReachName} in {bodyReachClip}) — the broad-phase radius this body "
+                    + $"needs; crown {bodyCrown:F3} m; RAW over every bone incl. rig controls and "
+                    + $"fingers {bodyRawReach:F3} m");
             }
             finally
             {
