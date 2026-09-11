@@ -373,7 +373,8 @@ namespace Ring.Simulation.Combat
             float2 left = anchor + perp * line.NotchHalfWidth;
             float2 right = anchor - perp * line.NotchHalfWidth;
             // ⚠ THE STROKE IS LAID ALONG THE PERPENDICULAR, i.e. ACROSS the
-            // line: the pair reads as a gate rather than as a pair of sleepers.
+            // line: the pair reads as two flanking crossbars rather than as
+            // a pair of sleepers.
             // ⇒ the ends stand at NotchHalfWidth -/+ half the stroke, so none of
             // these four points is at the half-width itself -- a reader
             // measuring the cone's edge measures the MIDDLE of a stroke.
