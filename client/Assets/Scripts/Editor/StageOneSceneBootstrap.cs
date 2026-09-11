@@ -92,12 +92,15 @@ namespace Ring.Editor
     /// Task 26 (spec Interfaces, this task's resolution П-3) wires `CameraRig`'s
     /// new `_gameFeelDirector` slot (it reads `GameFeelDirector.ShakeOffset`
     /// directly every `LateUpdate` — no event/`SimulationRunner` indirection) in
-    /// the existing CameraRig section, and adds a `SpreadCone` child under the
-    /// `Crosshair` object: a `LineRenderer` ring (closed loop, world-space,
-    /// `CrosshairView.ConeSegments` points), plus a new `SpreadConeEmissive`
-    /// unlit material created the same existence-guarded way as every other
-    /// placeholder material in this file. `CrosshairView` gains `_cone`/
-    /// `_runner` reference slots alongside its existing `_marker`/`_aimProvider`.
+    /// the existing CameraRig section. It also used to add a `SpreadCone` child
+    /// under the `Crosshair` object — a `LineRenderer` ring with a
+    /// `SpreadConeEmissive` unlit material of its own — and app-461s T5 retires
+    /// the lot: the crosshair section below self-heals that object OUT of a
+    /// scene an older run saved, its material is no longer created or wired
+    /// (the asset itself stays on disk, owner decision Р483), and
+    /// `CrosshairView`'s `_cone` slot is gone with the ring it pointed at. The
+    /// `_runner` slot Task 26 gave that component stays, alongside its
+    /// `_marker`/`_aimProvider`.
     /// Task 27 (spec §3.11, Приложение П) adds persistent cosmetics: (1) an
     /// idempotent `AddDecalRendererFeatureIfMissing` pass over both
     /// `PC_Renderer.asset`/`Mobile_Renderer.asset` — the brief's "через Editor"
@@ -208,9 +211,10 @@ namespace Ring.Editor
     /// Task 20 (spec Г5, PC6/PC8/QA10) adds the aim-assist ray: a new `AimRay`
     /// root object carrying `LineRenderer` + `AimRayView`, wired to `_runner`/
     /// `_aimProvider`/`_gameFeel`/`_rayMaterial` — the last built here via a
-    /// new `GetOrCreateUnlitMaterial("AimRayEmissive", ...)` call alongside
-    /// `spreadConeMat`'s own. The existing `Crosshair/Marker` swaps its
-    /// square Quad primitive for a flat round `Cylinder` disc (same shape
+    /// new `GetOrCreateUnlitMaterial("AimRayEmissive", ...)` call, built the
+    /// same existence-guarded way as every other placeholder material in this
+    /// file. The existing `Crosshair/Marker` swaps its square Quad primitive
+    /// for a flat round `Cylinder` disc (same shape
     /// idiom `GreyboxBuilder`'s floor/obstacles already use), self-healing an
     /// already-committed scene's stale Quad the same way the Player root's
     /// leftover capsule renderer self-heals above.
@@ -294,6 +298,11 @@ namespace Ring.Editor
         const string CameraRigObjectName = "CameraRig";
         const string CrosshairObjectName = "Crosshair";
         const string MarkerObjectName = "Marker";
+        // app-461s T5: names a RETIRED object. Its one reader left is the
+        // self-heal in the crosshair section that removes the ring from a scene
+        // an older bootstrap run saved — the same reason
+        // `DashBarObjectName`/`PracticeTargetsObjectName` below outlive the
+        // things they name.
         const string SpreadConeObjectName = "SpreadCone";
         const string AimRayObjectName = "AimRay"; // Task 20
         // app-461s T3: the two cross strokes riding the ray, children of it.
@@ -1410,13 +1419,9 @@ namespace Ring.Editor
                 "CrosshairEmissive",
                 baseColor: new Color(0.04f, 0.02f, 0f),
                 emissionColor: new Color(3.5f, 1.2f, 0f));
-            // Task 26: the spread-cone ring reuses the crosshair's own warm-neon
-            // emissive tint (unlit, like the tracer/muzzle materials — a
-            // `LineRenderer` strip isn't meant to be shaded).
-            Material spreadConeMat = GetOrCreateUnlitMaterial("SpreadConeEmissive", new Color(3.5f, 1.2f, 0f));
             // Task 20: a cool cyan tint for the aim-assist ray, distinct from
-            // the cone's warm-neon orange above and the tracer's near-white
-            // cyan below — AimRayView reads AimRayWidth/AimRayAlpha off
+            // the crosshair marker's warm-neon orange above and the tracer's
+            // near-white cyan below — AimRayView reads AimRayWidth/AimRayAlpha off
             // GameFeelConfig fresh every frame, this material just supplies
             // the base emissive color those numbers scale.
             Material aimRayMat = GetOrCreateUnlitMaterial("AimRayEmissive", new Color(0.6f, 2.4f, 3.2f));
@@ -1528,41 +1533,24 @@ namespace Ring.Editor
                 sceneDirty = true;
             }
 
-            // Task 26 (spec §3.5/§3.11, resolution П-3): the honest spread-cone
-            // ring — a world-space `LineRenderer` loop, sibling of `Marker` under
-            // `Crosshair`. Module settings (`loop`/`useWorldSpace`/`positionCount`/
-            // `widthMultiplier`) are one-time, existence-guarded like every other
-            // module setup in this file (e.g. `ConfigureMuzzleParticles`) — only
-            // the material is self-healed unconditionally, same treatment as the
-            // marker's own `MeshRenderer.sharedMaterial` check just above, and
-            // `CrosshairView.UpdateCone` overwrites every position every frame
-            // regardless, so no positions need seeding here.
-            Transform spreadConeTf = crosshairGo.transform.Find(SpreadConeObjectName);
-            GameObject spreadConeGo;
-            if (spreadConeTf == null)
+            // app-461s T5 (owner decisions Н37/Н41/Н45): Task 26's spread-cone
+            // ring is retired outright — `CrosshairView` draws nothing at all
+            // from the hip now, and the line of fire out of the muzzle carries
+            // the same cone, notches and all, where the player is already
+            // looking (`AimRay` below). Self-heals a scene an older bootstrap
+            // run saved by removing the leftover `SpreadCone` child, exactly the
+            // way Task 24's `PracticeTargets` and В1 fix-wave 1's `DashBar`
+            // retirements do: the existence guard is INVERTED — PRESENCE, not
+            // absence, is what marks the scene dirty — so a second `Apply` finds
+            // nothing, changes nothing and never rebuilds the object.
+            // The `SpreadConeEmissive` material stays on disk (owner decision
+            // Р483): it is simply no longer created or wired here. The orphaned
+            // key mechanism of A27 does not apply to it — there the keys had no
+            // writer left, here the writer exists and is what this removes.
+            Transform staleSpreadCone = crosshairGo.transform.Find(SpreadConeObjectName);
+            if (staleSpreadCone != null)
             {
-                spreadConeGo = new GameObject(SpreadConeObjectName);
-                spreadConeGo.transform.SetParent(crosshairGo.transform, false);
-                sceneDirty = true;
-            }
-            else
-            {
-                spreadConeGo = spreadConeTf.gameObject;
-            }
-            LineRenderer spreadCone = spreadConeGo.GetComponent<LineRenderer>();
-            if (spreadCone == null)
-            {
-                spreadCone = spreadConeGo.AddComponent<LineRenderer>();
-                spreadCone.loop = true;
-                spreadCone.useWorldSpace = true;
-                spreadCone.positionCount = CrosshairView.ConeSegments;
-                spreadCone.widthMultiplier = 0.04f;
-                spreadCone.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                sceneDirty = true;
-            }
-            if (spreadCone.sharedMaterial != spreadConeMat)
-            {
-                spreadCone.sharedMaterial = spreadConeMat;
+                Object.DestroyImmediate(staleSpreadCone.gameObject);
                 sceneDirty = true;
             }
 
@@ -1570,7 +1558,6 @@ namespace Ring.Editor
             bool crosshairRefsChanged = false;
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_marker", markerGo.transform);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_aimProvider", aimProvider);
-            crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_cone", spreadCone);
             crosshairRefsChanged |= EditorBootstrapUtils.SetRef(crosshairSo, "_runner", runner);
             // Task 20: AimDotScale — the marker's own scale multiplier while
             // AimHeld (class doc, PC8).

@@ -7,20 +7,21 @@ namespace Ring.Simulation.Combat
     /// the hip formula below and the aimed one beside it, which used to stand
     /// inline in WeaponSystem.SpawnShot.
     ///
-    /// THREE CONSUMERS TODAY, and the publicity is earned rather than
-    /// anticipated: ShotGeometry reads both halves (the shot's own geometry,
-    /// whichever sink is asking), CrosshairView (Ring.Presentation) already
-    /// reads HipRadians for the reticle's radius — the PC6 promise this doc
-    /// used to make in the future tense has been kept — and AimLine.Solve, the
-    /// third and newest (app-461s T1), reads HipHalfWidth below for the notches
-    /// that stand on the aim line.
-    /// ⚠ THE THIRD ONE IS INSIDE THIS ASSEMBLY, and that is the argument by
-    /// which lowering this class to internal (T5) stays available: once the
-    /// reticle goes, the cone has no reader outside Ring.Simulation left.
-    /// The aimed half has no outside reader yet; it is public because splitting
-    /// one cone across two access levels would say the two halves are different
-    /// kinds of thing. WeaponSystem itself stays internal.
-    public static class Spread
+    /// TWO CONSUMERS TODAY, AND BOTH ARE INSIDE THIS ASSEMBLY -- which is why
+    /// this class is internal as of app-461s T5, and a stronger argument than
+    /// the one that used to stand here. A THIRD used to be counted and was what
+    /// earned the class its publicity: CrosshairView, in Ring.Presentation, read
+    /// HipRadians for the hip-fire reticle's radius. T5 retired that reticle in
+    /// favor of the line of fire drawn out of the muzzle, and took with it the
+    /// only reader the cone ever had outside Ring.Simulation. What remains is
+    /// ShotGeometry (both halves, whichever sink is asking) and AimLine.Solve
+    /// (HipHalfWidth below, for the notches standing on that line).
+    /// ⚠ EVERY MEMBER DROPS WITH THE CLASS, not only the two that never had an
+    /// outside reader: splitting one cone across two access levels would say
+    /// the two halves are different kinds of thing. WeaponSystem itself has
+    /// always been internal, and Simulation/AssemblyInfo.cs's single
+    /// InternalsVisibleTo keeps all of this in reach of Ring.Simulation.Tests.
+    internal static class Spread
     {
         /// Ceiling on the cone's half-angle: 89 degrees. ⚠ THE ANGLE IS
         /// CLAMPED, NOT THE RESULT, and the reason is not the easy one to
@@ -33,16 +34,15 @@ namespace Ring.Simulation.Combat
         /// constants (SpreadRad, RecoilMaxRad, RecoilPerShotRad,
         /// DoorCenterRad); methods carry their own (HipRadians, AimRadians). A
         /// quantity in radians with no suffix reads as degrees.
-        /// ⚠ PUBLIC RATHER THAN INTERNAL, for the same reason HipHalfWidth
-        /// below is (plan deviation 9): until T5 the class itself is still
-        /// public, and an internal member inside it would be the very split of
-        /// one cone across two access levels this class's header forbids in so
-        /// many words. Every constant of a public class in this assembly is
-        /// public -- Geometry.Skin, Impact.RestEpsilon. It drops to internal
-        /// together with the class in T5.
-        public const float MaxHalfAngleRad = 1.5533430f;   // 89 degrees
+        /// ⚠ INTERNAL WITH THE CLASS (app-461s T5), for the same reason
+        /// HipHalfWidth below is. It was public for exactly as long as the
+        /// class was: an internal constant inside a public cone would have been
+        /// the very split of one cone across two access levels this class's
+        /// header forbids in so many words, and the same sentence read the
+        /// other way round is why it drops the moment the class does.
+        internal const float MaxHalfAngleRad = 1.5533430f;   // 89 degrees
 
-        public static float HipRadians(in WeaponSimConfig weapon, in PlayerState p,
+        internal static float HipRadians(in WeaponSimConfig weapon, in PlayerState p,
             in HeroSimConfig hero)
         {
             float moveMult = p.SlideTimer > 0f ? weapon.SpreadSlideMult
@@ -63,12 +63,12 @@ namespace Ring.Simulation.Combat
         /// -- against the very rule the removal of the reticle circle (T5)
         /// leans on.
         ///
-        /// ⚠ PUBLIC RATHER THAN INTERNAL, AND THAT IS PLAN DEVIATION 9: until
-        /// T5 the class is still public, and an internal member in it would be
-        /// the split of one cone across two access levels this header forbids
-        /// in so many words -- the same split T5 cites when it lowers the WHOLE
-        /// class. The spec wrote `internal` while describing the state AFTER
-        /// T5.
+        /// ⚠ INTERNAL WITH THE CLASS (app-461s T5). Plan deviation 9 kept it
+        /// public from T1 to T5, the span in which the class itself still was:
+        /// an internal member in a public cone would have been the split this
+        /// header forbids in so many words -- the same split T5 cites when it
+        /// lowers the WHOLE class. The spec wrote `internal` while describing
+        /// the state AFTER T5, and that state is this one.
         ///
         /// ⚠ DELEGATION PLUS THE CLAMP, AND NOTHING ELSE: the angle comes out
         /// of HipRadians above rather than being rebuilt here, so the movement
@@ -77,7 +77,7 @@ namespace Ring.Simulation.Combat
         /// The distance is floored at zero for the same reason the result is:
         /// a negative distance is not an input this answers with a mirrored
         /// cone.
-        public static float HipHalfWidth(in WeaponSimConfig weapon, in PlayerState p,
+        internal static float HipHalfWidth(in WeaponSimConfig weapon, in PlayerState p,
             in HeroSimConfig hero, float distance)
         {
             float half = math.min(HipRadians(in weapon, in p, in hero), MaxHalfAngleRad);
@@ -97,7 +97,7 @@ namespace Ring.Simulation.Combat
         /// slide at the same recoil. All three figures are read off
         /// Assets/Data/WeaponConfig.asset, not off the test fixture, which
         /// shares these two numbers but not ProjectileSpeed.
-        public static float AimRadians(in WeaponSimConfig weapon, in PlayerState p,
+        internal static float AimRadians(in WeaponSimConfig weapon, in PlayerState p,
             in HeroSimConfig hero)
         {
             float settle = p.AimSettleTimer / hero.AimSettleSeconds;   // [0..1]

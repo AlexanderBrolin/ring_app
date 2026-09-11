@@ -12,17 +12,20 @@ namespace Ring.Simulation.Combat
     /// `SpreadRng` lives in the world and is advanced by shooters the client
     /// cannot see.
     ///
-    /// ⚠ EXACTLY ONE MEMBER IS PUBLIC -- `Draw` -- and that is the neighbor's
-    /// rule word for word, NAMED CONSUMER INCLUDED. `Spread`'s own doc earns its
-    /// publicity by naming one ("public ahead of that need because CrosshairView
-    /// will read the very same formula"); `Draw`'s is
-    /// `Ring.Presentation.CrosshairView` again -- the same consumer, this time
-    /// for the SHAPE of the pattern rather than the width of the cone (spec
-    /// §3.9). A reticle drawing a symmetric cone while the rounds walk a signed
-    /// curve inside it would be lying to the player about where the next shot
-    /// goes, so it has to read THIS formula rather than a second copy of it.
-    /// That named consumer is the whole reason the pattern is a file of its own
-    /// instead of a private helper inside WeaponSystem.
+    /// ⚠ INTERNAL SINCE app-461s T5, CLASS AND `Draw` ALIKE -- and that is the
+    /// neighbor's rule word for word, NAMED CONSUMER INCLUDED. `Draw` was public
+    /// for one named consumer, `Ring.Presentation.CrosshairView`: the very same
+    /// one `Spread` next door named, this time for the SHAPE of the pattern
+    /// rather than the width of the cone (spec §3.9), because a reticle drawing
+    /// a symmetric cone while the rounds walk a signed curve inside it would be
+    /// lying to the player about where the next shot goes. T5 retired that
+    /// reticle in favor of the line of fire drawn out of the muzzle, the named
+    /// consumer went with it, and `Spread` dropped on the same task for the same
+    /// reason -- so this drops too, rather than staying public for nobody.
+    /// ⚠ THE FILE OF ITS OWN STAYS, and it is a separate question: `ShotGeometry`
+    /// still depends on the pattern having one home instead of a private helper
+    /// inside WeaponSystem. Access level answers "who may call it", placement
+    /// answers "where does the rule live", and only the first of the two changed.
     ///
     /// The salts and `Hash01` have no consumer outside this class, and this same
     /// plan demotes `TrySpawnFromPrediction` to `internal` on the very same
@@ -41,7 +44,7 @@ namespace Ring.Simulation.Combat
     /// (Р-F, "walking the mouse through sub-centimeter shifts"), for the same
     /// reason. The price of Р-F is accepted by the spec as it stands, and
     /// picturing a defense that does not exist would be worse than naming it.
-    public static class SprayPattern
+    internal static class SprayPattern
     {
         /// The salts are taken from the STYLE of the ones already living in
         /// this simulation (`SimulationWorld` seeds three streams with
@@ -54,7 +57,7 @@ namespace Ring.Simulation.Combat
 
         /// Both angles in ONE call: yaw in .x, pitch in .y, radians, already
         /// multiplied by the half-width of the cone.
-        public static float2 Draw(int burstShots, int shotOrdinal, float2 aimPoint,
+        internal static float2 Draw(int burstShots, int shotOrdinal, float2 aimPoint,
             float coneRadians, in WeaponSimConfig weapon)
         {
             // The floor under the divisor is the SOLE safety net against a

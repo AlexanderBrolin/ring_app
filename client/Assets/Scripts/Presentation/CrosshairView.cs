@@ -1,46 +1,49 @@
 using Ring.Data;
-using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEngine;
 
 namespace Ring.Presentation
 {
-    /// Aim-point marker plus honest HIP-FIRE spread cone (spec §3.5/§3.8/§3.11):
-    /// a small emissive round disc tracks the current aim point every frame, and
-    /// — while hip-firing (`!AimHeld`) — a ring around it shows the ACTUAL radius
-    /// the next shot's spread could land within, via
-    /// `Ring.Simulation.Combat.Spread.HipRadians` — the EXACT SAME function
-    /// `WeaponSystem.Update`'s own hip-fire branch calls (Task 20, PC6) — never a
-    /// private re-derivation and never a fixed decorative reticle. While
-    /// `AimHeld` the cone is hidden (PD15: a spread CONE only ever describes hip
-    /// fire — aimed fire draws a genuine 3D ray instead, `AimRayView`) and this
-    /// same marker doubles as the aim-point dot, scaled by `GameFeelConfig.
-    /// AimDotScale` — no second marker is ever created for that (PC8). Sole
-    /// owner of the OS cursor's visibility (`UpdateCursor`, Stage 2 Task 45c).
+    /// The AIMED-fire marker and the OS cursor -- since app-461s T5 that is the
+    /// whole of this class, and the list has exactly two entries. A small
+    /// emissive round disc rides the round's own landing point while `AimHeld`,
+    /// tinted by the hit zone under the cursor, pulsing on a head and asking
+    /// `AudioDirector` for a tick on the edge onto one; the same disc IS the aim
+    /// dot, shrunk by `GameFeelConfig.AimDotScale` -- no second marker is ever
+    /// created for that (PC8). And this class is the sole owner of the OS
+    /// cursor's visibility (`UpdateCursor` below, Stage 2 Task 45c).
     ///
-    /// П-3 (Task 19's resolution): `AimProvider.CurrentAimSimPos` is the sole
-    /// per-frame aim source both the marker and the cone's CENTER read — no tick
-    /// quantization. The cone's RADIUS is the one place this class reads the
-    /// simulation snapshot at all (`RenderCurr.Player`, the render-pair half
-    /// every interpolating view goes through, the same snapshot `ViewRegistry`/`CameraRig`
-    /// already read), fed into `Spread.HipRadians` alongside the runner's
-    /// `Config.Weapon`/`Config.Hero` (hot-tweakable via their SOs, never hardcoded
-    /// here) — `settleFactor` is deliberately NOT applied (PD15 above): that
-    /// shrink exists only on `WeaponSystem`'s AIMED-fire branch, which this cone
-    /// never represents.
+    /// FROM THE HIP IT DRAWS NOTHING AT ALL (owner decisions Н37/Н41/Н45).
+    /// Two things used to stand on the floor there and app-461s T5 retires both:
+    /// the honest hip-fire spread ring -- a world-space `LineRenderer` loop
+    /// whose radius came out of `Ring.Simulation.Combat.Spread.HipRadians`, the
+    /// very function `WeaponSystem`'s own hip branch calls -- and the marker
+    /// disc underneath it. The line of fire out of the muzzle now says the same
+    /// thing where the player is already looking (`AimRayView`, whose notches
+    /// stand on that SAME cone through `AimLine`/`Spread.HipHalfWidth`), and one
+    /// cone drawn twice is two drawings to keep true. PD15's rule -- that a
+    /// spread CONE only ever means hip fire -- is not weakened by this: it is
+    /// outlived, because no cone is drawn here any more.
+    ///
+    /// AND THE SWITCH SITS ABOVE THE BLOCK RATHER THAN INSIDE IT: while
+    /// `!AimHeld` the marker's renderer goes off and nothing below it runs that
+    /// frame. An invisible disc taking a position, a scale and a color thirty
+    /// times a second is the exact cost this removal is for, so hiding the disc
+    /// while still feeding it would have paid that cost for nothing.
+    ///
+    /// П-3 (Task 19's resolution): `AimProvider` is this class's sole per-frame
+    /// aim source -- no tick quantization. Since T5 it reads NEITHER the
+    /// simulation snapshot NOR `SimulationRunner.Config`: the retired ring's
+    /// radius was the one place it ever reached for either of them, and all
+    /// that is left of `_runner` here is `AimActive` plus
+    /// `LastFrameInput.AimHeld`.
     public sealed class CrosshairView : MonoBehaviour
     {
-        /// Ring segment count — also the `LineRenderer.positionCount` the
-        /// bootstrap sets at creation, so both sides of that contract share one
-        /// source of truth instead of two copies of the same magic number.
-        public const int ConeSegments = 32;
-
         static readonly Vector3 GroundOffset = Vector3.up * 0.05f;
         static readonly int EmissionColorId = Shader.PropertyToID("_EmissionColor");
 
         [SerializeField] Transform _marker;
-        [SerializeField] LineRenderer _cone;
         [SerializeField] AimProvider _aimProvider;
         [SerializeField] SimulationRunner _runner;
         [SerializeField] GameFeelConfig _gameFeel;
@@ -58,7 +61,6 @@ namespace Ring.Presentation
         // ask for it.
         [SerializeField] AudioDirector _audio;
 
-        readonly Vector3[] _conePoints = new Vector3[ConeSegments];
         Vector3 _markerBaseScale;
         // В1/В2 fix-wave 2 (app-n6g item 3a): the marker doubles as the
         // zone-colored aim dot while AimHeld — same MaterialPropertyBlock/
@@ -77,9 +79,9 @@ namespace Ring.Presentation
             _markerBaseScale = _marker.localScale;
             _markerRenderer = _marker.GetComponent<Renderer>();
             _block = new MaterialPropertyBlock();
-            // The marker's own baked "CrosshairEmissive" color (hip-fire /
-            // HitZone.None fallback) — read once, same "cache the material's
-            // own base" idiom AimRayView's Awake already uses for _baseColor.
+            // The marker's own baked "CrosshairEmissive" color (HitZone.None
+            // fallback) — read once, same "cache the material's own base" idiom
+            // AimRayView's Awake already uses for _baseColor.
             _markerBaseEmission = _markerRenderer.sharedMaterial.GetColor(EmissionColorId);
         }
 
@@ -103,7 +105,7 @@ namespace Ring.Presentation
         /// SHOWN WHENEVER THE GAME IS NOT ASKING FOR AIM, and "asking for aim"
         /// is `SimulationRunner.AimActive` — not a test assembled here. That
         /// property's own doc has the four terms and why each is in it; what
-        /// matters at this call site is that the pointer, the ground marker
+        /// matters at this call site is that the pointer, the aimed-fire marker
         /// below and `AimRayView`'s ray all obey the SAME signal, so the cursor
         /// can never appear over a crosshair that is still tracking the mouse
         /// (fix-round 1, G-4).
@@ -117,75 +119,76 @@ namespace Ring.Presentation
             UpdateCursor();
 
             // Г5 review (Minor, same lens as AimRayView's Important — QA18
-            // pattern): UpdateCone below reads _runner.Config and the render
-            // pair, the same pair AimRayView's own guard protects — hide the
-            // cone and skip it until the backend has something to show, rather
-            // than crash on the cold start. Once running, behavior below is
-            // unchanged. Task 43: was `World == null`, then `Ready`.
-            // (Stage 2 Task 45b fix-round 1, G-6: this comment used to name
-            // `RenderMuzzleHeight` as what AimRayView reads. That task moved
-            // that view onto the doll's muzzle socket. Stage 2 Task 45c
-            // fix-round 1, G-5 item 6: nor is the property unread — `AimProvider`
-            // has read it since that task, for the simulation's own muzzle
-            // rather than for a drawn one.)
+            // pattern): everything below reads the aim cache and the runner's
+            // last input — hide the marker and skip the lot until the backend
+            // has something to show, rather than crash on the cold start. Once
+            // running, behavior below is unchanged. Task 43: was `World == null`,
+            // then `Ready`.
             //
             // Fix-round 1 (G-4): the guard is `AimActive` now, not `Ready` — a
             // strictly narrower condition that also covers the pause menu and
-            // the death screen. The MARKER goes down with the cone here: it used
-            // to keep tracking the mouse across the menu buttons the cursor was
-            // finally being shown for.
+            // the death screen. The marker used to keep tracking the mouse
+            // across the menu buttons the cursor was finally being shown for.
+            // app-461s T5: the spread ring that used to go down here beside it
+            // is retired outright, so this branch has ONE renderer to switch
+            // off rather than two.
             if (_runner == null || !_runner.AimActive)
             {
-                _cone.enabled = false;
                 _markerRenderer.enabled = false;
                 return;
             }
-            _markerRenderer.enabled = true;
 
+            // app-461s T5 (owner decisions Н37/Н41/Н45): the declaration comes
+            // FIRST now. The enable line used to stand above it and write a
+            // flat `true`, because there was always something on the floor to
+            // show; from the hip there is not, and the two lines have to be in
+            // this order for the switch to read the state it reports.
             bool aimHeld = _runner.LastFrameInput.AimHeld;
+            _markerRenderer.enabled = aimHeld;
+            if (!aimHeld)
+            {
+                // The ONE write the hip path keeps, and it is not the marker's:
+                // `AimProvider.CurrentAimZone` answers `HitZone.None` on every
+                // `!AimHeld` frame (its own class doc), so clearing the edge
+                // detector here hands it exactly what the block below used to
+                // hand it there. Without this line a release-and-re-aim onto a
+                // head the cursor never left would swallow the tick.
+                _prevHoverZone = HitZone.None;
+                return;
+            }
 
-            float2 aimSim = _aimProvider.CurrentAimSimPos;
-            Vector3 aimWorld;
-            if (aimHeld)
-            {
-                // В3 fix-wave 1 (app-n6g item 3a, owner playtest feedback:
-                // aiming "feels like a 2D crosshair with a ray"): the marker
-                // sits at the aim proxy's REAL 3D world point
-                // (AimProvider.CurrentAimWorldPoint — the proxy's own
-                // hit.point, real height on the mob's silhouette) instead of
-                // a floor-projected XY plus a flat ground offset — moving
-                // the cursor up a mob's body now visibly slides the marker
-                // UP the model. Billboarded to the camera every frame (the
-                // marker's local Y axis is its flat disc's cap normal) so it
-                // always reads as a coin facing the viewer, not a decal
-                // lying on whatever surface it currently touches.
-                // Stage 2 Task 45c (bd app-bej): the point is now the round's
-                // own landing point rather than the cursor's
-                // (`AimProvider.CurrentImpactWorldPoint` vs the
-                // `CurrentAimWorldPoint` this line used to read). The two are
-                // the same point for any aim at or above the round's
-                // ground-contact height — every shot at a mob's body included —
-                // and part company on a shot at the FLOOR, where the marker used
-                // to stand 8% of the range beyond where the round comes down.
-                aimWorld = _aimProvider.CurrentImpactWorldPoint;
-                _marker.position = aimWorld + GroundOffset;
-                Vector3 toCamera = _camera != null
-                    ? _camera.transform.position - _marker.position : Vector3.up;
-                if (toCamera.sqrMagnitude < 1e-6f) toCamera = Vector3.up;
-                _marker.up = toCamera.normalized;
-            }
-            else
-            {
-                // Э1 unchanged: hip-fire keeps the marker flat on the floor,
-                // paired with the spread cone ring below (UpdateCone) — no
-                // billboard, matching this fix-wave's scope (headshot
-                // aiming only, not the hip-fire reticle).
-                aimWorld = SimSpace.ToWorld(aimSim);
-                _marker.position = aimWorld + GroundOffset;
-                _marker.rotation = Quaternion.identity;
-            }
+            // В3 fix-wave 1 (app-n6g item 3a, owner playtest feedback:
+            // aiming "feels like a 2D crosshair with a ray"): the marker
+            // sits at the aim proxy's REAL 3D world point
+            // (AimProvider.CurrentAimWorldPoint — the proxy's own
+            // hit.point, real height on the mob's silhouette) instead of
+            // a floor-projected XY plus a flat ground offset — moving
+            // the cursor up a mob's body now visibly slides the marker
+            // UP the model. Billboarded to the camera every frame (the
+            // marker's local Y axis is its flat disc's cap normal) so it
+            // always reads as a coin facing the viewer, not a decal
+            // lying on whatever surface it currently touches.
+            // Stage 2 Task 45c (bd app-bej): the point is now the round's
+            // own landing point rather than the cursor's
+            // (`AimProvider.CurrentImpactWorldPoint` vs the
+            // `CurrentAimWorldPoint` this line used to read). The two are
+            // the same point for any aim at or above the round's
+            // ground-contact height — every shot at a mob's body included —
+            // and part company on a shot at the FLOOR, where the marker used
+            // to stand 8% of the range beyond where the round comes down.
+            Vector3 aimWorld = _aimProvider.CurrentImpactWorldPoint;
+            _marker.position = aimWorld + GroundOffset;
+            Vector3 toCamera = _camera != null
+                ? _camera.transform.position - _marker.position : Vector3.up;
+            if (toCamera.sqrMagnitude < 1e-6f) toCamera = Vector3.up;
+            _marker.up = toCamera.normalized;
+
             // Task 20 (PC8): the SAME marker serves as the aim dot while
             // AimHeld — shrunk by AimDotScale, never a second renderer.
+            // app-461s T5: the shrink is unconditional here, since the block
+            // itself is now the AimHeld branch — the ternary that used to pick
+            // between the shrunk dot and the full-size hip reticle has no
+            // second case left to pick.
             // В3 fix-wave 1 (item 3a): head zone scales it back up a touch
             // on top of that shrink — GameFeelConfig's own class doc has the
             // "unmistakable, not just recolored" rationale.
@@ -203,69 +206,27 @@ namespace Ring.Presentation
                     Time.unscaledTime * _gameFeel.HeadHoverPulseHz * Mathf.PI * 2f);
                 headBoost = _gameFeel.AimMarkerHeadScaleBoost * pulse;
             }
-            _marker.localScale =
-                (aimHeld ? _markerBaseScale * _gameFeel.AimDotScale : _markerBaseScale) * headBoost;
+            _marker.localScale = _markerBaseScale * _gameFeel.AimDotScale * headBoost;
 
             // В3 fix-wave 2 (item 3c): fire the audio tick exactly on the
-            // None/Legs/Body → Head EDGE (CurrentAimZone is None whenever
-            // !aimHeld, AimProvider's own class doc, so hip-fire cursor
-            // movement never spuriously counts as "entering Head").
+            // None/Legs/Body → Head EDGE. app-461s T5: the edge itself is
+            // unchanged by the gate above — the hip branch clears
+            // `_prevHoverZone` to the very `HitZone.None` this read used to
+            // return there, so hip-fire cursor movement still never counts as
+            // "entering Head".
+            float2 aimSim = _aimProvider.CurrentAimSimPos;
             if (hoverZone == HitZone.Head && _prevHoverZone != HitZone.Head && _audio != null)
                 _audio.PlayHeadHoverTick(aimSim);
             _prevHoverZone = hoverZone;
 
-            // В1/В2 fix-wave 2 (app-n6g item 3a): zone tint — `CurrentAimZone`
-            // is already `HitZone.None` whenever `!aimHeld` (AimProvider's own
-            // class doc), so `AimZoneColors.Resolve` falls back to the
-            // marker's baked color and hip-fire mode is visually unchanged.
-            // `hoverZone` (В3 fix-wave 2) is the same `CurrentAimZone` read
-            // once above, reused here rather than a second property read.
+            // В1/В2 fix-wave 2 (app-n6g item 3a): zone tint — `AimZoneColors.
+            // Resolve` falls back to the marker's own baked color on
+            // `HitZone.None`, which is what a miss and the Э1 plane fallback
+            // both answer. `hoverZone` is the same `CurrentAimZone` read once
+            // above, reused here rather than a second property read.
             Color zoneColor = AimZoneColors.Resolve(hoverZone, _markerBaseEmission, _gameFeel);
             _block.SetColor(EmissionColorId, zoneColor);
             _markerRenderer.SetPropertyBlock(_block);
-
-            // Task 20 (PD15): the cone only ever means "hip fire" — hidden the
-            // instant AimHeld switches the player to aimed fire, and its
-            // positions aren't even recomputed that frame (nothing reads them
-            // while disabled).
-            _cone.enabled = !aimHeld;
-            if (!aimHeld) UpdateCone(aimSim, aimWorld);
-        }
-
-        /// Radius = `tan(Spread.HipRadians(...)) * distanceToAimPoint` — the
-        /// half-angle the HIP-FIRE branch's next shot could land within, read via
-        /// the single shared `Ring.Simulation.Combat.Spread.HipRadians` formula
-        /// (class doc — PC6) off `_runner.Config.Weapon`/`RenderCurr.Player`/
-        /// `_runner.Config.Hero`, never a private copy of the math, projected out
-        /// to the player's current aim distance (spec §3.5/§3.11: the player
-        /// sees the weapon's REAL current hip-fire spread — recoil AND
-        /// movement-widening both included, since `Spread.HipRadians` folds in
-        /// the slide/run multiplier `WeaponSystem` itself applies — not a static
-        /// decorative prop). Distance is measured in sim space (`Unity.
-        /// Mathematics.math.distance`) between `RenderCurr.Player.Pos` and the
-        /// same `aimSim` the marker just used above — `SimSpace.ToWorld` is a
-        /// plain axis remap with no scale factor, so this equals the world-space
-        /// distance too, just without a second `Vector3` round-trip. Only ever
-        /// called while `!AimHeld` (`LateUpdate` above) — this cone has no
-        /// aimed-fire meaning (PD15, class doc). `_cone` is a world-space
-        /// `LineRenderer` ring — points are regenerated every frame directly in
-        /// world space rather than baked once and scaled via
-        /// `transform.localScale`, so ring width never distorts with radius.
-        void UpdateCone(float2 aimSim, Vector3 aimWorld)
-        {
-            var cfg = _runner.Config;
-            var player = _runner.RenderCurr.Player;
-            float halfAngle = Spread.HipRadians(cfg.Weapon, player, cfg.Hero);
-            float distance = math.distance(player.Pos, aimSim);
-            float radius = Mathf.Tan(halfAngle) * distance;
-
-            Vector3 center = aimWorld + GroundOffset;
-            for (int i = 0; i < ConeSegments; i++)
-            {
-                float angle = i / (float)ConeSegments * (Mathf.PI * 2f);
-                _conePoints[i] = center + new Vector3(Mathf.Cos(angle), 0f, Mathf.Sin(angle)) * radius;
-            }
-            _cone.SetPositions(_conePoints);
         }
     }
 }
