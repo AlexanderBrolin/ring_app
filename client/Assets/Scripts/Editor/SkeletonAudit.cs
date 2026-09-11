@@ -101,6 +101,49 @@ namespace Ring.Editor
             return true;
         }
 
+        /// The clips a body actually plays WHILE IT CAN STILL BE SHOT, which is
+        /// the only set the reach figure may be taken over.
+        ///
+        /// ⛔ TWO EXCLUSIONS, AND BOTH ARE DECISIONS RATHER THAN TIDYING.
+        ///   * DEATH AND SHUTDOWN (`Death`, `TurnOff`). A falling body sweeps its
+        ///     bones far from its own axis — the chaser's head reaches 2.37 m in
+        ///     his death take against 1.36 m in a run — and sizing a gather
+        ///     circle to that would widen every body by the animation nobody can
+        ///     be hit during: `SimulationWorld.DamageMob` swap-removes a dead mob
+        ///     out of the live row, and a collector leaves through `Alive`.
+        ///   * TAKES THE CONTROLLER CARRIES BUT NEVER ENTERS. The mech packs ship
+        ///     twenty clips each — dance, greeting, yes, no, pickup, sword slash
+        ///     — while `AnimIds.MobClipSet` names the six a mob can reach. A
+        ///     reach taken over a dance is a reach nobody meets in a match.
+        ///
+        /// ⚠ THE RAW FIGURE IS STILL PRINTED beside it. The difference between
+        /// them is what says whether this filter removed what it was meant to,
+        /// and a filter whose two numbers coincide has caught nothing.
+        static readonly string[] CombatClipNames =
+        {
+            // Collector (`AnimIds`, PlayerAnimator): locomotion, slide, roll,
+            // hit reactions and the pistol layer. `Death01` is excluded above.
+            "Idle_Loop", "Walk_Loop", "Jog_Fwd_Loop", "Sprint_Loop",
+            "Slide_Start", "Slide_Loop", "Slide_Exit", "Roll",
+            "Hit_Chest", "Hit_Head",
+            "Pistol_Aim_Neutral", "Pistol_Aim_Up", "Pistol_Aim_Down",
+            "Pistol_Shoot", "Pistol_Reload",
+            // Mechs (`AnimIds.MechClips`) and Sci-Fi enemies
+            // (`AnimIds.SciFiEnemyClips`, where melee and ranged are one take).
+            "Idle", "Walk", "Run", "Punch", "Shoot", "Attack", "AttackAuto",
+        };
+
+        /// A clip name arrives as `Armature|Walk_Loop` or `Rig|Attack`; the take
+        /// is what follows the bar, and that is what the list above names.
+        static bool IsCombatClip(string clipName)
+        {
+            int bar = clipName.LastIndexOf('|');
+            string take = bar >= 0 ? clipName.Substring(bar + 1) : clipName;
+            for (int i = 0; i < CombatClipNames.Length; i++)
+                if (take == CombatClipNames[i]) return true;
+            return false;
+        }
+
         [MenuItem("Ring/Audit/Skeletons and Clips")]
         public static void Run()
         {
@@ -347,7 +390,7 @@ namespace Ring.Editor
                 + "(bone position spread in body space, root pinned), "
                 + $"sampling '{sampleTarget.name}'");
 
-            float bodyReach = 0f, bodyCrown = 0f, bodyRawReach = 0f;
+            float bodyReach = 0f, bodyCrown = 0f, bodyRawReach = 0f, bodyAnyReach = 0f;
             string bodyReachName = "-", bodyReachClip = "-";
 
             AnimationMode.StartAnimationMode();
@@ -410,11 +453,16 @@ namespace Ring.Editor
                         + $"mean {(total / bones.Count):F3} m, "
                         + $"bones moving >1 cm: {moving}/{bones.Count}{verdict}, "
                         + $"reach {clipReach:F3} m ({reachName}), raw {clipRawReach:F3} m, "
-                        + $"crown {clipCrown:F3} m");
+                        + $"crown {clipCrown:F3} m{(IsCombatClip(clip.name) ? "  [combat]" : "")}");
 
-                    if (clipReach > bodyReach) { bodyReach = clipReach; bodyReachName = reachName; bodyReachClip = clip.name; }
+                    if (IsCombatClip(clip.name)
+                        && clipReach > bodyReach)
+                    {
+                        bodyReach = clipReach; bodyReachName = reachName; bodyReachClip = clip.name;
+                    }
+                    if (clipReach > bodyAnyReach) bodyAnyReach = clipReach;
                     if (clipRawReach > bodyRawReach) bodyRawReach = clipRawReach;
-                    if (clipCrown > bodyCrown) bodyCrown = clipCrown;
+                    if (IsCombatClip(clip.name) && clipCrown > bodyCrown) bodyCrown = clipCrown;
                 }
 
                 // THE NUMBER THE BROAD PHASE IS ABOUT (bd `app-94sk`). A hit
@@ -427,10 +475,11 @@ namespace Ring.Editor
                 // the defect SimConfigBuilder's rule 4 already names for the
                 // static case.
                 report.AppendLine(
-                    $"  ⭐ REACH over every clip and phase: {bodyReach:F3} m "
-                    + $"({bodyReachName} in {bodyReachClip}) — the broad-phase radius this body "
-                    + $"needs; crown {bodyCrown:F3} m; RAW over every bone incl. rig controls and "
-                    + $"fingers {bodyRawReach:F3} m");
+                    $"  ⭐ COMBAT REACH (clips a body plays while it can be shot): {bodyReach:F3} m "
+                    + $"({bodyReachName} in {bodyReachClip}) — the bone-axis reach a gather circle "
+                    + $"must cover BEFORE the volume's own radius is added; combat crown "
+                    + $"{bodyCrown:F3} m; over EVERY clip incl. death {bodyAnyReach:F3} m; RAW over "
+                    + $"every bone incl. rig controls and fingers {bodyRawReach:F3} m");
             }
             finally
             {
