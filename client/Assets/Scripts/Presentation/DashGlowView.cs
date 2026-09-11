@@ -14,8 +14,8 @@ namespace Ring.Presentation
     /// so `EnableKeyword("_EMISSION")`/`SetColor("_EmissionColor", …)` on a
     /// decal material is a no-op (the keyword lands in `m_InvalidKeywords`);
     /// the mark would have rendered as a barely-visible `_BaseColor` smudge,
-    /// not a glow. This class instead follows the `TracerTrail`/`SpreadCone`
-    /// family: an HDR color written straight to `_BaseColor` on an
+    /// not a glow. This class instead follows the `TracerTrail` family: an
+    /// HDR color written straight to `_BaseColor` on an
     /// `Universal Render Pipeline/Unlit` material via `MaterialPropertyBlock`
     /// (same `MobView`-style pattern — one shared material, per-instance color
     /// only through the property block, never per-instance material

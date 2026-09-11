@@ -144,7 +144,7 @@ namespace Ring.Presentation
                 // do — AimHeld must track exactly whether the button is down right now.
                 AimHeld = _aimHold.IsPressed(),
                 // Task 19: height now comes from AimProvider — meaningful only
-                // while AimHeld (WeaponSystem's hip-fire branch never reads it,
+                // while AimHeld (ShotGeometry.Solve's hip-fire branch never reads it,
                 // AimProvider's own class doc); the sampler still has no config
                 // access of its own (QD11) and never needs one, since the height
                 // arrives fully formed from the provider's cached proxy cast.

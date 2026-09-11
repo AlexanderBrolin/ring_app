@@ -48,7 +48,7 @@ namespace Ring.Presentation
     ///
     /// Muzzle height: Task 21 read `SimulationRunner.RenderMuzzleHeight` (PC7's
     /// single home of the `SlideTimer > 0 ? SlideMuzzleHeight : MuzzleHeight`
-    /// ternary `WeaponSystem.Update` itself uses for the authoritative shot), so
+    /// ternary `ShotGeometry.Solve` itself uses for the authoritative shot), so
     /// that the ray's visible origin did not disagree with where the server
     /// spawns the round. This class read neither that property nor any other
     /// muzzle height directly until app-461s T2's hip branch, whose far end

@@ -18,13 +18,12 @@ namespace Ring.Presentation
     /// Two things used to stand on the floor there and app-461s T5 retires both:
     /// the honest hip-fire spread ring -- a world-space `LineRenderer` loop
     /// whose radius came out of `Ring.Simulation.Combat.Spread.HipRadians`, the
-    /// very function `WeaponSystem`'s own hip branch calls -- and the marker
+    /// very function `ShotGeometry.Solve`'s own hip branch calls -- and the marker
     /// disc underneath it. The line of fire out of the muzzle now says the same
     /// thing where the player is already looking (`AimRayView`, whose notches
     /// stand on that SAME cone through `AimLine`/`Spread.HipHalfWidth`), and one
-    /// cone drawn twice is two drawings to keep true. PD15's rule -- that a
-    /// spread CONE only ever means hip fire -- is not weakened by this: it is
-    /// outlived, because no cone is drawn here any more.
+    /// cone drawn twice would be two drawings to keep true -- moot now anyway,
+    /// because no cone is drawn here any more.
     ///
     /// AND THE SWITCH SITS ABOVE THE BLOCK RATHER THAN INSIDE IT: while
     /// `!AimHeld` the renderer goes off and the DRAWING below it is skipped for

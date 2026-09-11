@@ -213,14 +213,14 @@ namespace Ring.Presentation
             {
                 // Э1 unchanged: CurrentAimSimPos still tracks the plane cast every
                 // frame; CurrentAimHeight is "not used" while !AimHeld (the sampler
-                // sends it, WeaponSystem's hip-fire branch never reads it) — cached
+                // sends it, ShotGeometry.Solve's hip-fire branch never reads it) — cached
                 // at 0 here purely to keep the field finite/inert.
                 _cachedAimSimPos = planeAimSimPos;
                 _cachedAimHeight = 0f;
                 _cachedAimZone = HitZone.None;
                 _cachedHoveredMob = null;
                 _cachedAimWorldPoint = SimSpace.ToWorld(planeAimSimPos); // floor point, y=0
-                // Hip fire is flat (WeaponSystem's own `!AimHeld` branch spawns
+                // Hip fire is flat (ShotGeometry.Solve's own `!AimHeld` branch spawns
                 // the round with no climb rate at all), so it never descends
                 // and the ground never cuts it — there is no correction to make
                 // and the two points coincide.
@@ -274,7 +274,7 @@ namespace Ring.Presentation
         /// THE LINE IS THE SIMULATION'S, NOT THE PICTURE'S. Both endpoints come
         /// off the authoritative shot — `SimulationRunner.RenderMuzzleSimPos`/
         /// `RenderMuzzleHeight` are the ground point and the height
-        /// `WeaponSystem`'s aimed branch fires from — rather than off the doll's
+        /// `ShotGeometry.Solve`'s aimed branch fires from — rather than off the doll's
         /// muzzle socket, which is where Stage 2 Task 45b moved the DRAWN origin
         /// of the ray. So `AimRayView` draws from the barrel of the model to a
         /// point measured from the simulation's own muzzle: the two ends answer
@@ -399,7 +399,7 @@ namespace Ring.Presentation
         /// own "can a round get from here to there" gate, already the one the
         /// gunner AI fires off and the server's fog of war sees by — agrees,
         /// measured from the SIMULATION's muzzle (`SimulationRunner.
-        /// RenderMuzzleSimPos`, the point `WeaponSystem`'s aimed branch really
+        /// RenderMuzzleSimPos`, the point `ShotGeometry.Solve`'s aimed branch really
         /// launches from) to the proxy point, padded by the round's own
         /// `ProjectileRadius`, exactly as the projectile's own gather phase pads
         /// its sweep. A refusal takes the same early exit a hit on arena
@@ -462,7 +462,7 @@ namespace Ring.Presentation
         /// (pulse/tick/red ray, every consumer below reads `CurrentAimZone`
         /// directly, not `CurrentHoveredMob`: `CrosshairView`/`AimRayView`)
         /// and collapsed `CurrentAimSimPos` onto the player's own position
-        /// (the aimed shot then degenerates to `WeaponSystem`'s zero-length
+        /// (the aimed shot then degenerates to `ShotGeometry.Solve`'s zero-length
         /// fallback direction).
         ///
         /// THE CHECK ASKS WHICH DOLL, NOT WHETHER IT IS A DOLL (Stage 2 Task
@@ -592,7 +592,7 @@ namespace Ring.Presentation
 
             // Fix-round 1 (Ф-2): the camera screened this hit, now the shot
             // does. Both ends are the SIMULATION's — the muzzle the aimed
-            // branch of `WeaponSystem` launches from, and the point the round
+            // branch of `ShotGeometry.Solve` launches from, and the point the round
             // is being sent to — so this asks the authoritative question rather
             // than a picture-shaped approximation of it (method doc for the
             // gate's flat-plan limit and for the band it costs).

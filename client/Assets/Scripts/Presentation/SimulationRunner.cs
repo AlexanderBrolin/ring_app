@@ -391,7 +391,7 @@ namespace Ring.Presentation
         public Vector3 RenderObservedWorldPos { get; private set; }
 
         /// Task 21 (PC7 — single home of the muzzle-height ternary): the exact
-        /// slide-aware pick `WeaponSystem.Update` uses for the authoritative
+        /// slide-aware pick `ShotGeometry.Solve` uses for the authoritative
         /// shot's own muzzle height (`SlideTimer > 0 ? SlideMuzzleHeight :
         /// MuzzleHeight`). Every Presentation-layer consumer of the hero's
         /// muzzle height (`MuzzleFlashView`'s prediction and player-branch
@@ -428,7 +428,7 @@ namespace Ring.Presentation
             ? Config.Hero.SlideMuzzleHeight : Config.Hero.MuzzleHeight;
 
         /// The ground half of the same muzzle `RenderMuzzleHeight` above gives
-        /// the height of (Stage 2 Task 45c): where `WeaponSystem`'s aimed branch
+        /// the height of (Stage 2 Task 45c): where `ShotGeometry.Solve`'s aimed branch
         /// puts the round — the hero's own position pushed `WeaponConfig.
         /// MuzzleOffset` along the line to `aimSimPos`.
         ///

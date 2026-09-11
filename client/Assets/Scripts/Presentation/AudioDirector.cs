@@ -246,7 +246,7 @@ namespace Ring.Presentation
         /// behind `ViewRegistry`'s doll placement.) Fix-round (review #1,
         /// Medium): positioned at the MUZZLE, same as `MuzzleFlashView`'s fix —
         /// the authoritative `ProjectileHit`/`PlayClip` position for a real shot
-        /// is `WeaponSystem`'s spawn point (`p.Pos + dir * cfg.MuzzleOffset`),
+        /// is `ShotGeometry.Solve`'s spawn point (`p.Pos + dir * cfg.MuzzleOffset`),
         /// not the hero's center.
         ///
         /// Stage 2 Task 45c: that spawn point is `SimulationRunner.

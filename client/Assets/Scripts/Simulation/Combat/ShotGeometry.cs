@@ -7,13 +7,15 @@ namespace Ring.Simulation.Combat
     /// sinks read it from (app-8dv T3, spec §3.1).
     ///
     /// ⚠ PUBLIC, UNLIKE ITS NEIGHBOR RewindSplit, AND THAT IS A DECISION OF THE
-    /// SPEC RATHER THAN AN OVERSIGHT: the declared future consumer is the
-    /// reticle (spec §3.9, Ring.Presentation), and Presentation references
-    /// Ring.Simulation. RewindSplit is internal because nobody outside the
-    /// simulation waits for it. The "PUBLIC FOR EXACTLY TWO MEMBERS" discipline
-    /// in WeaponSystem's own header is not broken by this -- that rule is about
-    /// WeaponSystem, and it is exactly why the geometry moves into a file of its
-    /// own instead of becoming a third public member there.
+    /// SPEC RATHER THAN AN OVERSIGHT: the actual consumer is `Ring.Presentation.
+    /// Net`'s `NetworkSimBackend`, which reads a ghost's own `PredictedShot.
+    /// Solution` off `PredictedShotLog` to feed `TracerProjectiles`, and that
+    /// assembly references Ring.Simulation. RewindSplit is internal because
+    /// nobody outside the simulation waits for it. The "PUBLIC FOR EXACTLY TWO
+    /// MEMBERS" discipline in WeaponSystem's own header is not broken by this
+    /// -- that rule is about WeaponSystem, and it is exactly why the geometry
+    /// moves into a file of its own instead of becoming a third public member
+    /// there.
     ///
     /// ALL THREE NUMBERS OF THE REWIND SPLIT COME OUT OF ONE CALL --
     /// PictureTicks, InputTicks and BirthSteps -- because the shot sink works
