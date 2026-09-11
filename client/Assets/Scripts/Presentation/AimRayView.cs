@@ -172,6 +172,14 @@ namespace Ring.Presentation
         /// path out of `LateUpdate`, including every one of its early
         /// returns — a child object carries its own `enabled` (lesson 726),
         /// so turning the ray off here never touches the notches on its own.
+        ///
+        /// ⚠ THE PER-RENDERER NULL GUARDS BELOW ARE FOR SWITCHING OFF, AND
+        /// THE ASYMMETRY IS DELIBERATE (app-461s T3 fix round 1). Darkening
+        /// one notch while the other is missing is always safe; LIGHTING one
+        /// while the other is missing is not, because the caller's write
+        /// block needs the pair. So the decision to pass `notches: true` is
+        /// the caller's, and it requires BOTH references — see `LateUpdate`'s
+        /// `drawNotches`.
         void SetDrawn(bool ray, bool notches)
         {
             _line.enabled = ray;
@@ -251,13 +259,40 @@ namespace Ring.Presentation
             // EditMode cannot reach it.
             float strokeLength = AimLine.NotchStroke(line.NotchHalfWidth,
                 _gameFeel.AimRayNotchFrac, _gameFeel.AimRayNotchMinLength);
-            // app-461s T3: the notches answer the HIP question — how wide the
+            // app-461s T3: ONE predicate decides both whether the notches are
+            // switched on and whether the block at the tail writes to them —
+            // fix round 1's finding was that those two had drifted apart.
+            // ⛔ BOTH REFERENCES, NOT EITHER: switching a renderer ON while
+            // its writes are skipped is worse than drawing nothing at all. A
+            // scene carrying exactly one of the two children (one deleted by
+            // hand in the Inspector, or a merge of the scene file, with no
+            // `Apply` since) would light the survivor up on whatever its YAML
+            // holds — the default (0,0,0)→(0,0,1) segment at the default
+            // width in the material's baked cyan, an emissive slab parked at
+            // the middle of the arena for the whole match. Switching them OFF
+            // stays safe one at a time, which is why `SetDrawn` keeps a guard
+            // per renderer rather than one over the pair.
+            // ⛔ AND THE CONE'S HALF-WIDTH HAS TO BE NON-ZERO: at
+            // `NotchHalfWidth` zero the two strokes land point for point on
+            // top of each other, and two renderers drawing the same quad in
+            // the same place out of the same material z-fight. It is
+            // reachable, not theoretical — a body up against the barrel
+            // drives `Length`, hence `NotchDistance`, hence the half-width to
+            // zero. `strokeLength > 0f` cannot catch that one: `NotchStroke`
+            // takes a floor, so at the shipped `AimRayNotchMinLength` it is
+            // never zero. It stays in the predicate anyway, because zeroing
+            // BOTH dials is the documented way to silence the notches with no
+            // code change (`GameFeelConfig`'s own doc).
+            // ⛔ Hip only: the notches answer the HIP question — how wide the
             // cone is at the cursor — so they stand down while the right
             // button is held, where the ray alone is the honest picture
-            // (class doc). ⭐ Switched OFF rather than drawn at zero length: a
+            // (class doc).
+            // ⭐ Switched OFF rather than drawn at zero length: a
             // `LineRenderer` whose two points coincide still draws a
             // degenerate quad, not nothing.
-            SetDrawn(ray: true, notches: !aimHeld && strokeLength > 0f);
+            bool drawNotches = _notchLeft != null && _notchRight != null
+                && !aimHeld && strokeLength > 0f && line.NotchHalfWidth > 0f;
+            SetDrawn(ray: true, notches: drawNotches);
 
             // Stage 2 Task 45c (bd app-bej): aimed, the far end is where the
             // round COMES DOWN, not where the cursor points — the two part
@@ -310,21 +345,31 @@ namespace Ring.Presentation
 
             // app-461s T3: the notches, in ONE guarded block — color, width and
             // positions together.
-            // ⛔ THE GUARD COVERS ALL THREE WRITES, NOT JUST THE POSITIONS: a
-            // scene bootstrapped before this task has no children under
-            // `AimRay` at all, and `SetPropertyBlock` on an unwired reference
-            // would throw every single frame on exactly the scene the guard
-            // exists for (`TryGetMuzzle`'s own socket check is the precedent).
-            // The ray's own writes stay outside it — `[RequireComponent]`
+            // ⛔ THE GUARD IS THE SWITCH'S OWN PREDICATE, AND THAT IS FIX ROUND
+            // 1's FINDING: the two used to be written separately, so a scene
+            // holding exactly one of the two children switched the survivor on
+            // and then skipped every write to it. One boolean, one answer —
+            // they cannot drift apart again.
+            // ⇒ `drawNotches` already carries the null check, and a scene
+            // bootstrapped before this task (no children under `AimRay` at
+            // all) therefore neither lights them nor dereferences them, the
+            // same shape `TryGetMuzzle`'s own socket check keeps.
+            // The ray's own writes stay OUTSIDE it — `[RequireComponent]`
             // makes `_line` unmissable, and hiding the ray behind a missing
             // child would be a worse failure than missing notches.
-            // ⛔ AND COLOR AND WIDTH ARE PUSHED EXPLICITLY RATHER THAN INHERITED
+            // ⚠ NOT RUN WHILE THE NOTCHES ARE DARK, AND NOT FOR THE FRAME AFTER
+            // EITHER: the switch above sits in this same `LateUpdate`, above
+            // this block, so the very frame that turns them back on falls
+            // through to here and writes fresh positions before anything is
+            // rendered. Ten managed-to-native calls per aimed frame bought
+            // nothing at all.
+            // ⛔ COLOR AND WIDTH ARE PUSHED EXPLICITLY RATHER THAN INHERITED
             // FROM THE SHARED MATERIAL: the ray's color lives in the
             // MaterialPropertyBlock above, never in the material asset, and its
             // width lives in this renderer's own `startWidth`/`endWidth` — the
             // shared `aimRayMat` alone would leave the notches at the baked
             // cyan and at the default thickness.
-            if (_notchLeft != null && _notchRight != null)
+            if (drawNotches)
             {
                 _notchLeft.SetPropertyBlock(_block);
                 _notchRight.SetPropertyBlock(_block);

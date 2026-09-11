@@ -609,6 +609,15 @@ namespace Ring.Data
         // MinLength and the notches would keep drawing — T3's own switch is
         // meant to look at strokeLength > 0f, so turning the notches off with
         // no code change will take Frac = 0 AND MinLength = 0.
+        // ⚠ AND THE TOP OF THE RANGE MERGES THE PAIR AT EVERY DISTANCE, WHICH
+        // IS WORTH KNOWING BEFORE THE HANDLE IS DRAGGED THERE (app-461s T3 fix
+        // round 1): the merge condition above is stroke >= 2 x hw, and at
+        // Frac = 2 the stroke IS at least 2 x hw for any half-width at all, so
+        // the two marks meet into one solid bar no matter how far out the
+        // cursor sits — the reading the task exists to give is gone, though
+        // nothing misbehaves. The range is left as it is: it is the owner's
+        // handle and the upper half is legitimate for a deliberately blunt
+        // look, this note simply says what it costs.
         [Range(0f, 2f)] public float AimRayNotchFrac = 0.5f;
         [Range(0f, 1f)] public float AimRayNotchMinLength = 0.08f;
         // app-461s T2 fix round 1: the `// sync-marker key — keep LAST` comment

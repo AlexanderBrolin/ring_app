@@ -1609,10 +1609,11 @@ namespace Ring.Editor
             // a no-op instead of silently pre-empting (and skipping) the
             // one-time module setup inside the helper.
             // app-461s T3: that setup now lives in `EnsureWorldLine`, shared
-            // with the two notch children below. `startDisabled: true` is the
-            // ray's own half of the split — it starts switched off and
-            // `AimRayView` turns it on the first frame it has something to
-            // draw; the notches carry no such one-time write.
+            // with the two notch children below. `startDisabled: true` keeps
+            // the committed scene's renderer dark — `AimRayView` switches it
+            // on the first frame it has something to draw — so that opening
+            // `Main.unity` outside Play shows no stray segment. The notches
+            // pass the same flag for the same reason (fix round 1).
             // ⚠ The returned renderer is dropped on purpose: nothing here wires
             // the ray's own `LineRenderer` anywhere — `AimRayView.Awake` picks
             // it up off its own GameObject. The notches below DO keep theirs,
@@ -1637,15 +1638,25 @@ namespace Ring.Editor
             // lives in a MaterialPropertyBlock, not in the material, so
             // sharing the asset alone would leave the notches at the baked
             // cyan and at the default thickness.
+            // ⛔ `startDisabled: true`, LIKE THE RAY (fix round 1, owner
+            // ruling): the first version of this task committed them ENABLED,
+            // and a `LineRenderer` saved enabled draws its default
+            // (0,0,0)→(0,0,1) segment — two slabs in the middle of the arena
+            // for anyone opening the scene without entering Play, while the
+            // ray beside them has been committed dark since Task 20. In Play
+            // it changes nothing at all: `AimRayView.SetDrawn` writes every
+            // `enabled` on every path before the first render. The helper
+            // reconciles this flag unconditionally, so this repairs the
+            // already-committed children rather than only future ones.
             sceneDirty |= EditorBootstrapUtils.EnsureChild(
                 aimRayGo.transform, NotchLeftObjectName, out Transform notchLeftTf);
             LineRenderer notchLeft = EditorBootstrapUtils.EnsureWorldLine(
-                notchLeftTf.gameObject, aimRayMat, positionCount: 2, startDisabled: false,
+                notchLeftTf.gameObject, aimRayMat, positionCount: 2, startDisabled: true,
                 ref sceneDirty);
             sceneDirty |= EditorBootstrapUtils.EnsureChild(
                 aimRayGo.transform, NotchRightObjectName, out Transform notchRightTf);
             LineRenderer notchRight = EditorBootstrapUtils.EnsureWorldLine(
-                notchRightTf.gameObject, aimRayMat, positionCount: 2, startDisabled: false,
+                notchRightTf.gameObject, aimRayMat, positionCount: 2, startDisabled: true,
                 ref sceneDirty);
 
             var aimRaySo = new SerializedObject(aimRayView);

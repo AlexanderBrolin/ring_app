@@ -65,9 +65,13 @@ namespace Ring.Editor
         /// T3), which stays as a thin wrapper over this one, the same way
         /// `EnsureCasingsLayer` became a wrapper over `EnsureUserLayer`. The
         /// identical block also opens `EnsureAimProxyCapsule` in that file, and
-        /// the aim ray's two notch children would have wanted it a third time:
-        /// three copies of "look it up, make it if it is missing, say which
-        /// happened" is two copies too many.
+        /// the aim ray's two notch children would have wanted it a third time.
+        /// ⚠ AND THE COUNT IS NOT FINISHED, WHICH IS SAID HERE RATHER THAN
+        /// IMPLIED AWAY (fix round 1): two more copies of the same idiom, in
+        /// ternary form, are still alive in `AssetPreviewSceneBootstrap` in
+        /// this same assembly. Converting them is a task of its own and not
+        /// this one's — so this helper has two callers today and is owed two
+        /// more.
         public static bool EnsureChild(Transform parent, string name, out Transform child)
         {
             child = parent.Find(name);
@@ -254,15 +258,29 @@ namespace Ring.Editor
         /// object therefore stays with the caller, which is what lets both
         /// kinds share this middle.
         ///
-        /// ⛔ `startDisabled` IS A PARAMETER BECAUSE THE CALLERS DISAGREE ON IT.
-        /// The ray's one-time setup switches the renderer off (`AimRayView`
-        /// turns it back on the first frame it has something to draw), the
-        /// notches' setup does not. Once `AddComponent` moved in here the
-        /// caller lost sight of the "just created" branch — `ref bool changed`
-        /// does not report it, because the material self-heal raises the very
-        /// same flag — so without this parameter a fresh bootstrap would write
-        /// a scene whose three renderers sit in states the committed one does
-        /// not have.
+        /// ⛔ `startDisabled` SAYS THE COMMITTED SCENE HOLDS THIS RENDERER
+        /// SWITCHED OFF — the runtime view turns it on the frame it has
+        /// something to draw. All three of today's renderers want that: a
+        /// `LineRenderer` saved enabled shows its default (0,0,0)→(0,0,1)
+        /// segment to anyone who opens the scene without entering Play, and
+        /// the aim ray has been committed dark since Task 20 for exactly that
+        /// reason. The parameter stays rather than becoming a constant because
+        /// nothing about this helper says a world line must be born dark, and
+        /// the next caller may well want it lit.
+        ///
+        /// ⛔ AND IT IS SELF-HEALED, NOT ONE-TIME (app-461s T3 fix round 1) —
+        /// the same treatment the material gets, for the same reason: a
+        /// one-time write only ever reaches renderers this helper CREATES, so
+        /// a re-`Apply` could never repair a scene whose renderers were saved
+        /// in the wrong state, and the first version of this task committed
+        /// exactly such a scene. `positionCount` is reconciled on the same
+        /// argument: an Inspector edit that shrank it would make the caller's
+        /// own `SetPosition` write out of bounds every frame, and nothing
+        /// would put it back.
+        /// ⚠ `useWorldSpace` and `shadowCastingMode` stay one-time on purpose:
+        /// they are module settings an owner may legitimately want to override
+        /// in the Inspector, the same line `GetOrCreateMaterial`'s `configure`
+        /// draws between creation and reconciliation.
         public static LineRenderer EnsureWorldLine(GameObject host, Material material,
             int positionCount, bool startDisabled, ref bool changed)
         {
@@ -271,9 +289,17 @@ namespace Ring.Editor
             {
                 line = host.AddComponent<LineRenderer>();
                 line.useWorldSpace = true;
-                line.positionCount = positionCount;
                 line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                if (startDisabled) line.enabled = false;
+                changed = true;
+            }
+            if (line.positionCount != positionCount)
+            {
+                line.positionCount = positionCount;
+                changed = true;
+            }
+            if (startDisabled && line.enabled)
+            {
+                line.enabled = false;
                 changed = true;
             }
             if (line.sharedMaterial != material)
