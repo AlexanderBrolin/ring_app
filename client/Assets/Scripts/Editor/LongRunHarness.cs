@@ -1,5 +1,7 @@
 using System;
+using System.Globalization;
 using Ring.Data;
+using Ring.Networking.Server;   // TickTimeAccumulator — the home already exists.
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEditor;
@@ -35,6 +37,20 @@ namespace Ring.Editor
     /// balance assets or Simulation. StateHash determinism is unaffected — the
     /// override happens on the plain SimConfig struct before SimulationWorld
     /// construction, so it's just another (fixed) config value.
+    ///
+    /// Cost per tick (app-94sk Ф-0): the two trailing CSV columns and the final
+    /// line report what ONE `world.Tick` costs in wall-clock milliseconds. They
+    /// exist because the hit-by-model pass makes the narrow phase go from one
+    /// circle to 9-15 capsules while the broad phase grows x12.2-12.7 by area,
+    /// and a baseline taken AFTER that change has nothing to compare against.
+    /// ⛔ THIS MEASURES THE EDITOR/MONO PROCESS ON ONE IMMORTAL BOT. The numbers
+    /// are comparable BETWEEN RUNS OF THIS HARNESS and nothing else — not with
+    /// the headless IL2CPP image, whose own tick cost `ServerBootstrap` already
+    /// logs through the very same `TickTimeAccumulator`. Comparing across the
+    /// two contours is a category error, and it is said here rather than left
+    /// for the reader to discover.
+    /// Frame time is still out of scope (see the paragraph above): this is the
+    /// cost of the SIMULATION step, not of a rendered frame.
     public static class LongRunHarness
     {
         const string DataDir = "Assets/Data";
@@ -50,22 +66,52 @@ namespace Ring.Editor
             var world = new SimulationWorld(WorldSeed, in cfg);
             var snapshot = new RenderSnapshot(in cfg);
             var rng = new Unity.Mathematics.Random(InputSeed);
+            // TWO accumulators, not one. The WINDOW (reset at every print) is what
+            // two runs compare against each other; the WHOLE-run one denies a
+            // regression the chance to hide inside a single phase of the 20
+            // minutes. Both are the same class that meters the live server tick
+            // (`MatchServer._tickTime`), so the two contours' numbers at least
+            // have the same SHAPE — see the class doc for why they must not be
+            // compared by value.
+            var sw = new System.Diagnostics.Stopwatch();
+            var window = new TickTimeAccumulator();
+            var whole = new TickTimeAccumulator();
 
-            Debug.Log($"LongRunHarness: starting {TotalTicks}-tick run " +
-                $"(20 min @ 30 Hz, worldSeed={WorldSeed}, inputSeed={InputSeed}, " +
-                $"Hero.MaxHp overridden to {cfg.Hero.MaxHp} — immortal bot, cap/memory " +
-                $"stress only, see class doc).");
+            // ⛔ `CultureInfo.InvariantCulture` IS PASSED, NOT ASSUMED — every
+            // line this harness prints, exactly the call shape `ServerBootstrap.
+            // LogMatchSummary` uses for the very same accumulator's numbers.
+            // String interpolation picks up `CurrentCulture`, and on this
+            // workstation that is comma-decimal: `9,2971` inside a COMMA-separated
+            // line splits one column into two. Measured, not feared — the first
+            // baseline run of this instrument printed exactly that, and the fault
+            // is older than the ms/tick columns: `PlayerHp` is a float too, and
+            // only the immortal-bot override (`1E+09`, no separator) hid it.
+            Debug.Log(string.Format(CultureInfo.InvariantCulture,
+                "LongRunHarness: starting {0}-tick run (20 min @ 30 Hz, worldSeed={1}, " +
+                "inputSeed={2}, Hero.MaxHp overridden to {3} — immortal bot, cap/memory " +
+                "stress only, see class doc).",
+                TotalTicks, WorldSeed, InputSeed, cfg.Hero.MaxHp));
             // PlayerAlive/PlayerHp/Kills/WaveIndex are extra columns beyond the
             // brief's minimum set — kept even with the immortal-bot override so a
             // regression in the override (or a future change to it) stays visible
             // in the log instead of silently reverting to the frozen-world case.
+            // The two ms/tick columns go LAST on purpose: anything already parsing
+            // this CSV by column index keeps working.
             Debug.Log("LongRunHarness,tick,MobCount,ProjectileCount,EventCount," +
                 "DroppedEvents,MobSpawnsSkipped,ProjectileSpawnsSkipped,GCTotalMemory," +
-                "PlayerAlive,PlayerHp,Kills,WaveIndex");
+                "PlayerAlive,PlayerHp,Kills,WaveIndex,MsPerTickAvg,MsPerTickMax");
 
             for (int i = 1; i <= TotalTicks; i++)
             {
+                sw.Restart();
                 world.Tick(Scripted(ref rng));
+                sw.Stop();
+                // Same input the live caller feeds it (`MatchServer.OnPostTick`):
+                // `Elapsed.TotalMilliseconds` is a double, so "intermediate
+                // numbers are double" is satisfied by the type itself.
+                double tickMs = sw.Elapsed.TotalMilliseconds;
+                window.Record(tickMs);
+                whole.Record(tickMs);
 
                 if (i % LogInterval == 0)
                 {
@@ -76,10 +122,19 @@ namespace Ring.Editor
                     MatchStats stats = world.Stats;
                     WorldStats worldStats = world.WorldStats;
                     long mem = GC.GetTotalMemory(false);
-                    Debug.Log($"LongRunHarness,{i},{snapshot.MobCount},{snapshot.ProjectileCount}," +
-                        $"{world.EventCount},{world.DroppedEvents}," +
-                        $"{worldStats.MobSpawnsSkipped},{worldStats.ProjectileSpawnsSkipped},{mem}," +
-                        $"{snapshot.Player.Alive},{snapshot.Player.Hp},{stats.Kills},{snapshot.Wave.WaveIndex}");
+                    Debug.Log(string.Format(CultureInfo.InvariantCulture,
+                        "LongRunHarness,{0},{1},{2},{3},{4},{5},{6},{7},{8},{9},{10},{11},{12:F4},{13:F4}",
+                        i, snapshot.MobCount, snapshot.ProjectileCount,
+                        world.EventCount, world.DroppedEvents,
+                        worldStats.MobSpawnsSkipped, worldStats.ProjectileSpawnsSkipped, mem,
+                        snapshot.Player.Alive, snapshot.Player.Hp, stats.Kills,
+                        snapshot.Wave.WaveIndex,
+                        window.AverageMs, window.MaxMs));
+                    // The window closes here: the next line describes the next
+                    // two sim-minutes, not everything since tick 1. The max is
+                    // the point — an average hides a single spike, a maximum
+                    // does not.
+                    window.Reset();
                 }
 
                 // Mirrors the per-frame event-buffer flush SimulationRunner drives
@@ -92,8 +147,10 @@ namespace Ring.Editor
                 world.ClearEvents();
             }
 
-            Debug.Log($"LongRunHarness: completed {TotalTicks} ticks, " +
-                $"final StateHash=0x{world.StateHash():X16}.");
+            Debug.Log(string.Format(CultureInfo.InvariantCulture,
+                "LongRunHarness: completed {0} ticks, final StateHash=0x{1:X16}, " +
+                "avg {2:F4} ms/tick, max {3:F4} ms over {4} ticks.",
+                TotalTicks, world.StateHash(), whole.AverageMs, whole.MaxMs, whole.Count));
         }
 
         /// Same scripted-input shape as DeterminismTests.Scripted (Task 29) — drives
