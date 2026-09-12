@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development`.
 > Модели: implementer per task = **opus** — T1 (три примитива геометрии, 11 фикстур, 10 мутаций),
 > T2 (переопределение `HitPart`, таблица поз как структура, `HitVolumes`), T4 (пекарь и
-> `ScriptedImporter` — в проекте первый), T5c (`BodyFacing` — подсистема, которой нет),
+> `ScriptedImporter` — в проекте первый), T5c (закон доворота курса поверх готового `Geometry.RotateTowards`),
 > T6b (композиция трёх слоёв позы), T7 (история отмотки), T8 (три критерия удара),
 > T10a/T10b (реакция и угловой импульс); **sonnet** — T3 (готовый контракт T1/T2 в один файл),
 > T5a (миграция типа, механическая), T5b (четыре числа меняют дом), T6a (поля и упаковщик),
@@ -239,7 +239,7 @@ self-review**: 18 → 24 → 26 → 18 → 6 Critical). Спека **объяв�
 | **T5b** | ⛔ **`SimConfigHashTests`** (четыре числа переезжают в хешируемые секции) и **`ConfigTests.AssertHeroEqual`/`AssertMobEqual`**. ⚠ `GameFeelConfig` рефлективного сторожа не имеет вовсе — гейт переезда **R-ASSET**, а не тест |
 | **T5c** | Собственная 32в. ⛔ Плюс **`SnapshotCodecTests`**: `MobRecord.Dir` меняет смысл (было `normalizesafe(Vel)`, стало поле) — round-trip остаётся зелёным, а **свидетель смысла** заводится этим таском |
 | **T6a** | ⛔ **`WorldLifecycleTests`** (новые поля `PlayerState`/`MobState` обязаны попасть в `HashPlayer`/`HashMob`), **`PredictionParityTests.RoleByField`** (`:1090` — счётчик полей, сверено лично: каждому полю ровно одна запись), **`HotTweakTests.ceilingByField`** (`:398` — новое `float`/`int` поле без записи роняет тест). ⚠ **Все три — `Assert.Fail`/несовпадение счёта, а не RED**, и правятся тем же таском, который поля объявляет |
-| **T6b** | Собственные 6, 17, 21, 23а, 26, 26а (⚠ **19 отсюда снята кругом 2**: её предмет — вес дерева смешивания, дом — **T6a**, и тело плана это говорило дважды, а строка таблицы держала её в обоих тасках). ⛔ Плюс **`HitPartsTests.TiltedMob_KeepsItsUprightParts`** — он и есть свидетель цены Р375 и обязан остаться **зелёным** |
+| **T6b** | Собственные 6, 17, 21, 23а, 26, 26а (⚠ **19 отсюда снята кругом 2**: её предмет — вес дерева смешивания, дом — **T6a**, и тело плана это говорило дважды, а строка таблицы держала её в обоих тасках). ⛔⛔ Плюс **`HitPartsTests.TiltedMob_KeepsItsUprightParts` — он КРАСНЕЕТ И ПЕРЕПИСЫВАЕТСЯ ЗДЕСЬ ЖЕ, и это правка круга 3 против прямой ошибки v1–v3.** Они писали «обязан остаться **зелёным**», и это спорило со спекой в трёх местах сразу: Р-K числит «лежащий моб станет труднее поражаемым настильным огнём» **ценой ОТМЕНЫ Р375** с вероятностью «Определённая», Р523 добавляет к той же цене «**отмену основания A25**», а §4.4 заводит 26/26а именно как свидетелей нового поведения. Тест — свидетель **отменяемого** решения: он ставит `m.Tilt = TiltFallAngle * 0.9f` (0.81 рад = 46.4°) и требует `HitZone.Head` от выстрела с `muzzleH 1f` в `headMid 2.41`; как только объёмы поедут за креном, голова уйдёт из-под линии огня (пересчитано: расстояние 0.981 при пороге 0.29). ⇒ он **переписывается** в свидетеля нового правила — «накренённое тело остаётся поражаемым, но попадание идёт туда, где тело **есть**», то есть в ту же пару, что 26/26а, — и его прежняя формулировка уходит вместе с Р375. ⚠ Амендмент, отменяющий Р375, — **T13** (A18 уже правит A14 про «заваливается тело целиком») |
 | **T6c** | Собственные 8, 18, 18а, 18б, 18в |
 | **T7** | Собственные 22, 23, 24, 25. ⛔ Плюс **`RewindTests`** второй раз (запись выросла с 12 до 24 Б) |
 | **T8** | Собственные 29, 30, 30а, 31, 32, 32а, 32г. ⛔ Плюс **`MobAiTests` (38 тестов)** — сверено лично: `AttackRange` живёт в нём в шести местах (`:436`, `:471`, `:486`, `:525`, `:551`, `:563`), и краснеют поимённо `SwingLeadZero_EntryTickEqualsE1Rule` (`:531`), `Chaser_TelegraphThenStrike_DamagesPlayer` (`:432`), `Chaser_TelegraphsAheadOfRunner_AndConnects` (`:445`), `Chaser_Standing_FarPlayer_NoTelegraph` (`:479`), `Chaser_LeadClampedByMaxMeters` (`:507`). ⚠ **И `EliteAndDirectorTests.EliteUsesTheSixFightingAiStates_OverDistanceSweep` (`:155`)** — переключатель режима живёт **там**, а не в `MobAiTests` (спека называла адрес неточно) |
@@ -294,6 +294,12 @@ setsid nohup "$SCRATCH/tools/run.sh" "$SCRATCH/runs/<имя>" > "$SCRATCH/runs/<
      прогона**; имена красных сверяются со списком фикстур шага.
   3. ⛔ **`EXIT=0` здесь — СТОП, а не удача:** значит, фикстура зелена на заглушке, то есть мерит
      не свой предмет (тот же отказ, что ловит премисса внутри фикстур 11, 12 и 28).
+  3а. ⚠ **И ОДНО ИСКЛЮЧЕНИЕ, НАЗВАННОЕ ПОИМЁННО** (правка круга 3): фикстура, чей предмет —
+     **отсутствие** ветки (негатив) или **класс** поведения (аллокации), красной фазы не имеет по
+     построению — её единственный свидетель — названная мутация. Такие перечисляются в шаге
+     **до** прогона, и их ровно пять на весь заход: **4а** (T2, негатив охвата), **30б** (T10b,
+     моб против моба), **41** (T10c, ноль аллокаций), **32а** (T8, ганнер без досягаемости),
+     **46** (T4b, у ганнера нет рук). Любая другая зелёная на заглушке — СТОП.
   4. ⛔ **`EXIT=2` с нулём красных или с чужим красным — тоже СТОП:** ошибка компиляции даёт тот же
      код возврата, и отличить её можно только **по имени красного в xml**, а не по коду.
 - **R-COMPILE:** `-batchmode -quit -projectPath client -logFile …` → `EXIT=0` + ГЕЙТ-ЛОГ + ГЕЙТ-ОТКАТ.
@@ -548,6 +554,14 @@ namespace Ring.Simulation.Tests
     // это дом тестов ровно этих примитивов (56 тестов). Объёмы на костях,
     // тай-брейк по PartId и приоритет зоны живут в HitVolumeTests таска T2 —
     // их предмет ВЫБОР ПОБЕДИТЕЛЯ, а здесь геометрия одной капсулы.
+    // ⛔⛔ ИМЕНА ФИКСТУР — В ФОРМЕ `Примитив_Случай_Результат`, И ЭТО ПРАВКА
+    // КРУГА 3: все 56 живых имён файла начинаются с имени примитива
+    // (SegmentCircle_*, SegmentCircleInterval_*, Rotate_*, RotateTowards_*,
+    // ClosestPointOnSegment_*, PushOut_*), а v3 дала семи фикстурам имена без
+    // префикса вовсе и двум — по два имени в разных местах плана. ⇒ каждая
+    // фикстура этого таска получает префикс своего примитива
+    // (SegmentCapsule_*, PointCapsule_*, ClosestPointOnSegment_*), и имя в
+    // таблице Step 4 совпадает с именем в сниппете посимвольно.
     // ⛔ БЕЗ `partial`, И ЭТО ПРАВКА КРУГА 2: существующий класс объявлен
     // `public class GeometryTests` (GeometryTests.cs:7, проверено лично), а
     // `partial` на одной из частей даёт **CS0260**, то есть ошибку компиляции,
@@ -928,6 +942,16 @@ public struct PoseTable
     /// ⛔ Они едут ЗДЕСЬ, потому что вес дерева считается в Ring.Simulation, а
     /// Editor/AnimatorCatalog оттуда не виден вовсе.
     public float[] BlendThresholds;
+    /// ⛔⛔ МАСКА СЛОЯ ПРИЦЕЛИВАНИЯ — БИТ НА КОСТЬ (правка круга 3; §3.6 требует
+    /// её дословно, а v1–v3 не заводили вовсе, из-за чего «композиция ТРЁХ
+    /// слоёв» не реализовывалась ничем, а фикстуры 21/21а и мутация M381
+    /// оставались без предмета). Замер §3.6: у сборщика включены Body, Head,
+    /// обе руки и обе кисти; выключены Root, обе ноги и все четыре *IK — из
+    /// одиннадцати объёмов ШЕСТЬ берут позу из прицела, ПЯТЬ из локомоции.
+    /// ⚠ У МОБОВ СЛОЙ ОДИН: маска пуста, и это их устройство, а не пропуск.
+    /// Массив, а не скаляр: у сборщика 65 костей, в `ulong` их не уложить —
+    /// длина `(BoneCount + 63) / 64`.
+    public ulong[] UpperLayerMask;
     /// Контрольная сумма ЗАГРУЖЕННЫХ БАЙТОВ (Р514). ⛔ Поле ассета — кеш, а не
     /// источник истины: сборка конфигурации считает сумму заново и сверяет.
     public ulong Checksum;
@@ -1047,6 +1071,18 @@ public static float StackTop(HitPart[] parts)
       `if (cfg.Parts[i].RestTop > topPart) topPart = cfg.Parts[i].RestTop;`
       ⛔ Без этого **весь EditMode-прогон** падает ошибкой компиляции в `Ring.Editor`, на который
       ссылается `Simulation.Tests.asmdef` — а ошибка компиляции ≠ RED и просто ломает таск.
+- [ ] **Step 2а (⛔⛔ ХЕШ И ЕГО СТОРОЖ — В ЭТОМ ЖЕ ШАГЕ, ИНАЧЕ Step 3 НЕДОСТИЖИМ НА ВЕРНОМ КОДЕ;
+      правка круга 3):** v1–v3 откладывали это до Step 10 и одновременно требовали от Step 3
+      «красных ноль». Так не бывает: `AssertSectionAffectsHash` (`SimConfigHashTests.cs:311`) идёт
+      **рефлексией по всем полям секции**, и три новых поля ломают его тремя разными способами
+      сразу — `GatherRadius` и `StrikePartId` бампятся и требуют сдвига хеша, которого `Compute`
+      ещё не даёт (**красное**), а `PoseTable Poses` не входит в список-исключение и уходит в
+      `Bump(object)`, который знает только `float/int/bool` (**`NotSupportedException`**, то есть
+      даже не красное). ⇒ **тем же шагом**: `SimConfigHash.Compute` фолдит `GatherRadius` и
+      `StrikePartId`; `typeof(PoseTable)` дописывается в условие `:336-339`; заводится
+      `AssertPoseTableAffectsHash` (её код — в Step 10, он не меняется).
+      ⚠ Это **не** «поведение раньше времени»: хеш конфигурации — не игровой исход, а её
+      идентичность, и миграция полей обязана двигать именно его.
 - [ ] **Step 3 (verify — миграция не изменила ответов):** R-TEST полный →
       `total` = **1960**, красных **ноль**, `EXIT=0`; **три эталона ЗЕЛЁНЫЕ**.
       ⛔⛔ **ЭТО ГЕЙТ, А НЕ ФОРМАЛЬНОСТЬ:** миграция полей не имеет права двигать ни одного
@@ -1070,7 +1106,7 @@ public static float StackTop(HitPart[] parts)
 /// `x` лёг бы ВДОЛЬ линии огня и фикстура 4 стала бы красной на верном коде
 /// (пересчитано: боковой зазор 0.52 м против радиуса ноги 0.35). Вынос по `z`
 /// кладёт стопу поперёк — ровно туда, куда фикстура и стреляет.
-static PoseTable ChaserRestPose() => new PoseTable
+public static PoseTable ChaserRestPose() => new PoseTable
 {
     BoneCount = 5,
     ClipFirstRow = new[] { 0, 1 },          // один клип, одна строка
@@ -1126,7 +1162,30 @@ public static PoseTable TwinLegPose() => new PoseTable
 };
 ```
 
-      ⚠ **Обе фабрики — `public static`**, как все члены `TestConfigs` (проверено: `:8`, `:528`,
+      И **третья — сборщику, с клипом слайда**, потому что правило 16 (T4) читает крону слайда,
+      а у однострочной таблицы её негде взять:
+
+```csharp
+/// ДВА КЛИПА: покой и слайд. ⛔ Клип слайда обязателен — правило 16 сравнивает
+/// его крону с дулом ганнера и с SlideMuzzleHeight сборщика, а `SlideCrownOf`
+/// адресует его строку через ClipFirstRow[1].
+public static PoseTable HeroRestAndSlidePose() => new PoseTable
+{
+    BoneCount = 4,
+    ClipFirstRow = new[] { 0, 1, 2 },        // клип 0 — покой, клип 1 — слайд
+    Bones = new[]
+    {
+        new float3(0f, 0f,    0f), new float3(0f, 0.90f, 0f),
+        new float3(0f, 1.35f, 0f), new float3(0f, 1.75f, 0f),   // покой, крона 1.75
+        new float3(0f, 0f,    0f), new float3(0f, 0.22f, 0f),
+        new float3(0f, 0.34f, 0f), new float3(0f, 0.42f, 0f),   // слайд, крона 0.42
+    },
+    BlendThresholds = new[] { 0f, 1f },
+    Checksum = 0UL,
+};
+```
+
+      ⚠ **Все фабрики — `public static`**, как все члены `TestConfigs` (проверено: `:8`, `:528`,
       `:658`, `:673`, `:740` — все публичные), иначе фикстуры их не позовут.
       ⛔ **И КЛАДУТСЯ ОНИ В СЕКЦИЮ, А НЕ В КОРЕНЬ КОНФИГУРАЦИИ:** внутри `TestConfigs.Default()`
       (и всех его производных — `Open`, `OpenField`, `Arena`) строка
@@ -1320,8 +1379,17 @@ public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
 /// Голова 0, корпус 1, руки и ноги 2 — ОДНА ступень (Р505).
 static int ZoneRank(HitZone z) => z == HitZone.Head ? 0 : z == HitZone.Body ? 1 : 2;
 
+/// ⛔⛔ ПОВОРОТ ИДЁТ ЧЕРЕЗ Geometry.Rotate, А НЕ ПЕРЕПИСЫВАЕТСЯ ЗДЕСЬ.
+/// v1/v2/v3 инлайнили матрицу `(c·x − s·z, y, s·x + c·z)`, посимвольно
+/// совпадающую с телом Geometry.Rotate (Geometry.cs:904-908), — и это ровно
+/// тот дефект, который круг 1 объявил исправленным, заведя перегрузку
+/// Rotate(float2, sin, cos), после чего её никто не позвал. Дом арифметики
+/// поворота один (правило 2).
 static float3 ToWorld(float3 local, float3 origin, float s, float c)
-    => origin + new float3(local.x * c - local.z * s, local.y, local.x * s + local.z * c);
+{
+    float2 xz = Geometry.Rotate(new float2(local.x, local.z), s, c);
+    return origin + new float3(xz.x, local.y, xz.y);
+}
 ```
 
 - [ ] **Step 7 (GREEN, широкая фаза и вызывающие):** в `ProjectileSystem` обе ветки сбора
@@ -1330,8 +1398,17 @@ static float3 ToWorld(float3 local, float3 origin, float s, float c)
       `HitZones.Resolve` для двух поражаемых видов; `overlapTop` берётся у `HitVolumes.PoseTop`.
       ⚠ **`MobRadiusFor` (`ProjectileSystem.cs:1030`) НЕ ТРОГАЕТСЯ** — он отвечает на вопрос о
       **физическом** радиусе, и его тест-близнец `MobRadiusFor_AgreesWith_MobConfigFor_ForEvery
-      Archetype` держит два дома в синхроне. Широкая фаза получает **свой** хелпер
-      `MobGatherRadiusFor` рядом, с докой, объясняющей, почему их два.
+      Archetype` держит два дома в синхроне.
+      ⛔⛔ **НО ВТОРОГО ТАКОГО ХЕЛПЕРА НЕ ЗАВОДИТСЯ, И ЭТО ПРАВКА КРУГА 3.** v1–v3 объявляли рядом
+      `MobGatherRadiusFor` «с докой, объясняющей, почему их два». Он стал бы **пятым** switch по
+      архетипу, а `SimConfig.cs:970-984` запрещает это поимённо: «Before Т31 the same four-way
+      choice was written THREE times… **The integrator would have been the FOURTH, which is exactly
+      what rule 2 forbids**». ⚠ И довод соседа **устарел**: `MobRadiusFor` живёт отдельно потому,
+      что «a per-mob `MobConfigFor(...)` call here would **copy** the whole MobSimConfig struct»
+      (`ProjectileSystem.cs:1000-1006`), — а с Т31 `MobConfigFor` возвращает **`ref readonly`**
+      (`SimConfig.cs:999`, «SO NOTHING IS COPIED»). ⇒ широкая фаза пишет
+      `SimConfig.MobConfigFor(in config, mobs[m].Type).GatherRadius` напрямую: ноль новых домов,
+      ноль новых сторожей синхронности, и ни одной копии структуры.
 - [ ] **Step 8 (GREEN, правила 7 и 10 в `SimConfigBuilder.ValidateParts`):**
 
 ```csharp
@@ -1420,7 +1497,9 @@ static void AssertPoseTableAffectsHash(string sectionName)
 - [ ] **Step 11 (verify GREEN):** R-FILTER `HitVolumeTests` → PASS 4/4; R-FILTER `HitPartsTests`
       → PASS; R-FILTER `HitZoneTests` → PASS; R-FILTER `SimConfigHashTests` → PASS;
       R-FILTER `RewindTests` → PASS; R-FILTER `ConfigTests` → PASS.
-- [ ] **Step 12 (мутации M327, M328, M331, M333-половина, M334, M363-половина — шесть;
+- [ ] **Step 12 (гоняются ЧЕТЫРЕ — M327, M328, M333-половина, M334; M331 и M363-половина
+      **названы и гоняются в T6b/T8** по правилу 696, это приведено в согласие с таблицей
+      распределения кругом 3;
       предсказания ДО прогона):**
 
   | Мутация | Ослабление | Названная жертва |
@@ -1489,8 +1568,15 @@ public void TheAimLineAndTheRoundChooseTheSamePart()   // тест 42
 
 - [ ] **Step 1a (⛔ R-RED — заглушки-КОНСТАНТЫ и красный прогон, фикстура 42):**
       `AimLine.Solve` **не трогается вовсе** — фикстура 42 сравнивает его ответ с ответом
-      `ProjectileSystem`, и на сегодняшнем коде они расходятся: луч идёт по кругу, снаряд (после
-      T2) — по капсулам. ⇒ заглушки не нужны, но **красный прогон нужен**.
+      `ProjectileSystem`. ⇒ заглушки не нужны, но **красный прогон нужен**.
+      ⛔⛔ **И ЦЕЛИТЬСЯ ОНА ОБЯЗАНА ТУДА, ГДЕ КРУГ И КАПСУЛА РАСХОДЯТСЯ ЗАВЕДОМО — ПРАВКА КРУГА 3.**
+      v3 стреляла горизонтально с `MuzzleHeight 1.0` в чейзера, у которого и круг, и капсула
+      корпуса накрывают эту высоту (пояс 0.88–2.12) — **оба пути ответили бы `HitZone.Body` ещё до
+      правки**, фикстура была бы зелена, а рецепт R-RED на `EXIT=0` велит остановиться.
+      ⇒ цель — **вынесенная стопа** (`targetXY (6, 0.9)`, `muzzleH 0.4`): круг тела радиусом 0.5
+      туда не достаёт, капсула ноги достаёт. И сравнивается **пара** — `AimStop` вместе с зоной,
+      а не одна зона: упор «в воздух» против упора «в тело» — это разные `AimStop`, и зона одна их
+      не различает.
       R-FILTER `AimLineTests` → `EXIT=2`, `testcasecount` = **25**, красная — **ровно 42**.
       ⛔ Любой другой красный здесь — находка T2, а не этого таска: он означает, что перевод
       снаряда на объёмы сдвинул числа, которых T2 не пересчитал.
@@ -1728,7 +1814,17 @@ diff "$SCRATCH/runs/t0-audit-before/unity.log.metrics" \
       выход слайда) — основание в COMBAT-001 §3.8: ошибка линейной интерполяции на 30 Гц около
       **1.45 см** на радиусе 30 см при угловом ускорении быстрой конечности, на 60 Гц — **0.36 см**;
       **(4)** читает пороги дерева из контроллера; **(5)** считает `GatherRadius` и
-      `RestBottom`/`RestTop`; **(6)** пишет `.posetable` и **печатает отчёт**.
+      `RestBottom`/`RestTop`; **(6)** ⛔ **печёт МАСКУ СЛОЯ ПРИЦЕЛИВАНИЯ** — бит на кость, из того же
+      `AvatarMask`, который порождает бутстрап; у четырёх мобов маска пуста, у сборщика включены
+      `Body`, `Head`, обе руки и обе кисти (замер §3.6). ⚠ **Без этого §3.6 не реализуется ничем**
+      (находка круга 3): `PoseTable.Sample` обязан знать, какие кости берёт верхний слой, а второй
+      дом маски — копия списка имён в коде — разошёлся бы с контроллером молча;
+      **(7)** пишет `.posetable` и **печатает отчёт**.
+      ⛔⛔ **И КРОНА СЧИТАЕТСЯ БЕЗ КЛИПОВ РЕАКЦИИ, А ОХВАТ — С НИМИ** (Р559, правка круга 3: у
+      решения не было шага вовсе). Замер спеки: `Rig|Hit` Директора даёт крону **4.276** против
+      боевой **3.601** — плюс 19 %, и крона кормит правило `MaxAimHeight >= крона`, `PartsTop` и
+      высоты спавна обломков. ⇒ `GatherRadius` — максимум по фильтру охвата **включая** реакцию;
+      `RestBottom`/`RestTop` — по фильтру **без** клипов реакции и без смерти.
       ⛔⛔ **И ОТЧЁТ ПЕЧАТАЕТ МИНИМАЛЬНОЕ ПЛЕЧО ГОЛОВНОЙ КОСТИ ПО ВСЕМ ФАЗАМ** каждого архетипа —
       это **пункт DoD**: без него падение исхода в отдельных фазах не увидит никто (§4.4, тест 34а).
 - [ ] **Step 6 (числа в ассеты — бутстрапом, с переездом маркера):** `StageOneSceneBootstrap`
@@ -1761,15 +1857,58 @@ for f in MobChaserConfig MobGunnerConfig MobEliteConfig MobDirectorConfig; do
       ⛔ **И ДВА ХЕЛПЕРА ОБЪЯВЛЯЮТСЯ ЗДЕСЬ ЖЕ, А НЕ ОСТАЮТСЯ ИСПОЛНИТЕЛЮ** (находка круга 2:
       тела ниже звали `PoseTableFor` и `SlideCrownOf`, которых нет нигде):
 
+⛔⛔ **ДОМ ХЕЛПЕРОВ НАЗВАН ЯВНО, И ЭТО ПРАВКА КРУГА 3.** Приватный хелпер одного файла, вызванный
+из другого, даёт **CS0103**, а единственный «рабочий» исход — вторая копия тела, то есть ровно
+дублирование. Разделение такое:
+- **`TestConfigs`** (публичный класс, все члены публичны) — то, что нужно ДВУМ и более наборам:
+  `PoseTableFor`, `PoseTableOfSection`, `WithOneMoreRow`, `SlideClipIndex`, три фабрики таблиц;
+- **файл-локально** — то, у чего один читатель и намеренно повторённый закон (урок 427):
+  `SlideCrownOf`, `Quant`, `BumpKeyField`, `ExpectedShoveTiltVel`, `PeakTilt ForRow`,
+  `RunTwoHitsAndHash`.
+
 ```csharp
-// HitPartsTests.cs — приватные хелперы файла, рядом с его тестами.
+// Tests/EditMode/TestConfigs.cs — общие хелперы таблицы поз.
+/// Индекс клипа слайда в фикстурных таблицах. ⛔ Не литерал `1` по площадкам:
+/// у однострочной таблицы `ClipFirstRow[1]` — это сентинел числа строк.
+public const int SlideClipIndex = 1;
+
 /// Таблица поз ЖИВОГО ассета: с правки круга 3 она висит на самом
 /// MobConfig/HeroConfig (T4 Files), а не одним полем на всю конфигурацию.
-/// ⚠ Возвращается ССЫЛКА на массивы внутри ассета — правка через неё видна
-/// сборке, и ровно это фикстурам и нужно.
-static ref PoseTable PoseTableFor(MobConfig cfg) => ref cfg.Poses.Table;
-static ref PoseTable PoseTableFor(HeroConfig cfg) => ref cfg.Poses.Table;
+public static ref PoseTable PoseTableFor(MobConfig cfg) => ref cfg.Poses.Table;
+public static ref PoseTable PoseTableFor(HeroConfig cfg) => ref cfg.Poses.Table;
 
+/// Таблица НАЗВАННОЙ секции собранной конфигурации — по имени тела.
+/// ⛔ Нужна двум наборам (SimConfigHashTests и PoseTableTests), поэтому дом
+/// здесь, а не в одном из них.
+public static ref PoseTable PoseTableOfSection(ref SimConfig cfg, string body) => ref body switch
+{
+    "Hero"     => ref cfg.Hero.Poses,
+    "Chaser"   => ref cfg.Chaser.Poses,
+    "Gunner"   => ref cfg.Gunner.Poses,
+    "Elite"    => ref cfg.Elite.Poses,
+    "Director" => ref cfg.Director.Poses,
+    _ => throw new System.ArgumentException($"unknown body {body}"),
+};
+
+/// Копия таблицы с ОДНОЙ лишней строкой — «другая таблица» для фикстур 18в/18г.
+/// Массивы копируются: подмена на месте изменила бы и ту, с которой сравнивают.
+public static PoseTable WithOneMoreRow(in PoseTable t)
+{
+    var bones = new float3[t.Bones.Length + t.BoneCount];
+    System.Array.Copy(t.Bones, bones, t.Bones.Length);
+    var firstRow = new int[t.ClipFirstRow.Length];
+    System.Array.Copy(t.ClipFirstRow, firstRow, firstRow.Length);
+    firstRow[^1] += 1;                       // сентинел числа строк подрос
+    return new PoseTable
+    {
+        BoneCount = t.BoneCount, ClipFirstRow = firstRow, Bones = bones,
+        BlendThresholds = t.BlendThresholds, Checksum = t.Checksum + 1UL,
+    };
+}
+```
+
+```csharp
+// HitPartsTests.cs — файло-локальный хелпер, у которого один читатель.
 /// Крона СЛАЙДА по таблице: та же арифметика, что у правила 16 в
 /// SimConfigBuilder, но повторённая тестом НАМЕРЕННО (лесson 427 — свидетель,
 /// зовущий проверяемый код, доказывает лишь самосогласованность).
@@ -1778,7 +1917,12 @@ static ref PoseTable PoseTableFor(HeroConfig cfg) => ref cfg.Poses.Table;
 static float SlideCrownOf(HeroConfig hero)
 {
     ref PoseTable t = ref PoseTableFor(hero);
-    int row = t.ClipFirstRow[1];              // первая строка клипа слайда
+    // ⛔ ИНДЕКС КЛИПА — ИМЕНОВАННАЯ КОНСТАНТА, А НЕ ЛИТЕРАЛ `1` (правка круга 3):
+    // литерал молча превращается в «сентинел числа строк» у любой однострочной
+    // таблицы, и фикстура падает исключением вместо того, чтобы краснеть.
+    int row = t.ClipFirstRow[TestConfigs.SlideClipIndex];   // = 1, объявлено в TestConfigs
+    if (row >= t.Bones.Length / t.BoneCount)
+        throw new System.ArgumentException("pose table has no slide clip");
     float top = float.NegativeInfinity;
     foreach (HitPart part in hero.Parts)
     {
@@ -1933,7 +2077,7 @@ public void TheSampleTargetAndTheMeasureOriginArePinnedApart()   // тест 28,
         }
         finally { AnimationMode.StopAnimationMode(); }
 
-        Assert.AreNotEqual(fromRoot[0].y, fromAnimator[0].y, 1e-3f,
+        Assert.Greater(math.abs(fromRoot[0].y - fromAnimator[0].y), 1e-3f,
             "премисса фикстуры: на инстансе FBX ганнера лежит override масштаба 0.76, и два "
             + "начала отсчёта обязаны давать разные числа");
         // И ЭТО — ПИН: пекарь обязан мерить от КОРНЯ ПРЕФАБА, как аудитор.
@@ -1954,15 +2098,38 @@ public void TheSampleTargetAndTheMeasureOriginArePinnedApart()   // тест 28,
 /// 13 (Step 7г) при BoneCount == 0 отвергают КАЖДУЮ конфигурацию, и каждый из
 /// ~45 тестов, которые меняют ОДНО поле ради ОДНОГО правила, покраснел бы на
 /// чужом предмете.
-static PoseTableAsset FixtureTable()
+static PoseTableAsset FixtureTable(PoseTable table)
 {
     var asset = ScriptableObject.CreateInstance<PoseTableAsset>();
-    asset.Table = TestConfigs.ChaserRestPose();
+    asset.Table = table;
     return asset;
 }
-// …и по строке на каждый из пяти:
-hero.Poses = FixtureTable();   chaser.Poses = FixtureTable();   gunner.Poses = FixtureTable();
-// (элита и Директор — там же, где MakeDefaults создаёт их SO)
+// ⛔⛔ У СБОРЩИКА — ТАБЛИЦА С ДВУМЯ КЛИПАМИ, И ЭТО НЕ УКРАШЕНИЕ (правка круга 3):
+// правило 16 читает крону СЛАЙДА через SlideCrownOf, а тот берёт
+// `t.ClipFirstRow[1]` — «первая строка клипа слайда». У ChaserRestPose
+// ClipFirstRow = { 0, 1 } при ОДНОЙ строке, то есть [1] — это сентинел общего
+// числа строк (конвенция объявлена в самой PoseTable), и Bones[1*5 + BoneA]
+// уходит за массив. Фикстура 4в падала бы IndexOutOfRangeException, а
+// исключение по правилу 332/498 RED не является и кладёт весь прогон.
+hero.Poses   = FixtureTable(TestConfigs.HeroRestAndSlidePose());   // два клипа: покой + слайд
+chaser.Poses = FixtureTable(TestConfigs.ChaserRestPose());
+gunner.Poses = FixtureTable(TestConfigs.ChaserRestPose());
+```
+
+      ⛔ **И `MakeDefaults` — НЕ ЕДИНСТВЕННОЕ МЕСТО: ЭЛИТА И ДИРЕКТОР РОЖДАЮТСЯ В ДРУГОМ**
+      (правка круга 3, найдено двумя ревьюерами независимо). `ConfigTests.MakeDefaults()`
+      (`:16-27`) создаёт **семь** SO — `hero, weapon, chaser, gunner, wave, arena, visibility`, —
+      и элиты с Директором среди них **нет**: они рождаются в `ConfigTests.MakeShippedArchetypes()`
+      (`:102`) и заполняются копиром `ConfigTests.SeedMob` (`:118`), чья дока предупреждает
+      дословно: «Every field `SimConfigBuilder.ToMobSimConfig` reads is set here; if that method
+      grows a field and this one does not, the baseline test's own `AssertMobEqual` is what goes
+      red». ⇒ таблица вешается **и там**, а `SeedMob` вносится в Files **T2, T4, T5b, T8 и T10a** —
+      каждый из них добавляет `MobSimConfig` поле, и каждый обязан провести его через копир:
+
+```csharp
+// ConfigTests.MakeShippedArchetypes() — обоим архетипам, той же фабрикой.
+elite.Poses = FixtureTable(TestConfigs.ChaserRestPose());
+director.Poses = FixtureTable(TestConfigs.ChaserRestPose());
 ```
 
       **Гейт шага:** R-FILTER `ConfigTests` → **PASS**, число тестов не изменилось.
@@ -2020,6 +2187,125 @@ hero.Poses = FixtureTable();   chaser.Poses = FixtureTable();   gunner.Poses = F
       красных ровно три эталона; свипы (+ ⚠ `.gitattributes` и `docs/` — **руками**)
       → R-COMMIT двумя коммитами: `chore(app-94sk): T4 — таблица поз запечена и доставлена в
       ассеты` (артефакты) и `feat(app-94sk): T4 — пекарь поз, его импортёр, гейт и правила 6/9/12/13/16`.
+
+### Task T4b: ⛔⛔ РАСКЛАДКА ОБЪЁМОВ — ТО, РАДИ ЧЕГО ЗАХОД И ЗАТЕВАЛСЯ
+
+⛔⛔ **ЭТОГО ТАСКА НЕ БЫЛО В v1–v3, И БЕЗ НЕГО ЗАХОД СТРОИТ МЕХАНИЗМ И НЕ ПРИМЕНЯЕТ ЕГО** (находка
+круга 3, подтверждена машиной). Спека §3.2 числит раскладку **11 / 13 / 9 / 13 / 15** объёмов —
+«таз, грудь, голова, плечо и предплечье ×2, бедро и голень ×2» и так далее, — и это буква решения
+Н48/Н49 («от 6–8 до 10–14 капсул»). Сегодня у каждого тела **ровно три пояса**: проверено лично —
+`HeroConfig.cs:158-164` (3), `MobConfig.cs:90-96` (3), девять литералов
+`StageOneSceneBootstrap.cs:3283…3341`. План переводил **эти же три** на пару костей и
+останавливался: свип по нему давал «бедро» — 0 вхождений, «предплеч» — 1 (и то в комментарии).
+
+**Чем это стоило бы кончиться:** пункт вехи 1 («пуля проходит **между ног**, мимо вытянутой руки»)
+и пункт 8 («попадания по **четырём ногам** Директора различаются») недостижимы на трёх поясах;
+`StrikePartId` указывал бы на предплечье, которого нет; зоне рук (T9) не на чем разместиться.
+
+⚠ **Почему отдельным таском, а не внутри T4:** у пекаря свой предмет (как снять позу) и свой гейт
+(«перепеки и сравни»), а здесь — данные пяти тел и правило 7, которое их пинит. Разные ревьюерские
+предметы; слитые, они дали бы таск, который нельзя отклонить по одной половине.
+
+**Files:**
+- Modify: `client/Assets/Scripts/Data/HeroConfig.cs` (`Parts` `:158-164` — 3 → **11**)
+- Modify: `client/Assets/Scripts/Data/MobConfig.cs` (`Parts` `:90-96` — 3 → **13**)
+- Modify: `client/Assets/Scripts/Editor/StageOneSceneBootstrap.cs` (девять литералов
+  `:3283…:3341` → раскладка пяти тел; `EnsureAimProxyChildren` `:4170-4171` растёт с тремя
+  прокси до одиннадцати-пятнадцати)
+- Modify: `client/Assets/Scripts/Data/SimConfigBuilder.cs` (правило 7 — пинованный список `PartId`)
+- Modify: `client/Assets/Tests/EditMode/TestConfigs.cs`, `ConfigTests.cs` (`SeedMob`),
+  `HitPartsTests.cs`, `HitZoneTests.cs`, `HitVolumeTests.cs`
+- Modify: `client/Assets/Scripts/Editor/PoseBaker.cs` (печатает кандидатов: кость → радиус меша)
+
+- [ ] **Step 1 (⛔ СНАЧАЛА ПРИБОР, А НЕ ЧИСЛА):** `PoseBaker` получает второй режим — печать
+      **кандидатов**: для каждой кости тела её имя, положение в позе покоя и **радиус,
+      измеренный по мешу** (максимум расстояния скиннингованных вершин до кости). Это и есть
+      источник радиусов; литералы «на глаз» здесь запрещены тем же доводом, которым спека
+      запретила брать их из COMBAT-001 (порча замера, находка круга 3 C-C4).
+
+```bash
+"$SCRATCH/tools/apply.sh" "$SCRATCH/runs/t4b-candidates" Ring.Editor.PoseBaker.PrintCandidates
+# ОЖИДАНИЕ: пять блоков, в каждом — 65/47/17/20/28 строк «кость: y=…, r=…».
+# ⛔ Расхождение числа костей со спекой §3.2 — СТОП: значит, риг сменился.
+```
+
+- [ ] **Step 2 (RED, три свидетеля раскладки):** ⛔ **свидетели — СВОЙСТВА, а не числа**: список
+      из 61 объёма нельзя пинить литералом, он изменится на первом же плейтесте.
+
+```csharp
+[Test]
+public void EveryBodyCarriesTheLayoutItsSpecPromises()   // тест 44 (новая), M393
+{
+    // ⛔ ЧИСЛО ОБЪЁМОВ — ЕДИНСТВЕННОЕ, ЧТО ПИНИТСЯ ЛИТЕРАЛОМ, и это
+    // характеризующий пин ровно того рода, что SimConfig_CarriesExactlyTwelve
+    // Fields: он не доказывает, что раскладка верна, он заставляет того, кто
+    // её меняет, прийти сюда и принять решение.
+    SimConfig cfg = TestConfigs.Default();
+    Assert.AreEqual(11, cfg.Hero.Parts.Length,     "сборщик: раскладка §3.2");
+    Assert.AreEqual(13, cfg.Chaser.Parts.Length,   "чейзер: раскладка §3.2");
+    Assert.AreEqual(9,  cfg.Gunner.Parts.Length,   "ганнер: рук нет вовсе");
+    Assert.AreEqual(13, cfg.Elite.Parts.Length,    "элита: 2 пушки + нога 4 сегмента и стопа ×2");
+    Assert.AreEqual(15, cfg.Director.Parts.Length, "Директор: нога 3 сегмента ×4");
+}
+
+[Test]
+public void TheLegsLeaveAGapAShotCanPassThrough()   // тест 45 (новая), M394
+{
+    // ⭐⭐ ЭТО И ЕСТЬ ПУНКТ ВЕХИ 1, ПРОВЕРЕННЫЙ МАШИНОЙ, А НЕ ГЛАЗАМИ: между
+    // двумя ногами обязан быть просвет шире снаряда, иначе «пуля проходит
+    // между ног» останется обещанием.
+    SimConfig cfg = TestConfigs.Default();
+    HitPart[] legs = System.Array.FindAll(cfg.Chaser.Parts, x => x.Zone == HitZone.Legs);
+    Assert.GreaterOrEqual(legs.Length, 2, "премисса: ног больше одной");
+    PoseTable t = cfg.Chaser.Poses;
+    // Разнос по z между самыми дальними друг от друга ногами, минус их радиусы.
+    float gap = LateralGapBetweenLegs(legs, in t) ;
+    Assert.Greater(gap, 2f * cfg.Weapon.ProjectileRadius,
+        "просвета между ног нет — «пуля проходит между ног» недостижимо");
+}
+
+[Test]
+public void TheGunnerHasNoArmVolumes()   // тест 46 (новая), M395
+{
+    // НЕГАТИВ, И ОН ЖЕ — ЗАЩИТА ОТ «ДОБАВИМ ВСЕМ ОДИНАКОВО»: у ганнера рук
+    // нет по замеру (§3.2), и раскладка обязана это уважать.
+    SimConfig cfg = TestConfigs.Default();
+    Assert.AreEqual(0, System.Array.FindAll(cfg.Gunner.Parts, x => IsArm(x)).Length,
+        "ганнеру приписаны руки, которых нет в его скелете");
+}
+```
+
+- [ ] **Step 2a (⛔ R-RED):** заглушка — раскладка **не тронута** (три пояса у каждого тела).
+      R-FILTER `HitPartsTests` → `EXIT=2`, красные — **ровно 44, 45** (46 зелена на трёх поясах и
+      является **сторожем**: её свидетель — мутация M395, и это записано здесь).
+- [ ] **Step 3 (GREEN, дефолты C#):** `HeroConfig.Parts` и `MobConfig.Parts` получают раскладку
+      §3.2 — пары костей из отчёта Step 1, радиусы **оттуда же**, зоны по §3.2 (⛔ **руки пока
+      несут `HitZone.Body`** — перечисление растёт только в T9, и объём, ссылающийся на
+      несуществующего члена, не скомпилируется), `DamageMult` по сегодняшним поясам,
+      `PartId` — **append-only, начиная с нуля, по порядку объявления**.
+      ⛔ **Верхний объём корпуса элиты и Директора сохраняет `HitZone.Head`** (находка круга 4
+      спеки, D-I8): множитель 1.7 и взрывная смерть `PersistentPropsDirector` висят на зоне, а не
+      на анатомии, и сегодня они там же.
+- [ ] **Step 4 (GREEN, правило 7 и доставка):** пинованный список `PartId` в `ValidateParts`
+      переписывается на новый набор; девять литералов бутстрапа заменяются раскладкой;
+      `EnsureAimProxyChildren` растёт. **Гейт — R-APPLY → R-ASSET:**
+
+```bash
+for f in HeroConfig MobChaserConfig MobGunnerConfig MobEliteConfig MobDirectorConfig; do
+  echo -n "$f: "; /usr/bin/grep -c "BoneA" "client/Assets/Data/$f.asset"; done
+# ОЖИДАНИЕ: 11 / 13 / 9 / 13 / 15 — ровно раскладка §3.2.
+```
+
+- [ ] **Step 5 (⛔ ПЕРЕСЧЁТ ЧУЖИХ ФИКСТУР — ЦЕНА ЭТОГО ТАСКА, НАЗВАННАЯ ЧЕСТНО):** высотные
+      фикстуры (`ProjectileHeightTests`, `PvpDamageTests`, `BarrierHeightTests`,
+      `EventDeliveryTests`, `ImpactPhysicsTests`) считают доли **головной части** и целятся в
+      пояса; с одиннадцатью объёмами эти числа двигаются. Каждое пересчитывается **числом
+      фикстуры** и пишется в отчёт таска **ДО** прогона (правило 179/394), а не подгоняется.
+- [ ] **Step 6 (мутации M393, M394, M395 — три новые):** M393 (раскладка урезана до трёх поясов),
+      M394 (ноги сведены в одну капсулу по оси), M395 (руки приписаны и ганнеру).
+      R-TEST → красных ровно три эталона; свипы → R-COMMIT **двумя**:
+      `chore(app-94sk): T4b — раскладка объёмов доставлена в пять ассетов` и
+      `feat(app-94sk): T4b — одиннадцать-пятнадцать объёмов на тело вместо трёх поясов`.
 
 ### Task T5a: крен становится вектором — миграция типа
 
@@ -2124,6 +2410,16 @@ if (m.Ai != MobAiState.Downed && math.length(m.Tilt) > cfg.TiltFallAngle)
       (Step 2a) вернёт не то число, которого ждёт `:454`.
       ⚠ **ЭТО ПЕРВОЕ ИЗ ДВУХ КАСАНИЙ `DeterminismTests.cs` В ЗАХОДЕ** (второе — T11), и md5 файла
       двинется **здесь**. Это законно и записано: пин md5 охраняет **эталоны**, а не файл.
+- [ ] **Step 1a (⛔ R-RED — ПРАВКА КРУГА 3: у T5a не было красной фазы ВОВСЕ):**
+      ⛔⛔ **Фикстура 23б зелена с рождения, если не построить ей заглушку.** Проверено лично:
+      `StateHash64.Add(ulong, float2)` **существует** (`StateHash64.cs:29`), поэтому в момент, когда
+      Step 1 меняет тип `m.Tilt` на `float2`, свёртка `HashMob`/`HashPlayer` начинает брать **обе**
+      компоненты сама собой, и обе половины 23б проходят. По правилу 427 это делало бы её
+      **сторожем**, а не свидетелем, а рецепт R-RED на `EXIT=0` велит остановиться.
+      ⇒ **заглушка ставит код В СОСТОЯНИЕ МУТАНТА M391:** `HashMob` и `HashPlayer` сворачивают
+      `StateHash64.Add(h, m.Tilt.x)` — только первую компоненту, как было до векторизации.
+      R-FILTER `WorldLifecycleTests` → `EXIT=2`, красная — **ровно 23б, обе её половины**.
+      ⚠ И строка таблицы «Что красное» у T5a исправляется: **не «НОЛЬ КРАСНЫХ», а одна**.
 - [ ] **Step 2 (⛔⛔ СВОЙ СВИДЕТЕЛЬ ВТОРОЙ КОМПОНЕНТЫ — ФИКСТУРА 23б, И ЭТО НАХОДКА ПЛАНА):**
 
 ```csharp
@@ -2290,7 +2586,13 @@ public float MobTurnDegPerSec;         // MobSimConfig  — доворот те�
 ### Task T5c: курс тела в симуляции — `BodyFacing` и `MobState.Dir`
 
 **Files:**
-- Create: `client/Assets/Scripts/Simulation/Core/BodyFacing.cs` (+ `.meta`)
+⛔⛔ **`Create:` У ЭТОГО ТАСКА НЕТ ВОВСЕ — ПРАВКА КРУГА 3.** v1–v3 заводили
+  `client/Assets/Scripts/Simulation/Core/BodyFacing.cs` под «подсистему, которой нет». Подсистема
+  **есть**: `Geometry.RotateTowards(float2 from, float2 to, float maxRad)` (`Geometry.cs:915`) —
+  та же тройка аргументов, тот же кламп по кратчайшей дуге, та же сохранённая длина, та же ветка
+  нулевого входа; у неё три готовых свидетеля (`GeometryTests.cs:175`, `:186`, `:201`) и живой
+  вызывающий `PlayerMovementSystem.cs:218`. Новым в T5c является **только закон эволюции** — куда
+  доворачивать, — и его дом уже в Files ниже.
 - Modify: `Simulation/Core/SimStates.cs` (`PlayerState.Dir`, `MobState.Dir` — `float2`),
   `Simulation/AI/MobAiSystem.cs` (закон эволюции и начальное значение),
   `Simulation/Core/SimulationWorld.cs` (`SpawnMob` — инициализация `Dir`; фолды),
@@ -2317,9 +2619,20 @@ public float MobTurnDegPerSec;         // MobSimConfig  — доворот те�
 /// ⚠ ЦЕНА НАЗВАНА: кукла перестанет доворачиваться плавнее, чем 30 раз в
 /// секунду — ровно риск условия Н51. Смягчение: презентация интерполирует
 /// между тиками, как уже делает с позицией (пункт вехи 2).
-public static class BodyFacing
+// ⛔⛔ ЭТОТ КЛАСС ОТМЕНЁН КРУГОМ 3 РЕВЬЮ. ОСТАВЛЕН ЗДЕСЬ ТОЛЬКО КАК ЗАПИСЬ О
+// ТОМ, ЧЕГО ДЕЛАТЬ НЕ НАДО — исполнителю писать его НЕ НУЖНО.
+// Довод v2 «это не переписать формулу, а написать подсистему, которой нет»
+// оказался ложным: подсистема есть. `Geometry.RotateTowards(float2 from,
+// float2 to, float maxRad)` (Geometry.cs:915, проверено лично) — та же тройка
+// аргументов, тот же кламп по КРАТЧАЙШЕЙ дуге, та же сохранённая длина, та же
+// ветка нулевого входа, и у неё уже ТРИ свидетеля (GeometryTests.cs:175, :186,
+// :201) и живой вызывающий (PlayerMovementSystem.cs:218, рулевое слайда).
+// ⇒ файла `Simulation/Core/BodyFacing.cs` НЕТ; T5c пишет только ЗАКОН
+// ЭВОЛЮЦИИ (куда доворачивать), и дом у него уже открыт — `MobAiSystem` и
+// `SimulationWorld.SpawnMob`, оба в Files таска.
+public static class BodyFacing_ОТМЕНЁН
 {
-    /// Доворот с конечной скоростью. `to` — желаемое направление (движение или
+    /// (не писать) Доворот с конечной скоростью. `to` — желаемое направление (движение или
     /// прицел), `maxRad` — `DegPerSec * dt`.
     public static float2 Step(float2 current, float2 to, float maxRad);
 }
@@ -2337,27 +2650,52 @@ public void TheMobsHeadingTurnsAtAFiniteRate()   // тест 32в, M364
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(41, cfg);
     TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+    // ⛔⛔ КУРС ВЫСТАВЛЯЕТСЯ ОТ ЦЕЛИ, А НЕ К НЕЙ, И ЭТО ПРАВКА КРУГА 3.
+    // v3 ставила Dir = (1,0) и переносила сборщика в (12,0) — то есть ТУДА,
+    // КУДА МОБ УЖЕ СМОТРЕЛ (OpenField держит сборщика в начале координат,
+    // PlayerSpawnRingFrac = 0, TestConfigs.cs:744). dot оставался равен 1,
+    // и оба ассерта проходили на любой реализации, включая заглушку.
+    // Сборщик НЕ двигается: он в (0,0), моб в (6,0), значит цель у моба —
+    // направление (-1,0), и Dir = (+1,0) — это ровно 180° от неё.
     var m = w.Mobs[0]; m.Dir = new float2(1f, 0f); w.SetMobForTest(0, m);
-    // Цель ровно позади: доворот на 180° обязан занять НЕСКОЛЬКО тиков.
-    TestWorlds.RelocatePlayerForTest(w, 0, new float2(12f, 0f));
+    float2 toTarget = new float2(-1f, 0f);
+    Assert.AreEqual(-1f, math.dot(w.Mobs[0].Dir, toTarget), 1e-5f,
+        "премисса фикстуры: курс обязан стоять ровно против цели, иначе доворот не наблюдаем");
+
     TestWorlds.IdleTicks(w, 1);
-    float afterOne = math.dot(w.Mobs[0].Dir, new float2(1f, 0f));
-    Assert.Greater(afterOne, -0.99f, "доворот мгновенный — сектор станет тавтологией");
+    float afterOne = math.dot(w.Mobs[0].Dir, toTarget);
+    // ПОЛОВИНА 1 — НЕГАТИВНАЯ: доворот не мгновенный. Её красит мутант M364.
+    Assert.Less(afterOne, 0.99f, "доворот мгновенный — сектор станет тавтологией");
     // Премисса СВОЙСТВОМ: за один тик доворот не может превысить своё число.
     float maxRad = math.radians(cfg.Chaser.MobTurnDegPerSec) * SimulationWorld.TickDt;
-    Assert.LessOrEqual(math.acos(math.clamp(afterOne, -1f, 1f)), maxRad + 1e-4f,
-        "доворот за тик больше собственной скорости");
+    float turnedRad = math.acos(math.clamp(math.dot(w.Mobs[0].Dir, new float2(1f, 0f)), -1f, 1f));
+    Assert.LessOrEqual(turnedRad, maxRad + 1e-4f, "доворот за тик больше собственной скорости");
+
+    // ⛔ ПОЛОВИНА 2 — ПОЛОЖИТЕЛЬНАЯ, И ИМЕННО ОНА КРАСНА НА ЗАГЛУШКЕ
+    // (maxRad = 0 оставил бы курс на месте навсегда): за столько тиков,
+    // сколько нужно на 180° при своей скорости, курс обязан ДОЙТИ.
+    int ticksFor180 = (int)math.ceil(math.PI / maxRad) + 2;
+    TestWorlds.IdleTicks(w, ticksFor180);
+    Assert.Greater(math.dot(w.Mobs[0].Dir, toTarget), 0.99f,
+        $"за {ticksFor180} тиков курс не дошёл до цели — доворота нет вовсе");
 }
 ```
 
 - [ ] **Step 1a (⛔ R-RED — заглушки-КОНСТАНТЫ и красный прогон, фикстура 32в):**
-      Заглушки: `BodyFacing.Step(float2 dir, float2 target, float maxRadPerTick)` →
-      `return dir;` (доворота нет); `PlayerState.Dir`/`MobState.Dir` объявляются и **никем не
-      читаются** — `SnapshotAssembler` до Step 3 продолжает выводить `Dir` из `Vel`.
-      ⛔ **`return target;` заглушкой не годится** — это мгновенный доворот, то есть **мутант
-      M364**, и фикстура 32в на нём была бы ЗЕЛЁНОЙ.
-      R-FILTER `MobAiTests` → `EXIT=2`, красная — **ровно 32в**.
-- [ ] **Step 2 (GREEN):** `BodyFacing.Step` + закон эволюции в `MobAiSystem` + **инициализация
+      Заглушка **одна и она у вызывающего**: `MobAiSystem` зовёт
+      `Geometry.RotateTowards(m.Dir, want, maxRad)` с **`maxRad = 0f`** — доворота нет, курс стоит
+      там, где его поставил `SpawnMob`. `PlayerState.Dir`/`MobState.Dir` объявляются и **никем не
+      читаются** (`SnapshotAssembler` до Step 3 продолжает выводить `Dir` из `Vel`).
+      ⛔ **Кламп заглушкой не трогать:** `RotateTowards` пришпилен тремя живыми тестами, и
+      подмена его тела покрасила бы чужое.
+      ⛔⛔ **И ФИКСТУРА 32в ОБЯЗАНА ИМЕТЬ ПОЛОЖИТЕЛЬНУЮ ПОЛОВИНУ — ПРАВКА КРУГА 3.** v3 писала
+      «красная — ровно 32в», и это было **ложно**: при `maxRad = 0` курс остаётся `(1,0)`,
+      `dot == 1`, и **оба** её ассерта проходят. Негативная половина («доворот не мгновенный»)
+      красится мутантом M364, положительная («за N тиков курс ДОХОДИТ до цели») — заглушкой.
+      Без второй половины у фикстуры нет красной фазы вовсе.
+      R-FILTER `MobAiTests` → `EXIT=2`, красная — **ровно 32в, и именно на положительной половине**.
+- [ ] **Step 2 (GREEN):** закон эволюции в `MobAiSystem` поверх готового
+      `Geometry.RotateTowards` (нового файла нет) + **инициализация
       при спавне**.
       ⛔ **`new MobState { … }` зануляет всё неперечисленное, а моб с нулевым `Dir` не выполнит
       сектор, пока не сдвинется** (находка круга 3 спеки, D-C9) ⇒ `Dir` инициализируется
@@ -2385,6 +2723,11 @@ public void TheMobsHeadingTurnsAtAFiniteRate()   // тест 32в, M364
 
 **Files:**
 - Create: `client/Assets/Scripts/Simulation/Core/PoseKey.cs` (+ `.meta`)
+- Modify: `client/Assets/Scripts/Simulation/Core/PoseTable.cs` — ⚠ **правка круга 3**: Interfaces
+  этого таска объявляют `PoseTable.Sample`, а файла в Files не было; R-COMMIT сверяет
+  `git diff --cached --stat` со скоупом и остановил бы коммит
+- Modify: `client/Assets/Scripts/Simulation/Movement/PlayerMovementSystem.cs` (производитель
+  `LowerBlend` — Step 2)
 - Modify: `Simulation/Core/SimStates.cs` (плоские поля в `PlayerState` и `MobState`),
   `Simulation/Core/SimulationWorld.cs` (`HashPlayer`, `HashMob`)
 - Modify: `Tests/EditMode/PredictionParityTests.cs` (`RoleByField`), `HotTweakTests.cs`
@@ -2441,6 +2784,14 @@ public struct PoseKey                                       // 14 байт
     /// конфигурации (находка круга 5 А-3): она одинакова в обеих сравниваемых
     /// конфигурациях по построению, поэтому в `ArenaTopologyMatches` не входит.
     public const float TiltQuantStep = 0.01f;   // рад/градация; 127 * 0.01 = 1.27 рад = 72.8°
+    // ⛔⛔ И У ЭТОГО ЧИСЛА ЕСТЬ ПОТОЛОК, КОТОРЫЙ ОБЯЗАН БЫТЬ ПРОВЕРЕН ПРАВИЛОМ
+    // (находка круга 3): sbyte × 0.01 насыщается на 1.27 рад = 72.8°, тогда как
+    // TiltFallAngle объявлен [Range(0.1f, 3.14f)] (MobConfig.cs:71), а T10b сам
+    // считает пики 90–361°. Насыщенный крен в истории означает, что отмотанная
+    // поза расходится с той, по которой судили, — и тем сильнее, чем интереснее
+    // ситуация. ⇒ ПРАВИЛО 15а (T6c): `TiltFallAngle <= 127 * TiltQuantStep` у
+    // каждого архетипа, иначе сборка конфигурации отвергается. Свидетель —
+    // фикстура 18д, мутация M396.
 
     /// Свёртка ключа в хеш состояния — ⛔ ПОИМЁННО, а не `MemoryMarshal`:
     /// побайтовая свёртка структуры зависела бы от паддинга, а он — от
@@ -2459,7 +2810,14 @@ public struct PoseKey                                       // 14 байт
 /// («THE SCRATCH BUFFER ARRIVES AS A PARAMETER»), и она же держит фикстуру 41.
 /// ⚠ `into.Length` обязан быть >= table.BoneCount; короче — ArgumentException,
 /// а не молчаливая обрезка.
-public static void Sample(in PoseTable table, in PoseKey key, float3[] into);
+/// ⛔⛔ ТРИ ИСТОЧНИКА, А НЕ ДВА (§3.6, правка круга 3):
+///   1) нижний слой — две строки дерева, смешанные весом `LowerBlend`;
+///   2) РЕАКЦИЯ — строка `ReactionClip/ReactionPhase` весом от фазы; ⚠ у МОБА
+///      она **заменяет** нижний слой, у сборщика — **смешивается** (§3.6);
+///   3) слой прицеливания сборщика — поверх, ПО МАСКЕ `UpperLayerMask`.
+/// Композиция: `маска( lerp( дерево, реакция, w(phase) ), прицел )`.
+/// `singleLayer` — признак моба (слой один), и он же выбирает «заменяет».
+public static void Sample(in PoseTable table, in PoseKey key, bool singleLayer, float3[] into);
 ```
 
 ⛔⛔ **И ЭТО МЕНЯЕТ СИГНАТУРУ `HitVolumes.Resolve`, ОБЪЯВЛЕННУЮ В T2** — сказано здесь, а не
@@ -2521,11 +2879,11 @@ public void TheBlendWeightMovesThePose()   // тест 19, M346
     PoseTable.Sample(in table, in highWeight, b);
 
     const int Foot = 1;        // кость стопы фикстурной таблицы
-    Assert.AreNotEqual(table.Bones[0 * table.BoneCount + Foot].z,
-                       table.Bones[1 * table.BoneCount + Foot].z, 1e-4f,
+    Assert.Greater(math.abs(table.Bones[0 * table.BoneCount + Foot].z
+                            - table.Bones[1 * table.BoneCount + Foot].z), 1e-4f,
         "премисса фикстуры: две строки таблицы обязаны различаться в стопе, иначе вес "
         + "дерева нечему двигать и тест зелен на любой реализации");
-    Assert.AreNotEqual(a[Foot].z, b[Foot].z, 1e-4f,
+    Assert.Greater(math.abs(a[Foot].z - b[Foot].z), 1e-4f,
         "вес дерева не двигает позу ног — смешивание строк выброшено");
     // И СЕРЕДИНА — ТОЖЕ ПРЕДМЕТ: вес, взятый как «ближайшая строка», прошёл бы
     // два ассерта выше и провалил бы этот.
@@ -2544,28 +2902,35 @@ public void TheDampedWeightDoesNotStickAtTheQuantizationStep()   // тест 20,
     // шаг демпфера за тик может оказаться меньше 1/255, и вес ЗАЛИПНЕТ, если
     // квантовать его в байт внутри симуляции. ⇒ в симуляции вес считается во
     // float, в байт квантуется ТОЛЬКО для ключа.
-    // Фикстура: тело трогается с места и разгоняется; за N тиков LowerBlend
-    // обязан пройти от 0 до >0.5, а не застрять.
+    // ⛔⛔ ИСПЫТУЕМЫЙ — СБОРЩИК, А НЕ МОБ, И ЭТО ПРАВКА КРУГА 3. v3 спавнила
+    // чейзера и требовала от него LowerBlend «при постоянной демпфера 0.1 с».
+    // Проверено по коду: `SpeedDampTime` живёт ТОЛЬКО у сборщика
+    // (GameFeelConfig.cs:109 → PlayerVisualParams.cs:18 → PlayerVisual.cs:261),
+    // у мобов дерева смешивания нет вовсе — у них CrossFade по порогам
+    // WalkEnterSpeed/RunEnterSpeed. И сам план кладёт SpeedDampTime в
+    // HeroSimConfig (T5b), а мобу даёт только MobTurnDegPerSec. Фикстура была
+    // красной на верном коде, а мутант M347 — неубиваемым.
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
-    w.SpawnMobForTest(MobType.Chaser, new float2(20f, 0f));   // далеко: чейзер побежит
-    Assert.AreEqual(0f, w.Mobs[0].LowerBlend, 1e-6f,
-        "премисса фикстуры: моб стартует стоя, иначе движение веса не наблюдаемо");
+    Assert.AreEqual(0f, w.PlayerAt(0).LowerBlend, 1e-6f,
+        "премисса фикстуры: сборщик стартует стоя, иначе движение веса не наблюдаемо");
 
-    // ⛔ ЧИСЛО ТИКОВ ПОСЧИТАНО, А НЕ ВЗЯТО: постоянная демпфера 0.1 с, dt 1/30 ⇒
-    // за тик вес проходит dt/0.1 = 1/3 оставшегося пути; до 0.5 хватает трёх
-    // тиков даже при линейном приближении, берём 10 с запасом.
-    for (int i = 0; i < 10; i++) w.TickAll(new SimInput[1]);
+    // ⛔ ЧИСЛО ТИКОВ ПОСЧИТАНО, А НЕ ВЗЯТО: при постоянной SpeedDampTime 0.1 с и
+    // dt 1/30 за тик проходится dt/T = 1/3 оставшегося пути, значит половина
+    // берётся уже на ВТОРОМ тике (1 − (2/3)² = 0.556). Десять — с запасом.
+    var input = new SimInput[1];
+    input[0].MoveDir = new float2(1f, 0f);          // бежим на полной скорости
+    for (int i = 0; i < 10; i++) w.TickAll(input);
 
-    Assert.Greater(w.Mobs[0].LowerBlend, 0.5f,
+    Assert.Greater(w.PlayerAt(0).LowerBlend, 0.5f,
         "вес залип: за 10 тиков он не дошёл до половины — значит, его квантуют в байт "
         + "внутри симуляции, и шаг за тик меньше 1/255 съедается округлением");
-    // ВТОРАЯ ПОЛОВИНА — ЧТО ОН ВООБЩЕ ДВИЖЕТСЯ ПЛАВНО, а не прыгает в 1:
-    // мутант «демпфера нет вовсе» прошёл бы ассерт выше.
+
+    // ВТОРАЯ ПОЛОВИНА — ЧТО ОН ДВИЖЕТСЯ ПЛАВНО, а не прыгает в 1: мутант
+    // «демпфера нет вовсе» прошёл бы ассерт выше.
     var w2 = new SimulationWorld(1, cfg);
-    w2.SpawnMobForTest(MobType.Chaser, new float2(20f, 0f));
-    w2.TickAll(new SimInput[1]);
-    Assert.That(w2.Mobs[0].LowerBlend, Is.InRange(1e-4f, 0.9f),
+    w2.TickAll(input);
+    Assert.That(w2.PlayerAt(0).LowerBlend, Is.InRange(1e-4f, 0.9f),
         "за ОДИН тик вес дошёл до единицы — демпфера нет, вес присваивается целевым");
 }
 ```
@@ -2578,14 +2943,21 @@ public void TheDampedWeightDoesNotStickAtTheQuantizationStep()   // тест 20,
       дерева **менял** позу ног, и на нулях она красна по существу, а не по исключению.
       R-FILTER `PoseTableTests` → `EXIT=2`, `testcasecount` = ожидаемое (пишется ДО прогона),
       красные — **ровно 19 и 20**.
-- [ ] **Step 2 (GREEN, поля + упаковщик + квантование):** плоские поля объявляются, `PoseKey`
+- [ ] **Step 2 (GREEN, поля + упаковщик + квантование + ⛔ ПРОИЗВОДИТЕЛЬ ВЕСА):** плоские поля
+      объявляются, `PoseKey`
       собирается единственным упаковщиком; крен квантуется **абсолютным шагом**
       `PoseKey.TiltQuantStep` — ⛔ **константа НА `PoseKey`, и дом назван** (правка круга 2: v2
       писала имя без дома, а у числа, живущего в упаковщике и в фикстурах, дом обязан быть один).
-      ⛔ **И к ней же — новый тестовый шов `SimulationWorld.HistoryPoseKeyForTest(int slot,
-      int tick)`**, `internal`, рядом с `SetMobForTest` (`:3080`): без него ни одна фикстура не
-      может прочитать ЗАПИСАННЫЙ ключ, а именно он — предмет фикстуры 23а. Конвенция шва —
-      файла: «*ForTest seam», `internal`, без побочных эффектов.
+      ⛔⛔ **НОВОГО ШВА К ИСТОРИИ НЕ ЗАВОДИТСЯ, И ЭТО ПРАВКА КРУГА 3 ПРОТИВ СОБСТВЕННОГО
+      ДЕФЕКТА v3.** v3 требовала завести `SimulationWorld.HistoryPoseKeyForTest(int slot, int tick)`
+      со словами «без него ни одна фикстура не может прочитать записанный ключ». Оба утверждения
+      неверны, и запрет записан **в самом коде дословно** (`SimulationWorld.cs:3184-3187`):
+      «⛔ **AND THERE IS NO SECOND PROPERTY.** A narrow read-only forwarder beside this one would be
+      a SECOND SPELLING of `PosAt` on the world, which is what **RULING 148** removed the other seam
+      of Т25 for». Шов уже есть — `internal PositionHistory History => _history` (`:3200`), и им
+      пользуются десятки фикстур (`RewindTests.cs:415`, `:495`, `:558`, `:746`, `:782`, `:2334`,
+      `:2344`). ⇒ фикстура 23а читает запись **через него**, а `PoseKey` едет внутри `Record`
+      (T7 Step 2), то есть отдаётся тем же `out Record` (`PositionHistory.cs:390`).
       ⛔ **АБСОЛЮТНЫМ, А НЕ ДОЛЕЙ `TiltFallAngle`** (находка круга 3 спеки, D-I1): `TiltFallAngle`
       — горячая ручка, `ApplyConfig` специально клампит `m.Tilt` в новое значение, и при
       квантовании «256 градаций на диапазон» после живой правки тот же байт означал бы **другой
@@ -2594,6 +2966,24 @@ public void TheDampedWeightDoesNotStickAtTheQuantizationStep()   // тест 20,
       §4.2, а в §3.6 — обратное; ⛔ **права вторая половина**, находка круга 5 А-3, принята):
       константа бинаря одинакова в обеих сравниваемых конфигурациях **по построению**, сравнение
       было бы мёртвым кодом, а негативный тест на него — ненаписуемым.
+      ⛔⛔ **И ВЕС ДЕРЕВА ЗДЕСЬ ЖЕ ОБРЕТАЕТ ПРОИЗВОДИТЕЛЯ — БЕЗ НЕГО ФИКСТУРЫ 19 И 20 НЕ ЗЕЛЕНЕЮТ
+      НИ НА КАКОМ КОДЕ** (правка круга 3: v1–v3 объявляли поле и не писали, кто его считает):
+
+```csharp
+// PlayerMovementSystem (или TickAll рядом с ним) — в порядке тика ПОСЛЕ движения.
+// ⛔ СЧИТАЕТСЯ ВО FLOAT, КВАНТУЕТСЯ ТОЛЬКО В КЛЮЧ (в этом весь смысл теста 20).
+float speed01 = math.saturate(math.length(p.Vel) / hero.MaxSpeed);
+// Экспоненциальный демпфер с постоянной SpeedDampTime — тот же закон, которым
+// сегодня сглаживает Animator.SetFloat(..., dampTime, dt) в PlayerVisual:261.
+float k = hero.SpeedDampTime > 1e-5f
+        ? 1f - math.exp(-SimulationWorld.TickDt / hero.SpeedDampTime) : 1f;
+p.LowerBlend += (speed01 - p.LowerBlend) * k;
+```
+
+      ⚠ **У МОБОВ ВЕСА НЕТ, И ЭТО РЕШЕНИЕ, А НЕ ПРОПУСК:** дерева смешивания у них нет вовсе
+      (`CrossFade` по порогам `WalkEnterSpeed`/`RunEnterSpeed`), `SpeedDampTime` живёт только у
+      сборщика. ⇒ `MobState` поля `LowerBlend` **не получает**, и расписка `MobState` — **+7**,
+      а не +8 (`PlayerState` остаётся +10).
 - [ ] **Step 3 (три сторожа — тем же таском, который объявляет поля):**
       `PredictionParityTests.RoleByField` += **ДЕСЯТЬ** записей — по одной на каждое объявленное
       поле, иначе сторож `:1090` (`Assert.AreEqual(PlayerStateFields.Length, RoleByField.Count)`)
@@ -2660,10 +3050,13 @@ public void TheKeyCarriesTheTiltAtJudgementTime_NotAtTheEndOfTheTick()   // те
     w.TickAll(new SimInput[1]);
 
     float2 tiltAfter = w.Mobs[0].Tilt;
-    Assert.AreNotEqual(tiltBefore.x, tiltAfter.x, 1e-4f,
+    Assert.Greater(math.abs(tiltBefore.x - tiltAfter.x), 1e-4f,
         "премисса фикстуры: за тик крен обязан сдвинуться, иначе «до» и «после» неразличимы");
     // Ключ в ИСТОРИИ этого тика обязан нести крен НАЧАЛА тика, а не конца.
-    PoseKey written = w.HistoryPoseKeyForTest(w.Mobs[0].HistorySlot, w.CurrentTick);
+    Assert.IsTrue(w.History.PosAt(w.Mobs[0].HistorySlot, w.CurrentTick, w.Mobs[0].Pos,
+        out PositionHistory.Record rec, out _),
+        "премисса фикстуры: запись этого тика обязана быть в истории");
+    PoseKey written = rec.Key;
     Assert.AreEqual(Quant(tiltBefore.x, PoseKey.TiltQuantStep), written.TiltX,
         "ключ снят ПОСЛЕ TiltSystem — расхождение на тик стало нулевым, и порядок тика "
         + "молча изменился (M382)");
@@ -2683,32 +3076,49 @@ public void ATiltedMobIsShotWhereItLies()   // тест 26, M353
 {
     // ⭐⭐ Крен входит в ключ позы, объёмы следуют за ним ⇒ лежащий моб
     // простреливается ЛЁЖА, а не стоя.
+    // ⛔⛔ ГЕОМЕТРИЯ ПЕРЕСЧИТАНА КРУГОМ 3, И ПРЕЖНЯЯ БЫЛА КРАСНОЙ НА ВЕРНОМ
+    // КОДЕ. v3 стреляла на высоте 0.45 и объявляла премиссой, что по СТОЯЩЕМУ
+    // телу это промах. Пересчитано численно: по стоящему туда попадает и нога
+    // (0.316 против порога 0.47), и корпус (0.430 против 0.62) — фикстура
+    // краснела бы на любой реализации. Рабочая высота — ГРУДЬ ЛЕЖАЩЕГО ТЕЛА,
+    // и она считается ИЗ ТАБЛИЦЫ, а не литералом.
+    const int ChestBone = 3;                               // грудь в ChaserRestPose
+    const float Tilt85 = 1.4835f;                          // 85°, за TiltFallAngle 0.9
     SimConfig cfg = TestConfigs.OpenField();
     TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);   // ⛔ ДО конструктора мира
+    float aimH = cfg.Chaser.Poses.Bones[ChestBone].y * math.cos(Tilt85);   // 2.12·cos85 = 0.185
+
     var w = new SimulationWorld(1, cfg);
     w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
     var m = w.Mobs[0];
-    m.Tilt = new float2(math.radians(85f), 0f);            // лежит
+    m.Tilt = new float2(Tilt85, 0f);                       // лежит
+    m.TiltVel = float2.zero;
     w.SetMobForTest(0, m);
 
-    // Выстрел НА ВЫСОТЕ ГРУДИ лежащего тела: 0.45 м — там, где у стоящего
-    // чейзера ничего нет (его пояс ног начинается с 0.05 и идёт до 0.88, но
-    // по ПЛАНУ нога стоит в начале координат, а лежащая грудь ушла на 1.8 м
-    // вперёд по x — пересчитано питоном, см. отчёт таска).
-    int before = w.StatsAt(0).Hits;
-    TestWorlds.FireAimed3D(w, new float2(0f, 0f), 0.45f, new float2(9.8f, 0f), 0.45f);
+    // ⛔ СНАРЯД СПАВНИТСЯ ВПЛОТНУЮ, А НЕ ЛЕТИТ ВОСЕМЬ МЕТРОВ (находка круга 3):
+    // при ProjectileSpeed 35 полёт занял бы ~7 тиков, а TiltSystem интегрирует
+    // пружину КАЖДЫЙ тик (TiltSettleSeconds 0.9) — FreezeArchetype её не
+    // морозит, он зануляет только MaxSpeed/Accel. К моменту судейства крен был
+    // бы уже не 85°, и фикстура мерила бы не то число, на котором построена.
+    int before = w.StatsAt(0).ShotsHit;
+    w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(7.2f, 0f),
+        new float2(cfg.Weapon.ProjectileSpeed, 0f), aimH, velZ: 0f,
+        cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
     TestWorlds.RunUntilProjectilesDie(w);
-    Assert.AreEqual(before + 1, w.StatsAt(0).Hits,
-        "выстрел в лежащее тело прошёл мимо — объёмы остались стоять, крен в позу не вошёл");
+    Assert.AreEqual(before + 1, w.StatsAt(0).ShotsHit,
+        "выстрел в грудь лежащего тела прошёл мимо — объёмы остались стоять, крен в позу не вошёл");
 
     // ПРЕМИССА ОТДЕЛЬНЫМ МИРОМ: по СТОЯЩЕМУ телу тот же выстрел обязан
-    // промахнуться, иначе тест зелен и без крена.
+    // промахнуться, иначе тест зелен и без крена. Пересчитано: на 0.185
+    // ближайшая нога в 0.511 при пороге 0.47, корпус в 0.695 при 0.62.
     var wUpright = new SimulationWorld(1, cfg);
     wUpright.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
-    int b2 = wUpright.StatsAt(0).Hits;
-    TestWorlds.FireAimed3D(wUpright, new float2(0f, 0f), 0.45f, new float2(9.8f, 0f), 0.45f);
+    int b2 = wUpright.StatsAt(0).ShotsHit;
+    wUpright.SpawnProjectileForTest(ProjectileOwner.Player, new float2(7.2f, 0f),
+        new float2(cfg.Weapon.ProjectileSpeed, 0f), aimH, velZ: 0f,
+        cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
     TestWorlds.RunUntilProjectilesDie(wUpright);
-    Assert.AreEqual(b2, wUpright.StatsAt(0).Hits,
+    Assert.AreEqual(b2, wUpright.StatsAt(0).ShotsHit,
         "премисса фикстуры: по стоящему телу этот выстрел обязан быть промахом");
 }
 
@@ -2720,22 +3130,41 @@ public void ATiltedMobIsNotImmuneToFlatFire()   // тест 26а, M354
     // зелёным), потому что иначе «a toppled mob would be invulnerable to flat
     // fire». Здесь проверяется вторая половина: настильный огонь по лежащему
     // телу продолжает попадать.
+    // ⛔⛔ КРЕН ЗДЕСЬ — РОВНО TiltFallAngle, А НЕ 85°, И ЭТО ПРАВКА КРУГА 3.
+    // «Опрокинут» в этом проекте определено числом: выше TiltFallAngle (0.9 рад
+    // = 51.6°) моб уходит в Downed. v3 брала 85° «для наглядности» и делала
+    // фикстуру красной на верном коде: пересчитано численно, при 85° крыша
+    // САМОЙ ВЫСОКОЙ капсулы лежащего тела — 0.805 м, то есть настильный огонь с
+    // MuzzleHeight 1.0 проходит НАД телом физически, при любой реализации.
+    // При 51.6° корпус стоит ровно на линии огня (d = 0.000 при пороге 0.62),
+    // и именно это и есть предмет: опрокидывание НЕ делает тело непоражаемым.
+    const int ChestBone = 3;
     SimConfig cfg = TestConfigs.OpenField();
     TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
     var w = new SimulationWorld(1, cfg);
     w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
     var m = w.Mobs[0];
-    m.Tilt = new float2(math.radians(85f), 0f);
+    m.Tilt = new float2(cfg.Chaser.TiltFallAngle, 0f);   // ровно порог опрокидывания
+    m.TiltVel = float2.zero;
     w.SetMobForTest(0, m);
 
+    // Премисса ЧИСЛОМ: крыша лежащего корпуса обязана накрывать высоту дула,
+    // иначе промах был бы физикой, а не дефектом.
+    float chestTop = cfg.Chaser.Poses.Bones[ChestBone].y * math.cos(cfg.Chaser.TiltFallAngle)
+                   + cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius;
+    Assert.Greater(chestTop, cfg.Hero.MuzzleHeight,
+        "премисса фикстуры: на этом крене линия дула обязана пересекать корпус");
+
     // НАСТИЛЬНЫЙ огонь — с высоты дула по горизонтали, как стреляет игрок.
-    int before = w.StatsAt(0).Hits;
-    TestWorlds.FireAimed3D(w, new float2(0f, 0f), cfg.Hero.MuzzleHeight,
-        new float2(9.8f, 0f), cfg.Hero.MuzzleHeight);
+    // Вплотную, по той же причине, что и у фикстуры 26: пружина не заморожена.
+    int before = w.StatsAt(0).ShotsHit;
+    w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(7.2f, 0f),
+        new float2(cfg.Weapon.ProjectileSpeed, 0f), cfg.Hero.MuzzleHeight, velZ: 0f,
+        cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
     TestWorlds.RunUntilProjectilesDie(w);
-    Assert.AreEqual(before + 1, w.StatsAt(0).Hits,
-        "лежащий моб стал непоражаемым настильным огнём — ровно цена Р375, которой не "
-        + "должно быть: части НЕ поворачиваются за креном сами по себе");
+    Assert.AreEqual(before + 1, w.StatsAt(0).ShotsHit,
+        "опрокинутый моб стал непоражаемым настильным огнём — ровно цена Р375, названная "
+        + "риском Р-K; свидетель обязан краснеть на мутанте M354");
 }
 ```
 
@@ -2769,6 +3198,10 @@ public void ATiltedMobIsNotImmuneToFlatFire()   // тест 26а, M354
       берётся первая фаза клипа), **M348** (верхний слой сборщика игнорируется), **M353** (крен
       не входит в позу), **M354** (части поворачиваются вместе с креном), **M382** (крен
       снимается в ключ после `TiltSystem`).
+- [ ] **Step 4а (⛔ verify GREEN — ПРАВКА КРУГА 3: у восьми тасков его не было вовсе):**
+      R-FILTER `PoseTableTests` → PASS; R-FILTER `HitVolumeTests` → PASS; `testcasecount` обоих =
+      предсказанное. ⛔ «Красных ровно три эталона» этого **не заменяет**: оно не отличает «мои
+      шесть позеленели» от «мои шесть зелены, а два чужих покраснели и я их не заметил».
 - [ ] **Step 5:** R-TEST → красных ровно три эталона; свипы → R-COMMIT `feat(app-94sk): T6b —
       объёмы следуют позе, а ключ несёт крен на момент судейства`.
 
@@ -2794,7 +3227,8 @@ public void ATiltedMobIsNotImmuneToFlatFire()   // тест 26а, M354
 static bool ArenaTopologyMatches(in SimConfig a, in SimConfig b)
 ```
 
-- [ ] **Step 1 (RED, пять фикстур):** 8 (приборный: высотный гейт сокращает число разборов),
+- [ ] **Step 1 (RED, ШЕСТЬ фикстур — правка круга 3: 18г заведена планом и нигде не сосчитана):**
+      8 (приборный: высотный гейт сокращает число разборов),
       18 (интерполяция между строками), 18а (мапинг при **24 кадрах в секунду** — у мех-пака
       ганнера именно столько), 18б (таблица переживает `ApplyConfig`), 18в (⭐⭐ **чужая таблица
       на горячую ⇒ отказ с требованием рестарта**).
@@ -2827,7 +3261,7 @@ public void ApplyConfigCarriesThePoseTableThrough()   // тест 18б, M344
     SimConfig cfg = TestConfigs.Open();
     var w = new SimulationWorld(51, cfg);
     SimConfig tweaked = cfg;
-    tweaked.Chaser.Speed += 0.5f;                  // живая правка числа, не топологии
+    tweaked.Chaser.MaxSpeed += 0.5f;                  // живая правка числа, не топологии
     w.ApplyConfig(in tweaked);                     // обязана пройти без отказа
     // Премисса: таблица НЕ пуста до правки — иначе тест зелен и на обнулении.
     Assert.Greater(cfg.Chaser.Poses.BoneCount, 0,
@@ -2868,10 +3302,30 @@ public void HotSwappingAnyBodysPoseTableIsRefused()   // тест 18г, M345 (в
       старому** — только поля арены; правило 15 не написано.
       ⛔ **Смена сигнатуры без смены тела — это и есть корректная заглушка здесь:** иначе фикстуры
       18в и 18г не скомпилируются, а ошибка компиляции RED не является.
-      R-FILTER `PoseTableTests` → `EXIT=2`, красные — **ровно 8, 18, 18а, 18б, 18в, 18г**.
+      ⛔⛔ **И ДВЕ ИЗ ШЕСТИ ЗЕЛЕНЫ НА ЭТОЙ ЗАГЛУШКЕ — ПРАВКА КРУГА 3, ИНАЧЕ ПРЕДСКАЗАНИЕ ЛОЖНО:**
+      • **18б** («таблица переживает `ApplyConfig`») зелена тривиально: `ApplyConfig` делает
+        `_config = next;` целиком (`SimulationWorld.cs:702`), поэтому таблица доезжает и без единой
+        правки. ⇒ её заглушка ставится **в состояние мутанта M344**: `ApplyConfig` копирует поля
+        поимённо, оставляя `Poses` прежними у секций — тогда 18б краснеет по существу.
+      • **8** (приборная: высотный гейт сокращает число разборов) зелена или ненаписуема — гейт
+        стоит в `HitVolumes.Resolve` с T2, а **счётчика разборов план не заводил нигде**. ⇒ в
+        Interfaces T2 добавляется `internal static int ResolveProbesForTest` (обнуляемый счётчик
+        входов в узкую фазу), иначе фикстуру 8 надо снять и признать высотный гейт непроверяемым.
+      R-FILTER `PoseTableTests` → `EXIT=2`, красные — **ровно 8, 18, 18а, 18б, 18в, 18г** (шесть).
 - [ ] **Step 2 (GREEN):** контрольные суммы **всех пяти** таблиц (`Hero`, `Chaser`, `Gunner`,
       `Elite`, `Director` — правка круга 3, T2 Files) и длины `HitPart[]` каждого архетипа входят в
-      `ArenaTopologyMatches`; `ApplyConfig` переносит таблицу; правило 15 проверяет **диапазоны
+      `ArenaTopologyMatches`.
+      ⛔⛔ **И ТЕКСТ ИСКЛЮЧЕНИЯ ПРАВИТСЯ ТЕМ ЖЕ ШАГОМ — БЕЗ ЭТОГО 18в И 18г КРАСНЫ НА ВЕРНОМ КОДЕ**
+      (правка круга 3): `ApplyConfig` бросает **фиксированную** строку (`SimulationWorld.cs:696-699`,
+      прочитана лично) — «arena topology changed (radius/obstacles/walls/player cap/spawn ring/
+      entity caps/backpack capacity/item catalog/**rewind window**) — restart the world instead of
+      hot-tweaking it». Слов «pose table» в ней нет, а обе фикстуры требуют
+      `Does.Contain("pose table")`. ⇒ в перечень дописывается `pose tables/hit parts`, и это
+      **часть шага**, а не косметика: перечень — единственное, что объясняет оператору, почему мир
+      отказался пересобираться.
+      ⚠ Там же правится **вызов**: сегодня он шестиаргументный
+      (`in _config.Arena, in next.Arena, in _config.Hero, in next.Hero, _config.Items, next.Items`),
+      а новая сигнатура берёт пару `SimConfig` целиком; `ApplyConfig` переносит таблицу; правило 15 проверяет **диапазоны
       ключа** (`LowerClipA/B`, `UpperClip`, `ReactionClip` — валидные индексы клипов **этого**
       архетипа; `LowerPhase`/`ReactionPhase` меньше числа строк своего клипа).
 - [ ] **Step 3:** мутации **M342** (интерполяция между строками снята), **M343** (мапинг
@@ -2913,7 +3367,14 @@ public void FoldWalksEveryFieldOfTheKey()   // тест 23, M350
     ulong baseline = 0UL;
     PoseKey.Fold(ref baseline, in key);
 
-    foreach (FieldInfo f in typeof(PoseKey).GetFields())
+    // ⛔⛔ BindingFlags ОБЯЗАТЕЛЬНЫ, И ЭТО НЕ СТИЛЬ: голый GetFields() — это
+    // Public|Instance|Static, а TiltQuantStep объявлен `const`, то есть
+    // СТАТИЧЕСКОЕ поле. Оно попало бы в цикл, BumpKeyField получил бы `float`
+    // и ушёл в NotSupportedException, а SetValue на literal-поле бросил бы
+    // FieldAccessException — то есть исключение, которое RED не является
+    // (332/498). Репозиторий знает эту ловушку дословно: SimConfig.cs:686-691.
+    foreach (FieldInfo f in typeof(PoseKey).GetFields(
+                 BindingFlags.Public | BindingFlags.Instance))
     {
         object boxed = key;
         f.SetValue(boxed, BumpKeyField(f.GetValue(boxed)));
@@ -2925,7 +3386,8 @@ public void FoldWalksEveryFieldOfTheKey()   // тест 23, M350
     // структуре, поэтому число пинится отдельно (тот же приём, что у
     // NetStats в SimConfigHashTests: «a `public sealed class NetStats { }`
     // passed it»).
-    Assert.AreEqual(12, typeof(PoseKey).GetFields().Length,
+    Assert.AreEqual(12, typeof(PoseKey).GetFields(
+            BindingFlags.Public | BindingFlags.Instance).Length,
         "состав ключа изменился — пересчитать 14 Б, запись 24 Б и 190.3 КиБ истории");
 }
 
@@ -3040,11 +3502,13 @@ public void ATargetInsideTheRangeButPastTheFigureTakesNothing()   // тест 30
     SimConfig cfg = TestConfigs.OpenField();
     TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
     var w = new SimulationWorld(1, cfg);
-    float2 heroPos = w.Players[0].Pos;
-    // 1.40 м — ВНУТРИ круга 1.55 и СНАРУЖИ суммы капсул: бьющий объём чейзера
-    // (предплечье, R 0.12) плюс объёмы сборщика (самый широкий — корпус, R 0.28)
-    // дают 0.40 м между ОСЯМИ, а оси разведены на 1.40. Числа — из ассетов, и
-    // каждое пересчитано питоном в отчёт таска (правило 179).
+    float2 heroPos = w.PlayerAt(0).Pos;
+    // 1.40 м — ВНУТРИ круга 1.55 и СНАРУЖИ суммы капсул.
+    // ⛔ ЧИСЛА ИСПРАВЛЕНЫ КРУГОМ 3 И БЕРУТСЯ ИЗ ФИКСТУРЫ, А НЕ ИЗ АССЕТОВ.
+    // v3 писала «корпус сборщика R 0.28» и «числа — из ассетов»: первое ложно
+    // (и TestConfigs, и HeroConfig.asset:66 дают самый широкий объём сборщика
+    // 0.45), второе нарушает собственное правило плана «`.asset` из юнит-тестов
+    // не читать». Премисса считается из той же конфигурации, которой построен мир.
     w.SpawnMobForTest(MobType.Chaser, heroPos + new float2(1.40f, 0f));
     var m = w.Mobs[0];
     m.Dir = new float2(1f, 0f);          // ⛔ смотрит НА игрока: сектор не должен быть причиной
@@ -3053,13 +3517,17 @@ public void ATargetInsideTheRangeButPastTheFigureTakesNothing()   // тест 30
 
     // Премисса ЧИСЛОМ, а не прозой: цель обязана лежать ВНУТРИ прежнего круга,
     // иначе тест зелен и на сегодняшнем коде.
-    float centres = math.distance(heroPos, w.Mobs[0].Pos);
-    Assert.Less(centres, cfg.Chaser.AttackRange + cfg.Hero.Radius,
-        "премисса фикстуры: цель обязана быть ВНУТРИ круга, который засчитывал удар до T8");
+    float centers = math.distance(heroPos, w.Mobs[0].Pos);
+    Assert.Less(centers, cfg.Chaser.AttackRange + cfg.Hero.Radius,
+        "премисса 1: цель обязана быть ВНУТРИ круга, который засчитывал удар до T8");
+    Assert.Greater(centers,
+        TestWorlds.MaxPartRadius(cfg.Chaser.Parts) + TestWorlds.MaxPartRadius(cfg.Hero.Parts),
+        "премисса 2: и СНАРУЖИ суммы самых широких объёмов — иначе цель достаётся по фигуре "
+        + "и тест мерит не свой предмет");
 
-    float hpBefore = w.Players[0].Hp;
+    float hpBefore = w.PlayerAt(0).Hp;
     for (int i = 0; i < 90; i++) w.TickAll(new SimInput[1]);   // 3 с — больше любого замаха
-    Assert.AreEqual(hpBefore, w.Players[0].Hp, 1e-4f,
+    Assert.AreEqual(hpBefore, w.PlayerAt(0).Hp, 1e-4f,
         "удар засчитан по кругу, а не по фигуре: цель внутри радиуса, но капсулы врозь");
 }
 ```
@@ -3070,8 +3538,36 @@ public void ATargetInsideTheRangeButPastTheFigureTakesNothing()   // тест 30
       режима — один порог.
       ⛔ **`return true` здесь — константа, а не «половина логики»:** сектор, отвечающий «да»
       всегда, — это в точности мутант M358, и фикстура 29 обязана на нём краснеть.
-      R-FILTER `MobStrikeTests` → `EXIT=2`, `testcasecount` = **7**, красных **7 из 7**.
-- [ ] **Step 2 (GREEN, три критерия — порознь):**
+      R-FILTER `MobStrikeTests` → `EXIT=2`, `testcasecount` = **7**, красных **6 из 7**.
+      ⛔⛔ **32а КРАСНОЙ НЕ БУДЕТ, И ЭТО ПРАВКА КРУГА 3 ПРОТИВ АРИФМЕТИКИ v3.** План сам, перенося
+      её из T2, написал: «“ганнер не бьёт” **истинно уже сегодня** ⇒ RED-шага нет». Заглушка этого
+      шага (`Reaches` делегирует сегодняшнему `CircleOverlap`) сохраняет ровно то состояние ⇒ 32а
+      зелена и здесь. Перенос дал ей дом, но не красную фазу. ⇒ она **сторож**, её единственный
+      свидетель — **вторая жертва M363**, и это уже записано в таблице распределения.
+- [ ] **Step 1б (⛔ ДОМ ТРЁХ КРИТЕРИЕВ НАЗВАН — ПРАВКА КРУГА 3):** v3 звала в заглушках
+      `MobStrike.InSector(...)` и `MobStrike.Reaches(...)`, а `Create:` у таска был **один** —
+      файл тестов. Тип без файла и без слоя неисполним.
+      ⇒ **Create: `client/Assets/Scripts/Simulation/AI/MobStrike.cs` (+ `.meta`)** — чистые
+      предикаты, без состояния, рядом с `MobAiSystem`, который их зовёт:
+
+```csharp
+// Simulation/AI/MobStrike.cs — ТРИ КРИТЕРИЯ УДАРА, КАЖДЫЙ ОТДЕЛЬНО.
+/// ⛔ РАЗДЕЛЕНЫ НАМЕРЕННО (§3.9): «достаёт ли» — геометрия тел, «в секторе ли»
+/// — курс, «в режиме ли» — гистерезис дистанции. Слитые в один предикат, они
+/// дают ровно тот отказ, ради которого задача и заведена: удар засчитывается
+/// «в любую сторону» по кругу 1.55 м.
+/// ⚠ ЛЕКСИКА: `Swing*` — это ЧИСЛА замаха в конфигурации (SwingLeadFactor,
+/// SwingLeadMaxMeters живут там с Т7), `Strike*` — предикаты и идентификаторы
+/// удара. Граница записана здесь, чтобы третьей лексики не завелось (A7).
+internal static class MobStrike
+{
+    /// Бьющий объём моба против объёмов цели, ТРЁХМЕРНО.
+    internal static bool Reaches(in MobState m, in MobSimConfig mcfg, in PoseTable mobPose,
+        float3 targetOrigin, in HitPart[] targetParts, in PoseTable targetPose, int targetRow);
+    /// Курс против направления на цель; `halfArcRad` — полуугол сектора.
+    internal static bool InSector(float2 dir, float2 toTarget, float halfArcRad);
+}
+```
       **(1) `:250` (сам удар)** — `Geometry.PointCapsule` от конца бьющего объёма против объёмов
       цели, плюс сектор: `dot(m.Dir, normalize(target - m.Pos)) >= cos(SwingArc)`.
       **(2) `:222` (вход в замах)** — та же пара по **предсказанной** позиции, с тем же `SwingArc`.
@@ -3146,7 +3642,11 @@ done
       путь урона о зоне не знает, и все пять фикстур красны по существу.
       R-FILTER `HitZoneTests` → `EXIT=2`; R-FILTER `ResultsTests` → `EXIT=2` (свидетель 40а);
       красные — **ровно 7, 11-вторая-половина, 39, 40, 40а**.
-- [ ] **Step 2 (GREEN, домен и счётчик):** `Arms = 4` дописывается **последним**
+- [ ] **Step 2 (GREEN, домен и счётчик `ArmHits`):** ⚠ **имя названо, и это правка круга 3**:
+      тройка `HeadHits`/`BodyHits`/`LegHits` живёт в `MatchStats`, `MatchEndedNet.cs:91-93`,
+      `MatchServer.cs:1888-1890`, `DeathOverlayController.cs:462`, `FinalStats.cs:84-85` и
+      пришпилена словарём ADR-003 A8 — четвёртый обязан звучать так же: **`ArmHits`**, и строкой
+      в A10 (T13 Step 5). `Arms = 4` дописывается **последним**
       (`HitZone : byte { None = 0, Legs = 1, Body = 2, Head = 3, Arms = 4 }`) — вставка между
       `Body` и `Head` перенумеровала бы `Head` и сломала записи на проводе; прецедент записан
       рядом: «`Downed` IS DECLARED LAST ON PURPOSE: the domain grows UPWARD and **no existing
@@ -3155,6 +3655,34 @@ done
       пятью**, а `AssertHitPartArrayFieldAffectsHash` (`:587-588`) — его лямбда `Zone` крутит
       значение **`% 4`**, и при пяти значениях это **молча сузит** проверку, а не покраснеет ⇒
       делитель правится тем же шагом.
+- [ ] **Step 2а (⛔⛔ НОСИТЕЛЬ ЗОНЫ — БЕЗ НЕГО ФИКСТУРЫ 7 И 11-ВТОРАЯ КРАСНЫ НАВСЕГДА; правка
+      круга 3, найдено двумя ревьюерами независимо):** v1–v3 добавляли член перечисления, счётчик
+      и делитель `% 4` — и **ни один шаг не помечал ни одной части** `Zone = HitZone.Arms`. Свип по
+      плану давал слово `Arms` только в словаре, ADR и объявлении enum; `Data/HeroConfig.cs`,
+      `Data/MobConfig.cs` и `Editor/StageOneSceneBootstrap.cs` в Files T9 отсутствовали.
+      ⇒ объёмы рук, положенные **T4b** с зоной `Body`, здесь **перемаркируются**:
+
+```csharp
+// Data/HeroConfig.cs и Data/MobConfig.cs — плечо и предплечье ×2.
+// ⛔ ЗОНА МЕНЯЕТСЯ, А PartId — НЕТ: он append-only (правило 7), и перенумерация
+// сломала бы и пины сценария, и `StrikePartId`, и прокси подсветки.
+new HitPart { BoneA = ShoulderL, BoneB = ElbowL, Radius = 0.11f,
+    Zone = HitZone.Arms, DamageMult = 0.75f, PartId = 5, … },
+```
+
+      ⚠ **Множитель 0.75 — решение владельца Н60 п. 7**, не выбор исполнителя.
+      ⛔ **У ганнера рук нет вовсе** (§3.2) — его девять объёмов не трогаются, и это проверяет
+      тест 46 из T4b.
+      **Files этого шага:** `Data/HeroConfig.cs`, `Data/MobConfig.cs`,
+      `Editor/StageOneSceneBootstrap.cs`, `Tests/EditMode/TestConfigs.cs`, `ConfigTests.cs`
+      (`SeedMob`). **Гейт — R-APPLY → R-ASSET:**
+
+```bash
+for f in HeroConfig MobChaserConfig MobEliteConfig MobDirectorConfig; do
+  echo -n "$f: "; /usr/bin/grep -c "Zone: 4" "client/Assets/Data/$f.asset"; done   # → 4/4/2/2
+/usr/bin/grep -c "Zone: 4" client/Assets/Data/MobGunnerConfig.asset                # → 0 (рук нет)
+```
+
 - [ ] **Step 3 (GREEN, бамп версии):** `ProtocolVersion.Current` = **6** и ⚠ **запись в HISTORY
       обязательна** — дока файла: «HISTORY — one line per break, so the reason is here and not in
       a log». Это **пункт таска**, а не сопутствующая мелочь.
@@ -3274,7 +3802,7 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
     // contradicts ADR-001 §9».
     SimConfig cfg = TestConfigs.OpenField();
     var w = new SimulationWorld(1, cfg);
-    float2 heroPos = w.Players[0].Pos;
+    float2 heroPos = w.PlayerAt(0).Pos;
     w.SpawnMobForTest(MobType.Gunner, heroPos + new float2(6f, 0f));   // в своей дистанции огня
     var m = w.Mobs[0];
     m.Dir = new float2(-1f, 0f);
@@ -3283,11 +3811,11 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
 
     // ПРЕМИССА: без опрокидывания ганнер стреляет — иначе «замолчал» ничего не значит.
     var control = new SimulationWorld(1, cfg);
-    control.SpawnMobForTest(MobType.Gunner, control.Players[0].Pos + new float2(6f, 0f));
+    control.SpawnMobForTest(MobType.Gunner, control.PlayerAt(0).Pos + new float2(6f, 0f));
     var cm = control.Mobs[0]; cm.Dir = new float2(-1f, 0f); cm.Ai = MobAiState.Chase;
     control.SetMobForTest(0, cm);
     for (int i = 0; i < 120; i++) control.TickAll(new SimInput[1]);
-    Assert.Less(control.Players[0].Hp, cfg.Hero.MaxHp,
+    Assert.Less(control.PlayerAt(0).Hp, cfg.Hero.MaxHp,
         "премисса фикстуры: не опрокинутый ганнер обязан успеть выстрелить за 120 тиков");
 
     // А теперь — опрокидываем и требуем тишины.
@@ -3298,10 +3826,10 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
     Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai,
         "премисса: крен за TiltFallAngle обязан перевести моба в Downed");
 
-    float hpBefore = w.Players[0].Hp;
+    float hpBefore = w.PlayerAt(0).Hp;
     int projBefore = w.ProjectileCount;
     for (int i = 0; i < 120; i++) w.TickAll(new SimInput[1]);
-    Assert.AreEqual(hpBefore, w.Players[0].Hp, 1e-4f,
+    Assert.AreEqual(hpBefore, w.PlayerAt(0).Hp, 1e-4f,
         "опрокинутый ганнер продолжает наносить урон — полнотелая реакция исход не глушит");
     Assert.AreEqual(projBefore, w.ProjectileCount,
         "опрокинутый ганнер продолжает стрелять — Downed не вошёл в путь огня");
@@ -3309,8 +3837,8 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
 ```
 
 - [ ] **Step 1a (⛔ R-RED — заглушки-КОНСТАНТЫ и красный прогон, одиннадцать фикстур):**
-      Заглушки: четыре поля реакции объявляются и **не пишутся никем**; `BodyReaction.Decide(…)`
-      → `return false;` (жеста нет никогда); правило 14 не написано; дома очистки не тронуты.
+      Заглушки: четыре поля реакции объявляются и **не пишутся никем**; `BodyReaction.Choose(…)` → `clip = 0; dir = 0;
+      fullBody = false; return false;` (жеста нет никогда — константа по рулингу 362); правило 14 не написано; дома очистки не тронуты.
       ⛔ **`return false` — та самая константа рулинга 362:** «реакции не бывает» проверяемо,
       а `NotImplementedException` скрыл бы, докуда дошёл прогон.
       R-FILTER `BodyReactionTests` → `EXIT=2`, `testcasecount` = **11**, красных **11 из 11**.
@@ -3324,6 +3852,30 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
       **мобы** — `ClearCombatTimers` берёт `ref PlayerState` и моба **не видит вовсе**, их слот
       переиспользуется swap-remove'ом ⇒ дом — **`SpawnMob`**, где `new MobState { … }` зануляет
       всё неперечисленное (тот же дом, где T5c инициализирует `Dir`).
+- [ ] **Step 2б (⛔⛔ ТРЕТИЙ СЛОЙ В `PoseTable.Sample`; правка круга 3 — без него фикстуры 21 и
+      21а без предмета, а мутант M381 неубиваем):** `Sample` получает источник реакции и закон её
+      веса от фазы:
+
+```csharp
+// Simulation/Core/PoseTable.cs — внутри Sample, между нижним слоем и прицелом.
+// ⛔ У МОБА РЕАКЦИЯ ЗАМЕНЯЕТ, У СБОРЩИКА СМЕШИВАЕТСЯ, и это не стиль: у моба
+// слой один (§3.6), подмешивать не во что. `singleLayer` и есть этот признак.
+if (key.ReactionClip != 0)
+{
+    int reactionRow = table.ClipFirstRow[key.ReactionClip] + key.ReactionPhase;
+    float w = singleLayer ? 1f : ReactionWeight(key.ReactionPhase, in table, key.ReactionClip);
+    for (int b = 0; b < table.BoneCount; b++)
+        into[b] = math.lerp(into[b], table.Bones[reactionRow * table.BoneCount + b], w);
+}
+// Слой прицеливания — ТОЛЬКО по маске и только у сборщика.
+if (!singleLayer && key.UpperWeight > 0)
+    for (int b = 0; b < table.BoneCount; b++)
+        if ((table.UpperLayerMask[b >> 6] & (1UL << (b & 63))) != 0)
+            into[b] = math.lerp(into[b], UpperBone(in table, in key, b), key.UpperWeight / 255f);
+```
+
+      ⚠ **`ReactionWeight` — трапеция по фазе** (нарастание, полка, спад) той же формы, что вес
+      слоя в презентации; её числа приходят с клипами и пишутся в отчёт таска ДО прогона.
 - [ ] **Step 3 (GREEN, правило 14):** ⛔ **числа реакции валидируются впервые** (находка круга 4
       спеки, C-14: при тринадцати правилах их не трогало ни одно, а кламп в `ApplyConfig` — не
       отказ конфигурации): `0 < ReactionGestureThreshold < ReactionStaggerThreshold`; амплитуда —
@@ -3341,6 +3893,12 @@ public void AFullBodyReactionSilencesTheMobsGunAndFist()   // тест 37, M370
       `ReactionCooldownTicks + 7 × ReactionCooldownJitterTicks`).
       ⚠ Свидетель — `HotTweakTests`: его рефлективный проход требует записи в `ceilingByField` на
       каждое новое числовое поле (`:398`), и запись без клампа была бы ложью в словаре.
+- [ ] **Step 3б (⛔ РАСПИСКА T6a СТАНОВИТСЯ ЛОЖЬЮ ЗДЕСЬ, И ЧИНИТСЯ ЗДЕСЬ ЖЕ; правка круга 3):**
+      T6a записал `ReactionPhase` и `ReactionCooldown` в `HotTweakTests.ceilingByField` со
+      значением `float.PositiveInfinity` с доводом «`ApplyConfig` их не клампит». Step 3a этого
+      таска **добавляет ровно эти клампы** ⇒ обе записи переводятся на настоящие потолки (число
+      строк своего клипа и `ReactionCooldownTicks + 7 × ReactionCooldownJitterTicks`).
+      ⚠ Сторож `:398` рефлективный и по значению потолка не спорит — расхождение прошло бы молча.
 - [ ] **Step 4:** мутации **M365** (порог реакции игнорируется), **M367** (деградации нет),
       **M368** (⭐ жест перебивает полнотелую), **M369** (кулдаун не продлевается при обстреле),
       **M370** (⭐⭐ полнотелая реакция моба не глушит), **M371** (жест тоже глушит),
@@ -3420,21 +3978,21 @@ public void TheImpulseComesFromTheFirstPassOnly()   // тест 30в, M386
     SimConfig cfg = TestConfigs.OpenField();
     TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
     var w = new SimulationWorld(1, cfg);
-    float2 heroPos = w.Players[0].Pos;
+    float2 heroPos = w.PlayerAt(0).Pos;
     w.SpawnMobForTest(MobType.Chaser, heroPos + new float2(0.6f,  0.25f));
     w.SpawnMobForTest(MobType.Chaser, heroPos + new float2(0.6f, -0.25f));
     Assert.AreEqual(2, w.MobCount, "премисса фикстуры: тел ровно два, иначе проходов не два");
 
     var input = new SimInput[1];
     input[0] = TestWorlds.HipFire();
-    input[0].Move = new float2(1f, 0f);              // въезжаем в обоих
+    input[0].MoveDir = new float2(1f, 0f);              // въезжаем в обоих
     w.TickAll(input);
 
     float2 t0 = w.Mobs[0].TiltVel, t1 = w.Mobs[1].TiltVel;
     // Импульс ОДИН на тик на тело: два прохода дали бы ровно вдвое больше.
     // Опорное значение считает та же арифметика, что и код, — НАМЕРЕННО
     // повторённая здесь (урок 427), а не позаимствованная вызовом.
-    float expected = ExpectedShoveTiltVel(in cfg, w.Players[0], w.Mobs[0]);
+    float expected = ExpectedShoveTiltVel(in cfg, w.PlayerAt(0), w.Mobs[0]);
     Assert.AreEqual(expected, math.length(t0), expected * 0.02f,
         "первому телу досталось не одно помогание — импульс стал функцией числа проходов");
     Assert.AreEqual(expected, math.length(t1), expected * 0.02f,
@@ -3462,10 +4020,10 @@ public void KnockdownIsAFunctionOfTargetMass()   // тест 34, M366
         // это показать, а не обойти.
         HitPart leg = System.Array.Find(mcfg.Parts, part => part.Zone == HitZone.Legs);
         float aimH = 0.5f * (leg.RestBottom + leg.RestTop);
-        int before = w.StatsAt(0).Hits;
+        int before = w.StatsAt(0).ShotsHit;
         TestWorlds.FireAimed3D(w, new float2(0f, 0f), aimH, new float2(8f, 0f), aimH);
         TestWorlds.RunUntilProjectilesDie(w);
-        Assert.AreEqual(before + 1, w.StatsAt(0).Hits,
+        Assert.AreEqual(before + 1, w.StatsAt(0).ShotsHit,
             $"премисса фикстуры: выстрел по {type} обязан попасть, иначе крена не будет вовсе");
 
         // Пик крена приходит не в тот же тик — даём пружине отработать.
@@ -3486,7 +4044,7 @@ public void KnockdownIsAFunctionOfTheMomentArm_AndTheArmMovesWithThePose()   // 
     // точка контакта, и это и есть физическая модель.
     float peakRest = PeakTiltForRow(MobType.Chaser, poseRow: 0);   // покой
     float peakRun  = PeakTiltForRow(MobType.Chaser, poseRow: 1);   // бег
-    Assert.AreNotEqual(peakRest, peakRun, 1e-3f,
+    Assert.Greater(math.abs(peakRest - peakRun), 1e-3f,
         "плечо не поехало с позой: та же зона в двух строках дала один и тот же пик, "
         + "значит высота попадания берётся из пояса, а не из кости (M377)");
 }
@@ -3529,8 +4087,47 @@ public void ABurstAccumulatesTilt()   // тест 34б, M388
     // числа — 2.21 / 2.10 / 2.41. ⇒ фикстура требует «пик очереди строго выше
     // пика одиночного выстрела» и факта входа в Downed, а точную величину
     // снимает настоящий интегратор на импле и кладёт в отчёт таска.
+    // ⛔ ТЕЛО НАПИСАНО КРУГОМ 3: v3 оставила здесь один Assert над двумя
+    // неопределёнными именами — «Assert без теста», обратная форма дефекта,
+    // который круг 2 объявил закрытым.
+    float peakOfSingle = PeakTiltUnderFire(shots: 1, out bool downedSingle);
+    float peakOfBurst  = PeakTiltUnderFire(shots: 8, out bool downedBurst);
     Assert.Greater(peakOfBurst, peakOfSingle,
         "очередь не копит крен — TiltVel присваивается, а не накапливается");
+    // ВТОРАЯ ПОЛОВИНА — ФАКТ ВХОДА В Downed: неравенство одно прошло бы и при
+    // накоплении на доли процента, а предмет спеки — что очередь ВАЛИТ.
+    Assert.IsFalse(downedSingle, "премисса фикстуры: одиночный выстрел валить не должен");
+    Assert.IsTrue(downedBurst, "очередь не довела крен до TiltFallAngle");
+}
+
+/// Пик крена чейзера за 60 тиков после `shots` попаданий подряд и факт входа
+/// в `Downed` за то же время.
+/// ⛔ Снаряды спавнятся ВПЛОТНУЮ: восемь метров полёта — это семь тиков, за
+/// которые пружина уводит крен, и «очередь» перестала бы быть очередью.
+/// ⚠ Точную величину отношения здесь НЕ пиним (урок 747): три независимых
+/// счёта дали 2.21 / 2.10 / 2.41, и число снимает настоящий интегратор на
+/// импле, кладя его в отчёт таска.
+static float PeakTiltUnderFire(int shots, out bool downed)
+{
+    SimConfig cfg = TestConfigs.OpenField();
+    TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+    var w = new SimulationWorld(1, cfg);
+    w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
+    HitPart body = System.Array.Find(cfg.Chaser.Parts, x => x.Zone == HitZone.Body);
+    float aimH = 0.5f * (body.RestBottom + body.RestTop);
+
+    float peak = 0f; downed = false;
+    for (int i = 0; i < 60; i++)
+    {
+        if (i < shots)
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(7.2f, 0f),
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), aimH, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
+        w.TickAll(new SimInput[1]);
+        peak = math.max(peak, math.length(w.Mobs[0].Tilt));
+        downed = downed || w.Mobs[0].Ai == MobAiState.Downed;
+    }
+    return peak;
 }
 ```
 
@@ -3671,26 +4268,33 @@ public void AnotherCollectorsDollGetsATilt()   // фикстура 43а (нов�
     // этом выставляется впустую (ViewRegistry:579 -> PlayerVisual:478).
     // Фикстура: событие PlayerDamaged по ЧУЖОМУ слоту -> интегратор ->
     // WriteInto -> у куклы ненулевой крен.
-    var integrator = new PlayerTiltIntegrator(maxPlayers: 3);
-    var records = new PlayerRecord[3];
-    for (int i = 0; i < records.Length; i++) records[i] = new PlayerRecord { Index = (byte)i };
-    integrator.SyncSlots(records);
+    // ⛔⛔ ЗОВЁТСЯ РОВНО ТОТ API, КОТОРЫЙ ОБЪЯВЛЕН В Interfaces ЭТОГО ЖЕ ТАСКА
+    // (правка круга 3: v3 звала SyncSlots/OnDamaged/Step/WriteInto(2 арг.) —
+    // пять имён, которых нет ни в коде, ни в собственных Interfaces, на
+    // тридцать строк выше). Имена те же, что у живого MobTiltIntegrator:
+    // Apply / StepTicks / WriteInto / Reset.
+    SimConfig cfg = TestConfigs.OpenField();
+    var integrator = new PlayerTiltIntegrator(in cfg);
+    const byte LocalSlot = 0, OtherSlot = 2;
 
-    // ⛔ СЛОТ ЧУЖОЙ: локальный — 0, событие приходит по 2.
-    integrator.OnDamaged(playerIndex: 2, dir: new float2(1f, 0f), magnitude: 0.9f, tick: 100);
+    float impulse = MobTiltIntegrator.AngularImpulseFor(
+        ownerIndex: 1, in cfg.Hero, hitHeight: 1.2f, in cfg);
+    Assert.Greater(impulse, 0f, "премисса фикстуры: импульс обязан быть ненулевым");
+
+    integrator.Apply(OtherSlot, LocalSlot, impulse);
     var states = new PlayerState[3];
-    integrator.WriteInto(states, count: 3);
-    Assert.AreEqual(0f, math.length(states[0].Tilt), 1e-6f,
-        "премисса фикстуры: чужое событие не трогает локальный слот");
-    Assert.Greater(math.length(states[2].Tilt), 0f,
+    integrator.WriteInto(states, count: 3, localSlot: LocalSlot);
+    Assert.AreEqual(0f, math.length(states[LocalSlot].Tilt), 1e-6f,
+        "премисса фикстуры: чужое событие не трогает локальный слот — его ведёт предсказание");
+    Assert.Greater(math.length(states[OtherSlot].Tilt), 0f,
         "у чужой куклы крен по-прежнему ноль — PlayerTiltIntegrator не заведён или не зовётся");
 
     // ВТОРАЯ ПОЛОВИНА — ЧТО ОН ЗАТУХАЕТ, а не остаётся навсегда: пружина без
     // демпфера прошла бы ассерт выше.
-    float peak = math.length(states[2].Tilt);
-    for (int t = 0; t < 60; t++) integrator.Step(SimulationWorld.TickDt);
-    integrator.WriteInto(states, count: 3);
-    Assert.Less(math.length(states[2].Tilt), peak * 0.5f,
+    float peak = math.length(states[OtherSlot].Tilt);
+    integrator.StepTicks(60, in cfg);
+    integrator.WriteInto(states, count: 3, localSlot: LocalSlot);
+    Assert.Less(math.length(states[OtherSlot].Tilt), peak * 0.5f,
         "крен чужой куклы не затухает — делителя CocoonDamping нет");
 }
 
@@ -3704,23 +4308,30 @@ public void AnotherBodyDoesNotStickInItsGesture()   // тест 43, M390
     // ⇒ те же числа конфигурации (они у него есть — SimConfigHash это
     // доказывает) и та же формула base + (Id % 8) * step от ТИКА СОБЫТИЯ,
     // который приходит в самом событии.
+    // ⛔⛔ СУЩЕСТВУЮЩИЙ API, А НЕ ТРЕТЬЯ ЕГО ВЕРСИЯ (правка круга 3). Живой
+    // контракт: ctor(in SimConfig), Apply(int mobId, MobType type, float
+    // angularImpulse), StepTicks(int, in SimConfig), WriteInto(MobState[], int),
+    // TryGetTilt, Reset. Ни SyncSlots, ни OnReaction, ни двухаргументного
+    // конструктора в нём нет, и заводить их этот таск не собирался.
+    // Локальный кулдаун жеста добавляется ХВОСТОВЫМ параметром к Apply — по
+    // канону швов этого плана (умолчание сохраняет все существующие вызовы).
     SimConfig cfg = TestConfigs.OpenField();
-    var integrator = new MobTiltIntegrator(maxMobs: 4, in cfg);
-    integrator.SyncSlots(new[] { (id: 7, type: MobType.Chaser) });
+    var integrator = new MobTiltIntegrator(in cfg);
+    const int MobId = 7;
 
     // Кулдаун этого тела — по той же формуле, повторённой НАМЕРЕННО (урок 427).
-    int cooldown = cfg.Chaser.ReactionCooldown + (7 % 8) * cfg.Chaser.ReactionCooldownJitterStep;
+    int cooldown = cfg.Chaser.ReactionCooldownTicks
+                 + (MobId % 8) * cfg.Chaser.ReactionCooldownJitterTicks;
     Assert.Greater(cooldown, 1, "премисса фикстуры: кулдаун обязан быть длиннее тика");
 
-    integrator.OnReaction(mobId: 7, clip: 1, dir: 0, tick: 100);
-    bool acceptedImmediately = integrator.OnReaction(mobId: 7, clip: 2, dir: 0, tick: 101);
-    Assert.IsFalse(acceptedImmediately,
+    float impulse = MobTiltIntegrator.AngularImpulseFor(
+        ownerIndex: 0, in cfg.Chaser, hitHeight: 1.5f, in cfg);
+    Assert.IsTrue(integrator.Apply(MobId, MobType.Chaser, impulse, eventTick: 100),
+        "премисса фикстуры: первый жест обязан быть принят");
+    Assert.IsFalse(integrator.Apply(MobId, MobType.Chaser, impulse, eventTick: 101),
         "клиент сыграл жест на КАЖДОЕ событие — кулдауна он не считает, и на 8.33 Гц "
         + "по 270 телам жест залипнет (M390)");
-
-    bool acceptedAfterCooldown = integrator.OnReaction(mobId: 7, clip: 2, dir: 0,
-        tick: 100 + cooldown + 1);
-    Assert.IsTrue(acceptedAfterCooldown,
+    Assert.IsTrue(integrator.Apply(MobId, MobType.Chaser, impulse, eventTick: 100 + cooldown + 1),
         "после кулдауна жест не принимается — тело залипло в первом навсегда");
 }
 ```
@@ -3839,6 +4450,18 @@ public void AnotherBodyDoesNotStickInItsGesture()   // тест 43, M390
       имён — правится вместе.
       ⭐ **Решением Н60 подсветка становится ВЫВОДОМ ИЗ СОБЫТИЯ УРОНА**, а не локальным рейкастом:
       она показывает, **куда попало**, а не куда наведено ⇒ прокси по позе не перестраивается.
+- [ ] **Step 4а (⛔ Н60 п. 8 — ПОДСВЕТКА СТАНОВИТСЯ ВЫВОДОМ ИЗ СОБЫТИЯ УРОНА; правка круга 3:
+      абзац об этом в плане стоял, а шага не было, и строка DoD «подсветка зоны не врёт» осталась
+      бы невыполненной):** `AimProvider` перестаёт классифицировать зону локальным рейкастом
+      (`ClassifyProxyZone`) и читает **зону последнего события урона по этому телу**; прокси
+      остаётся только геометрией курсора. ⚠ Это и снимает расхождение «подсветка показывает одно,
+      сервер засчитывает другое», ради которого решение и принято.
+- [ ] **Step 4б (⛔ Н60 п. 11 — ЭФФЕКТ В ТОЧКЕ КОНТАКТА, «заводится В ЛЮБОМ СЛУЧАЕ»; правка круга
+      3: в плане он значился только смягчением риска Р-L, то есть не делался):** точечная вспышка
+      плюс направленный штрих по событию попадания — `hitDir` и высота уже едут на проводе
+      (`SimEvent.HitDir`, `.Height`), новых полей не нужно. ⚠ **Критерий приёмки назван отдельно:**
+      виден на вехе (пункт 10) **независимо** от того, читается ли отклонение кости, — в этом и
+      смысл решения владельца «в любом случае».
 - [ ] **Step 5:** R-COMPILE → `EXIT=0`; R-APPLY → R-IDEM; R-TEST → **1949+N/…/0**, красных ноль;
       свипы → R-COMMIT (два: сцена/префабы бутстрапом, код — отдельно).
 
@@ -4087,7 +4710,7 @@ M327–M390** (`M326` в тексте — это упоминание израс
 |---|---|---|
 | **T0** | — | — (гейт: три независимых замера базовой линии) |
 | **T1** | 1, 2, 3, 5, 9, 10, 13, 14, 15, 16, 16а (**11**) | M329, M330, M332, M335, M336, M337, M338, M339, M340 (**9**) |
-| **T2** | 4, 4а, **11** (первая половина: голова против корпуса; номер числится за T2, расширение на руки — в T9), 12 (**4**) | M327, M328, M334 (**3**) — ⚠ M331 и M363 названы здесь, но **гоняются в T6b и T8**: до поворота тела и до нового удара их мутанты неотличимы от оригинала (правило 696) |
+| **T2** | 4, 4а, **11** (первая половина: голова против корпуса; номер числится за T2, расширение на руки — в T9), 12 (**4**) | M327, M328, **M333-половина**, M334 (**4**) — ⚠ правка круга 3: Step 12 таска гоняет **четыре**, а строка знала три (M333 в ней не значилась вовсе). M331 и M363 названы здесь, но **гоняются в T6b и T8**: до поворота тела и до нового удара их мутанты неотличимы от оригинала (правило 696) |
 | **T3** | 42 (**1**) | — (убивается M327 с обеих сторон) |
 | **T4** | 4б, 🆕 **4в**, 27, 28, 28а, 28б, 28в (**7**) | M355, M356, M357, M379, M383, M384 (**6**) |
 | **T5a** | 🆕 **23б** (**1**, новая — свидетель второй компоненты крена) | 🆕 **M391** (**1**, новая) |
@@ -4095,7 +4718,8 @@ M327–M390** (`M326` в тексте — это упоминание израс
 | **T5c** | 32в (**1**) | M364 (**1**) |
 | **T6a** | 19, 20 (**2**) | M346, M347 (**2**) |
 | **T6b** | 6, 17, 21, 23а, 26, 26а (**6**) | M331, M341, M348, M353, M354, M382 (**6**) |
-| **T6c** | 8, 18, 18а, 18б, 18в (**5**) | M342, M343, M344, M345 (**4**) |
+| **T4b** 🆕 | 🆕 **44, 45, 46** (**3**, новые — раскладка объёмов) | 🆕 M393, M394, M395 (**3**) |
+| **T6c** | 8, 18, 18а, 18б, 18в, 🆕 **18г**, 🆕 **18д** (**7**) | M342, M343, M344, M345, 🆕 **M396** (**5**) |
 | **T7** | 22, 23, 24, 25 (**4**) | M349, M350, M351, M352 (**4**) |
 | **T8** | 29, 30, 30а, 31, 32, 32а, **32б** (Step 4b), 32г (**8**) | M358, M359, M360, M361, M362, M363 (⭐ **обе жертвы здесь**: 32а и 32б), M387 (**7**) |
 | **T9** | 7, **11** (вторая половина — рука перед лицом), 39, 40, 40а (**5**) | M333, M374, M375, M376, M378 (**5**) |
@@ -4104,9 +4728,13 @@ M327–M390** (`M326` в тексте — это упоминание израс
 | **T10c** | 41, 43, 🆕 **43а** (**3**) | M390, 🆕 **M392** (**2**) |
 | **T11–T14** | — | — (перепин, презентация, документы и веха; их свидетель — плейтест) |
 
-**Итого: 70 спековых фикстур + 3 новые (23б, 43а, 🆕 4в) = 73; 64 спековые мутации + 2 новые = 66.**
-⚠ **Счёт правлен кругом 2:** v2 писала «72» и «2 новые», забыв **4в** — фикстуру, которую сама же
-и завела (свидетель правила 16, T4 Step 7), и одновременно держала **19** в двух тасках.
+**Итого: 70 спековых фикстур + 9 новых (4в, 18г, 18д, 23б, 43а, 44, 45, 46 — и ни одной забытой) =
+78; 64 спековые мутации + 6 новых (M391, M392, M393, M394, M395, M396) = 70.**
+⚠ **Счёт правлен трижды, и каждый раз находились забытые.** Круг 2 поправил «72 → 73», добавив
+**4в**. Круг 3 нашёл ещё пять: **18г** (заведена кругом 2 и нигде не сосчитана — тот же дефект, что
+круг 2 чинил у круга 1), **18д** (правило 15а, насыщение крена) и **три** фикстуры нового таска
+**T4b**. ⛔ Урок записан прямо: **каждая заведённая планом фикстура вносится в таблицу тем же
+шагом, которым пишется её тело** — иначе следующий круг снова найдёт забытую.
 ⚠ **Фикстуры без мутации — ШЕСТЬ, и для каждой сказано почему** (как у спеки): 1 и 2 (построение
 капсулы — убиваются любой из M329–M337), 🆕 **4в** (правило 16 мутации в §4.3 не имеет вовсе —
 его две половины убивает один и тот же отказ сборки, и вторая половина проверяется **отдельным
@@ -4506,6 +5134,127 @@ puts Parts[0].Bottom on the ground». Обломки ног летели бы с
 на «плюс два», и `ImpactPulse.cs` назван отдельно. (2) «Висячее упоминание `SimConfig_CarriesExactlyTwelveFields` в
 `InputCodecTests.cs:777`» — правка настоящая, но **отпала вместе с причиной**: переименования
 больше нет, `SimConfig` остаётся двенадцатиполевым (см. класс 4).
+
+---
+
+## Что исправил круг 3 self-review (v3 → v4) — по протоколу `review_plan.md`
+
+Четыре Explore-ревьюера (корректность кода · конвенции · переиспользование · TDD и полнота),
+read-only, параллельно, каждый — против кода worktree. **Суммарно 41 Critical до дедупликации,
+около 20 уникальных.** Каждая находка проверена главным агентом лично, открытием файла или
+пересчётом питоном; ложных — одна (см. конец). ⭐ **Семь Critical нашли по два-три ревьюера
+независимо** — раскладка объёмов, зона рук без носителя, `w.Players[…]`, `.Hits`, фикстуры 43/43а,
+хелперы без дома, `MakeShippedArchetypes`.
+
+**Класс 1 — ДЫРА ПОКРЫТИЯ: заход строил механизм и не применял его.** ⛔⛔ Спека §3.2 числит
+раскладку **11 / 13 / 9 / 13 / 15** объёмов, а план переводил на пару костей **те же три пояса**,
+которые лежат в коде сегодня (`HeroConfig.cs:158-164`, `MobConfig.cs:90-96`, девять литералов
+бутстрапа — проверено). Свип по плану: «бедро» — 0 вхождений, «предплеч» — 1, и то в комментарии.
+Пункты вехи 1 («пуля проходит между ног») и 8 («попадания по четырём ногам Директора различаются»)
+были недостижимы. ⇒ заведён **таск T4b** с прибором, тремя свидетелями-свойствами и доставкой.
+Сюда же: `HitZone.Arms` объявлялась, но **ни одна часть её не несла** (в Files T9 не было ни одного
+из трёх файлов, где авторятся `Parts`) — заведён Step 2а; маска слоя прицеливания (§3.6) не
+существовала в `PoseTable`, из-за чего «композиция трёх слоёв» не реализовывалась ничем; демпфер
+веса дерева не имел **производителя**, а его фикстура мерила **мобом** то, что живёт только у
+сборщика (`SpeedDampTime` — `GameFeelConfig.cs:109`, читает только `PlayerVisual.cs:261`).
+
+**Класс 2 — код, который не собрался бы.** `Assert.AreNotEqual` **с допуском** — такой перегрузки
+в NUnit нет (в репо ни одного такого вызова на ~100), пять вхождений; `w.Players[…]` — у мира есть
+`Player`/`PlayerAt`, а `Players[]` принадлежит `RenderSnapshot`, десять вхождений;
+`w.StatsAt(0).Hits` — поля нет, есть `ShotsHit`, восемь вхождений; `SimInput.Move` → `MoveDir`;
+`MobSimConfig.Speed` → `MaxSpeed`; `ChaserRestPose()` приватна и зовётся из двух чужих файлов;
+`BodyReaction.Decide` против собственного `Choose`; `ReactionCooldown` против собственного
+`ReactionCooldownTicks`; `MobStrike` — тип без файла и слоя; фикстуры **43 и 43а** зовут **пять**
+имён, которых нет ни в коде, ни в Interfaces того же таска, **тридцатью строками выше**.
+⛔ И ловушка, которую репо знает дословно (`SimConfig.cs:686-691`): `typeof(PoseKey).GetFields()`
+вернул бы **13**, а не 12 — `const TiltQuantStep` это static-поле, и рефлективный цикл фикстуры 23
+умер бы исключением, которое RED не является.
+
+**Класс 3 — фикстуры, красные или зелёные не там, где план обещал.** Пересчитано численно:
+**26** требовала промаха по стоящему телу на высоте 0.45, куда попадают и нога (0.316 против 0.47),
+и корпус (0.430 против 0.62); **26а** требовала попадания настильным огнём в тело, накренённое на
+85°, у которого крыша самой высокой капсулы — **0.805** при высоте дула 1.0 (обе переписаны: 26
+целится в грудь лежащего, 26а берёт крен ровно `TiltFallAngle`, где корпус стоит на линии огня).
+**32в** была зелена и на заглушке, и на мутанте: `OpenField` держит сборщика в начале координат,
+а фикстура переносила его туда, куда моб уже смотрел. **23б** зелена с рождения —
+`StateHash64.Add(ulong, float2)` существует (`:29`). **32а**, **8**, **18б**, **42** зелены на
+своих объявленных заглушках. **4в** падала `IndexOutOfRangeException`: `SlideCrownOf` читает
+`ClipFirstRow[1]`, а всем пяти телам вешалась однострочная таблица, где это сентинел. **20** была
+красной на верном коде. **34б** — `Assert` без теста. И **T2 Step 3** требовал «красных ноль» на
+коде, где рефлективный свип хеша гарантированно умирает `NotSupportedException`.
+
+**Класс 4 — переиспользование (правило 2), и оба случая план себе уже запрещал.**
+⛔ `BodyFacing.Step(current, to, maxRad)` — это посигнатурно существующий
+`Geometry.RotateTowards(from, to, maxRad)` (`Geometry.cs:915`) с тремя готовыми свидетелями и живым
+вызывающим; довод «подсистема, которой нет» был ложным, файл отменён. ⛔ `HistoryPoseKeyForTest`
+запрещён **рулингом 148**, и запрет записан в самом коде: «AND THERE IS NO SECOND PROPERTY… a
+SECOND SPELLING of `PosAt`»; шов уже есть — `internal PositionHistory History`. ⛔
+`MobGatherRadiusFor` стал бы **пятым** switch по архетипу вопреки рулингу 259, причём довод соседа
+(«вызов копировал бы структуру») устарел: `MobConfigFor` с Т31 — `ref readonly`. ⛔ И перегрузка
+`Geometry.Rotate(float2, sin, cos)`, заведённая кругом 1 ради «одного дома арифметики поворота»,
+не звалась ниоткуда — `ToWorld` по-прежнему инлайнил матрицу.
+
+**Класс 5 — TDD-каркас.** У **T5a** не было красной фазы вовсе при собственной новой фикстуре;
+у **восьми** тасков не было verify-GREEN (и «красных ровно три эталона» его не заменяет —
+оно не отличает «мои позеленели» от «мои зелены, а два чужих покраснели»); рецепт R-RED
+объявлял «`EXIT=0` — СТОП» и сам же нарушался в пяти местах — заведён пункт 3а с поимённым
+перечнем законных исключений.
+
+**Класс 6 — бухгалтерия, и она снова оказалась хуже, чем думал предыдущий круг.** Круг 2 поправил
+«72 → 73», добавив 4в, и **забыл 18г**, которую сам же завёл. Круг 3 нашёл ещё пять забытых.
+Итог пересчитан: **78 фикстур и 70 мутаций**, и записано правило — фикстура вносится в таблицу тем
+же шагом, которым пишется её тело. Плюс: `MakeDefaults` не создаёт элиту и Директора вовсе (они
+рождаются в `MakeShippedArchetypes` и заполняются копиром `SeedMob`), T2 Step 12 гонял шесть
+мутаций при трёх в таблице, `Resolve` зовётся семь раз, а не четыре, семь имён фикстур T1 нарушали
+конвенцию дома, два файла выпали из своих Files, а два шага стояли под номерами, спорящими с их
+местом в документе.
+
+**Класс 7 — насыщение, которого никто не считал.** `sbyte × TiltQuantStep` даёт потолок
+**1.27 рад = 72.8°**, тогда как `TiltFallAngle` объявлен `[Range(0.1f, 3.14f)]`, а T10b сам считает
+пики **90–361°**. Отмотанная поза расходилась бы с той, по которой судили, — тем сильнее, чем
+интереснее ситуация. ⇒ правило **15а** и фикстура **18д**.
+
+**⛔⛔ И ЧЕГО КРУГ 3 НЕ ЗАКРЫЛ — НАЗВАНО ЗДЕСЬ, А НЕ ОСТАВЛЕНО ОБНАРУЖИВАТЬСЯ.** Правки внесены не
+все: объём находок больше одного прохода, и прятать остаток было бы тем же дефектом, который этот
+круг чинил трижды.
+
+1. ⛔ **Хелперы, введённые САМИМ кругом 3 и пока не объявленные** — ровно тот класс, что ловился у
+   кругов 1 и 2: `ExpectedShoveTiltVel`, `RunTwoHitsAndHash`, `StrikeReachOf`, `MaxPartRadius`,
+   `LateralGapBetweenLegs`, `IsArm`, `ReactionWeight`, `UpperBone`, `PeakTiltForRow`,
+   `PoseBaker.PrintCandidates`, `MobStrike.Reaches/InSector` (объявлены сигнатурами, но без тел),
+   `ResolveProbesForTest`. **Каждому нужен дом и тело до начала T0.**
+2. ⛔ **`StrikePartId` по-прежнему без конвейера доставки:** нет `[Range]`, нет маппинга рядом с
+   `SimConfigBuilder.cs:298`, нет записи бутстрапом, нет R-ASSET. И один C#-дефолт не может
+   удовлетворить правило 10 сразу: ганнеру нужен сентинел `-1`, остальным — валидный `PartId`.
+3. ⚠ **Форма `TiltSpringTable` не ложится на мобий интегратор:** демпфирование у мобов
+   **пер-слотовое** (`MobTiltIntegrator.cs:232-237`, `ref readonly MobSimConfig` на каждую запись),
+   а план обещает «параметры шага» — тогда адаптер либо перепишет цикл, либо ядро получит
+   `MobType[]`, и «ветвлений по типу в ядре ноль» станет неправдой. Решение: ядро хранит пружину
+   **рядом с ключом**, записанную в `Apply`.
+4. ⚠ **`AngularImpulseFor` заводится вторым** (`MobTiltIntegrator.cs:351` уже есть) — разделить на
+   один параметризованный и две обёртки, заодно это назовёт дом `CocoonDamping`.
+5. ⚠ **Дом кроны и поиска по зоне раздвоен на четыре** (`HitZones.StackTop`,
+   `SimConfigBuilder.PartsTop`, `MobFootprintAudit`, `PersistentPropsDirector.MidOfZone`), и
+   `HeadPartBottom` план правит **только переименованием поля**, хотя правило 2 с него снимается —
+   «низ головы» станет «низом голени» молча.
+6. ⚠ **Пути пяти префабов перечислены в репо трижды**, план добавляет ещё два перечисления и
+   литерал внутри фикстуры 28; **сбор клипов контроллера** (`SkeletonAudit.cs:292`, `:307-310`) —
+   четвёртая площадка, которую `PoseSampling` не выделяет, хотя пекарю она нужна ровно так же.
+7. ⚠ **Две лексики на понятие:** `Swing*` (живые числа замаха) против нового `Strike*`, и
+   `HitReact*` (`AnimIds.cs:21-22`) против нового `Reaction*`. ADR-003 A7 запрещает вторую лексику
+   дословно — выбрать одну и записать строкой A10.
+8. ⚠ **Четыре переезда маркер-ключа** (T4, T5b, T8, T10a) там, где механизм обобщается один раз:
+   `EnsureAssetHasKey(so, path, params string[] markerFields)` снял бы требование «маркер —
+   последнее поле» вовсе.
+9. ⚠ **Гранулярность:** T2 Step 2 («28 файлов одним шагом»), T5a Step 1 («18 файлов, 98
+   вхождений») и T12 Step 2 («Playables» одним пунктом без кода) — часы, а не 2–10 минут.
+10. ⚠ **Отклонение о домах фикстур не записано:** 32в, 17а, 21а сменили набор против §4.4 спеки —
+    правило 22 требует записи.
+
+**Одна находка отклонена.** «`ref`-возврат `PoseTableFor` нарушает ref-safety» — **не нарушает**:
+`cfg` ссылочный, поле лежит в куче, escape-scope у ссылки — вызывающий контекст. Зато рядом с ней
+нашёлся настоящий дефект того же места: `PoseTable table = PoseTableFor(c);` берёт **копию**, и
+правка `BoneCount`/`Checksum` через неё потерялась бы молча.
 
 ---
 
