@@ -523,10 +523,10 @@ public static bool SegmentCapsule(float3 p0, float3 p1, float padR,
 /// correctly for free».
 public static bool PointCapsule(float3 p, float r, float3 a, float3 b, float capsuleR);
 
-// ⛔ ОБЪЯВЛЕНО В T2, А НЕ В T1 (правка круга 4): `HitVolumes.cs` создаётся
-// таском T2, и блок Interfaces T1 на него ссылаться не может — гейт
-// R-COMMIT сверяет diff со скоупом таска и остановил бы коммит.
-// Simulation/Combat/HitVolumes.cs — прибор высотного гейта.
+// ⛔ ЭТОТ БЛОК — НЕ ЧАСТЬ T1. Он приведён здесь только как ссылка вперёд;
+// объявление и инкремент живут в T2 (там создаётся HitVolumes.cs).
+// Имя ОДНО на весь план — `ResolveProbes`, без суффикса ForTest.
+// Simulation/Combat/HitVolumes.cs — прибор высотного гейта (объявляется в T2).
 /// ⛔ СЧЁТЧИК ВХОДОВ В УЗКУЮ ФАЗУ — единственный способ увидеть, что высотный
 /// гейт работает: сам гейт не меняет ОТВЕТА, он меняет ЧИСЛО РАЗБОРОВ. Без
 /// него фикстура 8 ненаписуема вовсе.
@@ -670,13 +670,13 @@ namespace Ring.Simulation.Tests
 
   | # | Имя фикстуры | Что пинит | Премисса, без которой тест — сторож |
   |---|---|---|---|
-  | 5 | `AFlatTestIsNotEquivalentToTheThreeDimensionalOne` | плоская проверка даёт другой ответ | кость **выше** линии полёта: в плане пересечение есть, в 3D — нет. Без разницы высот тест зелен на плоском солвере |
-  | 9 | `AZeroLengthBoneDegeneratesToASphere` | ветка сферы **внутри** солвера | `a == b`; попадание и промах **обе стороны** от радиуса |
-  | 13 | `AZeroLengthStepTakesTheAlreadyInsideBranch` | `p0 == p1` идёт веткой `PointCapsule` | точка **внутри** капсулы; и вторая половина — точка снаружи даёт `false` |
-  | 15 | `ParallelSegmentsTakeTheStartOfTheInterval` | параллельный случай | отрезки **строго параллельны** и интервал имеет **ненулевую длину**: `t` обязано равняться его началу, а не середине и не концу |
-  | 16 | `AContactExactlyAtTOneIsAMiss` | правый конец полуинтервала | контакт ровно в `t == 1` строится **касанием в конце шага**; ⚠ премисса — что при чуть более длинном шаге тот же контакт засчитан |
-  | 16а | `ANegativepadRIsNotClampedInside` | конвенция файла | `padR < 0` **и** `capsuleR + padR > 0`, иначе поведение не определено самим контрактом |
-  | 10 | ⭐⭐ `TIsTheFirstEntry_NotTheClosestApproach` | **главный тест таска** | шаг идёт **по касательной вдоль** капсулы: минимум расстояния лежит в середине шага, первый вход — заметно раньше. ⛔ Числа пересчитываются питоном **и пишутся в отчёт до прогона** |
+  | 5 | `SegmentCapsule_FlatTest_IsNotEquivalentToTheThreeDimensional` | плоская проверка даёт другой ответ | кость **выше** линии полёта: в плане пересечение есть, в 3D — нет. Без разницы высот тест зелен на плоском солвере |
+  | 9 | `SegmentCapsule_ZeroLengthBone_DegeneratesToASphere` | ветка сферы **внутри** солвера | `a == b`; попадание и промах **обе стороны** от радиуса |
+  | 13 | `SegmentCapsule_ZeroLengthStep_TakesTheAlreadyInsideBranch` | `p0 == p1` идёт веткой `PointCapsule` | точка **внутри** капсулы; и вторая половина — точка снаружи даёт `false` |
+  | 15 | `SegmentCapsule_ParallelSegments_TakeTheStartOfTheInterval` | параллельный случай | отрезки **строго параллельны** и интервал имеет **ненулевую длину**: `t` обязано равняться его началу, а не середине и не концу |
+  | 16 | `SegmentCapsule_ContactExactlyAtTOne_IsAMiss` | правый конец полуинтервала | контакт ровно в `t == 1` строится **касанием в конце шага**; ⚠ премисса — что при чуть более длинном шаге тот же контакт засчитан |
+  | 16а | `PointCapsule_NegativePadR_IsNotClampedInside` | конвенция файла | `padR < 0` **и** `capsuleR + padR > 0`, иначе поведение не определено самим контрактом |
+  | 10 | ⭐⭐ `SegmentCapsule_TIsTheFirstEntry_NotTheClosestApproach` | **главный тест таска** | шаг идёт **по касательной вдоль** капсулы: минимум расстояния лежит в середине шага, первый вход — заметно раньше. ⛔ Числа пересчитываются питоном **и пишутся в отчёт до прогона** |
 
 - [ ] **Step 5 (verify RED):** R-FILTER `GeometryTests` → `EXIT=2`; `testcasecount` = **56 + 11 =
       67**, красных **ОДИННАДЦАТЬ**.
@@ -809,15 +809,15 @@ public static bool PointCapsule(float3 p, float r, float3 a, float3 b, float cap
 
   | Мутация | Ослабление | Названная жертва |
   |---|---|---|
-  | **M329** | капсула вырождена в точку: `r = padR` (радиус капсулы не участвует) | тест 3 `TheRadiiAddUp` — первый ассерт |
-  | **M330** | расстояние считается в плане: `SegmentPointDistance` отбрасывает `.y` | тест 5 `AFlatTestIsNotEquivalentToTheThreeDimensionalOne` |
-  | **M332** | `t` — минимум расстояния: скан заменён поиском минимума по 16 пробам | ⭐⭐ тест 10 `TIsTheFirstEntry_NotTheClosestApproach` |
+  | **M329** | капсула вырождена в точку: `r = padR` (радиус капсулы не участвует) | тест 3 `SegmentCapsule_RadiiAddUp_BothSidesOfTheEdge` — первый ассерт |
+  | **M330** | расстояние считается в плане: `SegmentPointDistance` отбрасывает `.y` | тест 5 `SegmentCapsule_FlatTest_IsNotEquivalentToTheThreeDimensional` |
+  | **M332** | `t` — минимум расстояния: скан заменён поиском минимума по 16 пробам | ⭐⭐ тест 10 `SegmentCapsule_TIsTheFirstEntry_NotTheClosestApproach` |
   | **M335** | ⚠ **ПЕРЕФОРМУЛИРОВАНА ПЛАНОМ, И ЭТО ЗАМЕР:** спековая форма («берётся конец интервала») в этой реализации даёт `lo` вместо `hi` после уточнения — разницу **1.5e-5**, то есть **вшестеро меньше** допуска фикстур `1e-4`, и мутант оказался бы **эквивалентным** (правило 696: объявить его убитым нельзя, ветки не расходятся ни на одном входе). ⇒ ослабление — **скан идёт от конца шага к началу**, то есть находится ПОСЛЕДНИЙ вход вместо первого | тест 15 `SegmentCapsule_ParallelSegments_TakeTheStartOfTheInterval` **и** тест 10 `SegmentCapsule_TIsTheFirstEntry_NotTheClosestApproach` |
-  | **M336** | снят возврат `false` при `hi >= 1f` | тест 16 `AContactExactlyAtTOneIsAMiss` |
-  | **M337** | кламп переписан на месте внутри `SegmentPointDistance` (проекция без `math.clamp`) | тест 14 `TheClampIsTheOnlyHomeOfProjection` — `s` перестаёт приходить из общего дома, и точка за концом даёт `s > 1` |
-  | **M338** | вырожденная кость не даёт ветку сферы (`len2 < 1e-12f` возвращает `false`) | тест 9 `AZeroLengthBoneDegeneratesToASphere` |
-  | **M339** | нулевой шаг не идёт веткой «уже внутри» (`lengthsq(step) < 1e-12f` возвращает `false`) | тест 13 `AZeroLengthStepTakesTheAlreadyInsideBranch` |
-  | **M340** | отрицательный `padR` клампится внутри солвера (`r = math.max(0f, padR) + capsuleR`) | тест 16а `ANegativepadRIsNotClampedInside` |
+  | **M336** | снят возврат `false` при `hi >= 1f` | тест 16 `SegmentCapsule_ContactExactlyAtTOne_IsAMiss` |
+  | **M337** | кламп переписан на месте внутри `SegmentPointDistance` (проекция без `math.clamp`) | тест 14 `ClosestPointOnSegment_Float3_ClampsPastTheEnd` — `s` перестаёт приходить из общего дома, и точка за концом даёт `s > 1` |
+  | **M338** | вырожденная кость не даёт ветку сферы (`len2 < 1e-12f` возвращает `false`) | тест 9 `SegmentCapsule_ZeroLengthBone_DegeneratesToASphere` |
+  | **M339** | нулевой шаг не идёт веткой «уже внутри» (`lengthsq(step) < 1e-12f` возвращает `false`) | тест 13 `SegmentCapsule_ZeroLengthStep_TakesTheAlreadyInsideBranch` |
+  | **M340** | отрицательный `padR` клампится внутри солвера (`r = math.max(0f, padR) + capsuleR`) | тест 16а `PointCapsule_NegativePadR_IsNotClampedInside` |
 
       ⛔ **Откат — `cp` с копии и `md5sum`, НЕ `git checkout`** (350); **копия и md5 снимаются ДО
       прогона** (736).
@@ -842,6 +842,11 @@ public static bool PointCapsule(float3 p, float r, float3 a, float3 b, float cap
 **Files:**
 - Create: `client/Assets/Scripts/Simulation/Core/PoseTable.cs` (+ `.meta`)
 - Create: `client/Assets/Scripts/Simulation/Combat/HitVolumes.cs` (+ `.meta`)
+- Create: `client/Assets/Scripts/Simulation/Combat/HitParts.cs` (+ `.meta`) — **публичный** дом
+  кроны и поиска по зоне (Step 2); `internal` не годится: его зовут `Ring.Data`,
+  `Ring.Presentation` и `Ring.Editor`
+- Modify: `client/Assets/Tests/EditMode/TrajectoryTests.cs`, `PvpDamageTests.cs` — читатели
+  удаляемого `StackTop`
 - Create: `client/Assets/Tests/EditMode/HitVolumeTests.cs` (+ `.meta`)
 - Modify: `client/Assets/Scripts/Simulation/Core/SimConfig.cs` (`HitPart` `:676-682` переопределён;
   `HeroSimConfig` и `MobSimConfig` — **два** новых поля: `GatherRadius` и **`PoseTable Poses`**;
@@ -876,7 +881,9 @@ public static bool PointCapsule(float3 p, float r, float3 a, float3 b, float cap
   ни строки позы, ни курса). Он **перестаёт зваться боевым путём вовсе**: сегодня его зовут двое
   (`ProjectileSystem.cs:1405`, `AimLine.cs:356`), и оба переходят на `HitVolumes.Resolve` (T2 и
   T3). ⇒ `Resolve` **удаляется вместе со своими четырьмя тестовыми вызовами**, которые переезжают
-  на новый разбор; `StackTop` (`:94-95`) сохраняет сигнатуру и меняет тело (см. Step 2);
+  на новый разбор; `StackTop` (`:94-95`) **УДАЛЯЕТСЯ** вместе с `Resolve` (Step 2), а шесть его читателей-тестов
+  переезжают на `HitParts.RestCrown`: `TrajectoryTests:99`, `PvpDamageTests:514`,
+  `HitZoneTests:81/145/194/226-232` (см. Step 2);
   `Overlaps` (`:310-315`) **остаётся нетронутым** — он дом высотного гейта, его зовут барьер
   (`ProjectileFlight.cs:476`) и сам `HitVolumes` (Step 6)
 - Modify: `client/Assets/Scripts/Simulation/Combat/ProjectileSystem.cs` (широкая фаза `:282-289`
@@ -984,7 +991,13 @@ public struct HitPart
     public HitZone Zone;
     public float DamageMult;
     public byte PartId;                  // локальный, append-only (правило 7)
-    public float RestBottom, RestTop;    // высоты в позе ПОКОЯ — считает пекарь
+    /// ⛔⛔ ОПРЕДЕЛЕНИЕ ОДНО, И ОНО ЗДЕСЬ: это ГАБАРИТ КАПСУЛЫ в позе покоя,
+    /// то есть кость ± радиус, а не концы костей:
+    ///   RestBottom = min(bone[BoneA].y, bone[BoneB].y) − Radius
+    ///   RestTop    = max(bone[BoneA].y, bone[BoneB].y) + Radius
+    /// Без единого определения правило 13 («RestTop сходится с таблицей»)
+    /// непроверяемо, а фикстуры и правило 16 считают разные вещи.
+    public float RestBottom, RestTop;    // габарит капсулы в позе ПОКОЯ — считает пекарь
 }
 
 // HeroSimConfig и MobSimConfig — по одному новому числу.
@@ -1025,7 +1038,9 @@ internal static class HitVolumes
     /// `pose` — строка таблицы для ЭТОГО тела на ЭТОМ тике (до T6 фикстуры
     /// передают строку покоя). `t` — доля шага, в той же параметризации
     /// [p0, p1], которой пользуется мин-скан вызывающего.
-    public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
+    // ⛔ `bodyTilt` ВВОДИТСЯ УЖЕ ЗДЕСЬ и до T6b везде передаётся `float2.zero`:
+// иначе T6b пришлось бы править семь вызовов ВТОРОЙ раз.
+public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt,
         float3 bodyOrigin, float bodyFacingSin, float bodyFacingCos,
         float3 p0, float3 p1, float projRadius,
         out HitZone zone, out float mult, out float hitHeight, out byte partId, out float t);
@@ -1132,11 +1147,10 @@ public static class HitParts
       ⚠ **И `MobFootprintAudit` тоже садится на `RestCrown`**, а не остаётся инлайном — иначе у
       нового типа останется один косвенный вызывающий, и «один дом» не закроет ни одной копии
       (`Editor.asmdef` на `Ring.Simulation` ссылается, граница бесплатна).
-      ⚠ **И `MobFootprintAudit` правится ЗДЕСЬ ЖЕ**, одной строкой. ⛔ **Адрес — `:118`**, и это
-      правка круга 4 против правки круга 3: круг 3 «исправил» верный `:116-117` на `:112-113`, не
-      открыв файл, тогда как `:112` — это объявление `topPart/widestPart`, `:113` — проверка на
-      `null`, а чтение `.Top` стоит на **`:118`**. ⚠ Сверяться **строкой кода**, а не номером
-      (рулинг 196): `if (cfg.Parts[i].Top > topPart) topPart = cfg.Parts[i].Top;`
+      ⚠ **И `MobFootprintAudit` правится ЗДЕСЬ ЖЕ**, одной строкой. ⛔ **Адрес — `:116-117`**
+      (проверено `awk` с явной нумерацией: `:111` — объявление `topPart/widestPart`, `:112` —
+      проверка на `null`, `:116` — чтение `.Top`, `:117` — `.Radius`, `:118` — закрывающая скобка).
+      ⚠ Сверяться **строкой кода**, а не номером (рулинг 196): `if (cfg.Parts[i].Top > topPart) topPart = cfg.Parts[i].Top;`
       `if (cfg.Parts[i].RestTop > topPart) topPart = cfg.Parts[i].RestTop;`
       ⛔ Без этого **весь EditMode-прогон** падает ошибкой компиляции в `Ring.Editor`, на который
       ссылается `Simulation.Tests.asmdef` — а ошибка компиляции ≠ RED и просто ломает таск.
@@ -1208,6 +1222,13 @@ Parts = new[]
         DamageMult = 1.7f, PartId = 2, RestBottom = 2.12f, RestTop = 2.70f },
 },
 GatherRadius = 1.25f,   // 0.9 (стопа) + 0.35 (радиус ноги) = 1.25 — правило 9 в T4
+// ⛔⛔ И ОСТАЛЬНЫМ ЧЕТЫРЁМ СЕКЦИЯМ ТОЖЕ — ИНАЧЕ ПРАВИЛО 9 (T4) ОТВЕРГНЕТ ЧЕТЫРЕ
+// КОНФИГУРАЦИИ ИЗ ПЯТИ, и покраснеют те же ~45 чужих тестов, ради которых
+// писался T4 Step 7б. Значение — ФИКСТУРНЫМ ВЫРАЖЕНИЕМ, не литералом:
+//   hero.GatherRadius    = MaxBoneReach(HeroRestAndSlidePose()) + MaxPartRadius(hero.Parts);
+//   gunner/elite/director — то же по своей таблице.
+// ⚠ До пекаря (T4) это фикстурные числа, ровно как ProjectileSpeed 35 против
+// игровых 52.5 — и это записано, чтобы их не приняли за игровые.
 ```
 
       И **вторая фикстурная таблица — для тай-брейка**, потому что на теле с разными зонами
