@@ -125,19 +125,20 @@ namespace Ring.Simulation.Combat
         /// T1 GREEN): on a BODY stop it is the winning VOLUME's own first
         /// contact -- the number HitVolumes.Resolve hands back (app-94sk T3;
         /// until then it was the band-era HitZones.Resolve, deleted by that same
-        /// task) -- and NOT the entry into the body circle the candidates were
-        /// ranked by. The two
-        /// differ by up to (gather radius - part radius), three quarters of a
-        /// meter on a chaser, and the argument for taking the part is the
-        /// argument the
-        /// whole task stands on: the line must answer what the SHOT answers,
+        /// task) -- and NOT the entry into the gather circle the candidates
+        /// were ranked by. The two differ by up to (gather radius - part
+        /// radius), which on a chaser is 1.08 m -- his gather circle is 1.25 and
+        /// his narrowest volume, the head, is 0.17. (Before T3 the same bound
+        /// was 0.33 m, measured off the physical circle of 0.50 the ranking then
+        /// used.) The argument for taking the part is the
+        /// argument the whole task stands on: the line must answer what the SHOT answers,
         /// and the shot's own contact point travels out of exactly this
         /// number (ProjectileSystem carries Resolve's `t` out for the
         /// two-dimensional contact of a body hit, Ruling 73, precisely so the
         /// reported point cannot disagree with the reported height). Ranking
-        /// still happens on the BODY circle -- now the GATHER circle, the one
+        /// still happens on the CIRCLE -- since T3 the GATHER circle, the one
         /// the round's own broad phase sweeps -- because that is the order the
-        /// round uses -- the two roles of `t` are separate, and test 19 pins
+        /// round uses; the two roles of `t` are separate, and test 19 pins
         /// the ranking half.
         public static AimLineSolution Solve(float2 heroPos, float2 aimPoint, float muzzleHeight,
             in SimConfig cfg, RenderSnapshot snap, int selfIndex,
@@ -260,6 +261,14 @@ namespace Ring.Simulation.Combat
                 // frame said nothing about reads as `default(PlayerState)`,
                 // which is not alive.
                 if (!other.Alive) continue;
+                // ⚠ AND THIS HALF HAS NO WITNESS, WHICH IS SAID RATHER THAN
+                // IMPLIED: a collector's fixture bones all sit on his own axis,
+                // so GatherReachOf answers max(part radius) = 0.45 -- the same
+                // number Hero.Radius carries, and a mutant reading the physical
+                // radius here is green on the whole suite. The gap closes in
+                // T4b, where the collector's volumes move onto real bones and
+                // his arms leave the axis; the mob half is witnessed today
+                // (fixture 42 stands 0.89 m out against a physical 0.62).
                 if (Geometry.SegmentCircle(start, far, cfg.Weapon.ProjectileRadius, other.Pos,
                         cfg.Hero.GatherRadius, out float tp))
                 {
@@ -271,6 +280,18 @@ namespace Ring.Simulation.Combat
             // The fraction of [start, far] the line actually ends at. It stays
             // the min-scan's own number for every stop but a body; see this
             // method's doc for why a body's is the winning PART's instead.
+            // ⚠ AND A BODY'S NUMBER IS TAKEN UNCONDITIONALLY, WHICH IS SAID
+            // HERE BECAUSE T3 WIDENED IT: the scan proves the body's GATHER
+            // circle is entered nearer than the barrier, not that its VOLUME is,
+            // so a line stopping on a body can be drawn up to (gather radius -
+            // part radius) past a barrier that stood between them -- 1.08 m on a
+            // chaser now, against 0.33 m while the ranking used his physical
+            // circle. It is left that way on purpose: the round resolves the
+            // same order in the same two stages, so changing it here would make
+            // the picture disagree with the shot, which is the one thing this
+            // whole file exists to prevent. The round's own overshoot is bounded
+            // by its step (1.17 m on the fixtures' numbers) rather than by the
+            // range, so the two stay the same shape.
             float stopT = bestT;
             while (count > 0)
             {
@@ -333,7 +354,10 @@ namespace Ring.Simulation.Combat
         /// ⛔ THE PARTS, THE POSE TABLE AND THE GATHER RADIUS COME OUT OF THE
         /// NAMED HOMES, NEVER OUT OF A SWITCH OF THIS FILE'S OWN:
         /// SimConfig.MobConfigFor for a mob and cfg.Hero for a collector -- the
-        /// same two reads ProjectileSystem makes at the same point.
+        /// same two SOURCES ProjectileSystem reads at the same point. ⚠ Not the
+        /// same MEMBER: that one goes through SimulationWorld.MobConfigFor, which
+        /// hands back a COPY, because it has a world to ask; a pure function has
+        /// only the config, and the static form returns `ref readonly`.
         ///
         /// ⛔⛔ THE RESOLVER IS ASKED ABOUT THE CHORD, NOT ABOUT THE WHOLE RAY,
         /// AND THAT IS CORRECTNESS RATHER THAN ECONOMY. HitVolumes.Resolve rests
@@ -342,11 +366,18 @@ namespace Ring.Simulation.Combat
         /// step, and its own doc says so -- "the round's step is 1.75 at the
         /// shipped speed, so 16 probes stand 0.109 apart". This ray is the whole
         /// range: 52.5 m on the fixtures' numbers and 78.75 m on the game's, so
-        /// its probes would stand 3.28 m and 4.92 m apart while the ray spends
-        /// 0.56 m to 1.24 m inside a capsule -- MEASURED: the same torso capsule
-        /// on the same ray answers HIT at a round's step and MISS at the ray's.
-        /// Handing over the whole ray would therefore have shipped an indicator
-        /// that misses every body the round hits.
+        /// its probes would stand 3.28 m and 4.92 m apart while a head-on
+        /// passage through a capsule is 0.56 m (a collector's head) to 1.24 m (a
+        /// chaser's torso) -- only the Director's own bulk, 3.32 m and 4.64 m,
+        /// is too wide to be stepped over.
+        /// ⛔ AND THE FAILURE IS BY PHASE, NOT ALWAYS, WHICH IS WORSE THAN A
+        /// PLAIN MISS: whether a probe lands inside depends on where the body
+        /// stands along the ray, so the SAME chaser torso answers HIT at 10 m
+        /// and MISS at 8 m on the fixtures' own numbers. Handing over the whole
+        /// ray would therefore have shipped an indicator that disagrees with the
+        /// round roughly two times in three and agrees the rest of the time --
+        /// a defect no fixture could name, only sample. Mutation M393 is exactly
+        /// that experiment: nine fixtures die and four survive.
         /// ⇒ the segment handed down is the ray's passage through the body's
         /// GATHER circle, taken from the existing Geometry.SegmentCircleInterval
         /// -- the very member the band-era resolver used for the same purpose --
@@ -354,9 +385,24 @@ namespace Ring.Simulation.Combat
         /// parameterization, the one the min-scan above ranks in. The probes
         /// then stand 0.07 m to 0.29 m apart against a thinnest capsule of
         /// 0.56 m, on all five bodies.
-        /// ⚠ NOTHING IS NARROWED BY IT: a volume is inside its own body's gather
-        /// circle by validation rule 9, so a part the chord cannot reach is
-        /// reachable through no part of the ray.
+        /// ⚠ WHAT IT COSTS, STATED HONESTLY: the chord is narrower than the ray,
+        /// so this is safe exactly while every volume lies inside its own body's
+        /// gather circle -- validation rule 9, "the gather covers the furthest
+        /// bone plus the volume on it". Under it the argument closes: a contact
+        /// point is within (projRadius + partRadius) of a bone, a bone is within
+        /// (gather - partRadius) of the axis, so every contact sits inside the
+        /// gather circle and the chord holds every `t` the whole ray would.
+        /// ⛔⛔ AND THE RULE IS NOT IN THE CODE YET -- IT ARRIVES WITH THE BAKER
+        /// IN T4, which SimConfigBuilder.ValidateParts says in as many words.
+        /// The fixtures satisfy it because TestConfigs.GatherReachOf computes it;
+        /// the shipped `.asset` does NOT -- its GatherRadius is a placeholder
+        /// equal to the physical radius until the baker fills it, and ConfigTests
+        /// pins that placeholder deliberately. ⭐ What keeps the window T3 -> T4
+        /// harmless is a SECOND absence: the shipped side carries no pose table
+        /// either (SimConfigBuilder maps `Poses` only from T4), so Resolve
+        /// refuses BOTH paths on its table guard and the ray cannot disagree
+        /// with the round about a body neither of them can hit. When T4 lands
+        /// both halves together, rule 9 makes this chord exact.
         ///
         /// ⚠ THE HEIGHT SPAN IS A SINGLE NUMBER, TWICE: the line is horizontal
         /// at the muzzle's height by definition, so both ends of the step carry

@@ -197,8 +197,11 @@ namespace Ring.Simulation.Tests
             // the expectation is then read from -- no literal zone, and no
             // literal radius.
             Assert.Less(math.distance(muzzle, bodyPos),
-                cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
-                "премисса фикстуры: дуло внутри падированного круга тела");
+                cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: дуло внутри круга ОХВАТА тела — по нему собираются кандидаты");
+            Assert.Less(math.distance(muzzle, bodyPos),
+                cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: дуло внутри самой КАПСУЛЫ корпуса — иначе упор был бы не нулевой длины");
             HitPart corpus = cfg.Chaser.Parts[1];
             Assert.Greater(cfg.Hero.MuzzleHeight, corpus.RestBottom,
                 "премисса фикстуры: высота дула выше низа корпуса цели");
@@ -516,8 +519,8 @@ namespace Ring.Simulation.Tests
             Assert.Less(cfg.Hero.SlideProfileTop,
                 cfg.Hero.MuzzleHeight - cfg.Weapon.ProjectileRadius,
                 "премисса фикстуры: силуэт слайдящего ниже луча даже с радиусом снаряда");
-            Assert.Less(math.abs(otherPos.y), cfg.Hero.Radius + cfg.Weapon.ProjectileRadius,
-                "премисса фикстуры: круг тела накрывает ось — мешать держать может только высота");
+            Assert.Less(math.abs(otherPos.y), cfg.Hero.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: круг ОХВАТА накрывает ось — мешать держать может только высота");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
                 cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
@@ -546,12 +549,17 @@ namespace Ring.Simulation.Tests
             var snap = Snap(in cfg);
             snap.Players[0] = new PlayerState { Alive = true, Pos = ownBody };
 
-            Assert.Less(cfg.Hero.Radius + cfg.Weapon.ProjectileRadius, cfg.Weapon.MuzzleOffset,
-                "премисса фикстуры: у своих ног тело линию не пересекло бы вовсе — падированный радиус меньше выноса дула");
+            // ⚠ THE GATHER CIRCLE, because that is what the broad phase sweeps.
+            // ⚠ AND THE MARGIN IS 30 mm (0.57 against the muzzle offset 0.60),
+            // named rather than trusted: shrink the offset or widen the collector
+            // and this premise, not the subject, is what breaks first.
+            Assert.Less(cfg.Hero.GatherRadius + cfg.Weapon.ProjectileRadius, cfg.Weapon.MuzzleOffset,
+                "премисса фикстуры: у своих ног тело линию не пересекло бы вовсе — круг охвата меньше выноса дула");
             Assert.Greater(math.dot(ownBody - muzzle, dir), 0f,
                 "премисса фикстуры: своё тело впереди дула, а не позади");
-            Assert.Less(math.abs(ownBody.y - muzzle.y), cfg.Hero.Radius + cfg.Weapon.ProjectileRadius,
-                "премисса фикстуры: своё тело падированным кругом накрывает ось линии");
+            Assert.Less(math.abs(ownBody.y - muzzle.y),
+                cfg.Hero.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: своё тело кругом охвата накрывает ось линии");
 
             AimLineSolution line = AimLine.Solve(hero, new float2(30f, 0f),
                 cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
@@ -751,7 +759,8 @@ namespace Ring.Simulation.Tests
             // VOLUME struck, not the entry into the gather circle the candidates
             // were RANKED by -- two roles of one `t`, and the shot itself keeps
             // them apart the same way. Here the two differ by 0.73 m, because
-            // the leg capsule is 0.47 m wide against a gather circle of 1.37 m.
+            // the padded leg capsule has a RADIUS of 0.47 m against a padded
+            // gather circle of 1.37 m -- radii, not widths.
             // Without this assertion a mutant reporting the circle's own `t`
             // passes every other fixture in the file.
             // ⚠ IT DOES NOT REPLACE THE ZONE ASSERTION ABOVE: that one pins the
@@ -997,7 +1006,15 @@ namespace Ring.Simulation.Tests
             // the radius this task retires could never have gathered this body
             // at all, and INSIDE the gather radius, which is what the split
             // exists for.
-            var aimPoint = new float2(6f, 0.9f);
+            // ⛔ THE TARGET IS THE FOOT'S OWN BONE, NOT A LITERAL: a volume is a
+            // segment in space now, so a fixture that means "aim at the leg" has
+            // to say where the leg IS -- the discipline TestConfigs.PartMidWorld
+            // was introduced for. The foot is bone A of the legs volume, and its
+            // swing lives in the body frame's `.z`, which ToWorld lays on the
+            // world's `.y`.
+            HitPart chaserLegs = cfg.Chaser.Parts[0];
+            float3 foot = cfg.Chaser.Poses.Bones[chaserLegs.BoneA];
+            float2 aimPoint = bodyPos + new float2(foot.x, foot.z);
             const float muzzleH = 0.4f;
             Assert.Greater(math.distance(aimPoint, bodyPos),
                 cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
