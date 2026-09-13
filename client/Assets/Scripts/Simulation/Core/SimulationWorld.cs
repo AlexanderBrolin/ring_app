@@ -2051,7 +2051,7 @@ namespace Ring.Simulation.Core
                         // HitZone.None IS UNREACHABLE for a game round, and
                         // the branch is written out rather than left implicit
                         // so the next reader can see the omission was measured
-                        // instead of forgotten: HitZones.Resolve hands back a
+                        // instead of forgotten: HitVolumes.Resolve hands back a
                         // real zone only together with `true`, and the callers
                         // refuse every NoOwner path before they reach this
                         // method. Nothing is counted here on purpose -- a

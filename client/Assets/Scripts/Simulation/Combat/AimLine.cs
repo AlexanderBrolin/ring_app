@@ -122,17 +122,21 @@ namespace Ring.Simulation.Combat
         /// (16 KB) is a decision rather than a detail.
         ///
         /// ⭐⭐ WHAT `Length` MEASURES, DECIDED HERE AND STATED ONCE (app-461s
-        /// T1 GREEN): on a BODY stop it is the winning PART's own first
-        /// contact -- the number HitZones.Resolve hands back -- and NOT the
-        /// entry into the body circle the candidates were ranked by. The two
-        /// differ by up to (body radius - part radius), a third of a meter on
-        /// a chaser, and the argument for taking the part is the argument the
+        /// T1 GREEN): on a BODY stop it is the winning VOLUME's own first
+        /// contact -- the number HitVolumes.Resolve hands back (app-94sk T3;
+        /// until then it was the band-era HitZones.Resolve, deleted by that same
+        /// task) -- and NOT the entry into the body circle the candidates were
+        /// ranked by. The two
+        /// differ by up to (gather radius - part radius), three quarters of a
+        /// meter on a chaser, and the argument for taking the part is the
+        /// argument the
         /// whole task stands on: the line must answer what the SHOT answers,
         /// and the shot's own contact point travels out of exactly this
         /// number (ProjectileSystem carries Resolve's `t` out for the
         /// two-dimensional contact of a body hit, Ruling 73, precisely so the
         /// reported point cannot disagree with the reported height). Ranking
-        /// still happens on the BODY circle, because that is the order the
+        /// still happens on the BODY circle -- now the GATHER circle, the one
+        /// the round's own broad phase sweeps -- because that is the order the
         /// round uses -- the two roles of `t` are separate, and test 19 pins
         /// the ranking half.
         public static AimLineSolution Solve(float2 heroPos, float2 aimPoint, float muzzleHeight,
@@ -227,8 +231,18 @@ namespace Ring.Simulation.Combat
                 // few points -- and the pointer would lie exactly while the
                 // boss is being finished off. The frame's mob array is live by
                 // construction.
+                // app-94sk T3 (spec §3.3): THE BROAD PHASE ASKS THE GATHER
+                // RADIUS, NOT THE PHYSICAL ONE -- the same move the round made in
+                // T2, and for the same reason: a chaser's foot swings 0.9 m out
+                // of his 0.5 m circle, so the physical radius discarded the leg
+                // before the narrow phase could be asked about it at all.
+                // ⛔ NO SWITCH OF THIS FILE'S OWN AND NO SECOND MobRadiusFor:
+                // MobConfigFor returns `ref readonly` since Т31, so reading the
+                // field straight off it copies nothing -- which is why
+                // MobRadiusFor, whose whole reason for existing was that copy,
+                // is deleted by this task.
                 if (Geometry.SegmentCircle(start, far, cfg.Weapon.ProjectileRadius, mob.Pos,
-                        ProjectileSystem.MobRadiusFor(mob.Type, in cfg), out float tm))
+                        SimConfig.MobConfigFor(in cfg, mob.Type).GatherRadius, out float tm))
                 {
                     scratch[count++] = (tm, CandidateMob, m);
                 }
@@ -247,7 +261,7 @@ namespace Ring.Simulation.Combat
                 // which is not alive.
                 if (!other.Alive) continue;
                 if (Geometry.SegmentCircle(start, far, cfg.Weapon.ProjectileRadius, other.Pos,
-                        cfg.Hero.Radius, out float tp))
+                        cfg.Hero.GatherRadius, out float tp))
                 {
                     scratch[count++] = (tp, CandidatePlayer, i);
                 }
@@ -313,48 +327,111 @@ namespace Ring.Simulation.Combat
         }
 
         /// The narrow half of stage (b): the nearest candidate against its own
-        /// stack of parts.
+        /// hit volumes (app-94sk T3, spec §3.12 -- the line follows the geometry
+        /// the round already moved onto in T2).
         ///
-        /// ⛔ THE RADIUS AND THE PARTS COME OUT OF THE NAMED HOMES, NEVER OUT
-        /// OF A SWITCH OF THIS FILE'S OWN: ProjectileSystem.MobRadiusFor for a
-        /// mob's circle (its own doc explains that it was extracted so that a
-        /// test could hold it in step with MobConfigFor), SimConfig.MobConfigFor
-        /// for the parts, and cfg.Hero for a collector -- the same two reads
-        /// ProjectileSystem makes.
+        /// ⛔ THE PARTS, THE POSE TABLE AND THE GATHER RADIUS COME OUT OF THE
+        /// NAMED HOMES, NEVER OUT OF A SWITCH OF THIS FILE'S OWN:
+        /// SimConfig.MobConfigFor for a mob and cfg.Hero for a collector -- the
+        /// same two reads ProjectileSystem makes at the same point.
+        ///
+        /// ⛔⛔ THE RESOLVER IS ASKED ABOUT THE CHORD, NOT ABOUT THE WHOLE RAY,
+        /// AND THAT IS CORRECTNESS RATHER THAN ECONOMY. HitVolumes.Resolve rests
+        /// on Geometry.SegmentCapsule, which finds the first entry by SCANNING
+        /// the step with 16 probes; that count is chosen against the ROUND's
+        /// step, and its own doc says so -- "the round's step is 1.75 at the
+        /// shipped speed, so 16 probes stand 0.109 apart". This ray is the whole
+        /// range: 52.5 m on the fixtures' numbers and 78.75 m on the game's, so
+        /// its probes would stand 3.28 m and 4.92 m apart while the ray spends
+        /// 0.56 m to 1.24 m inside a capsule -- MEASURED: the same torso capsule
+        /// on the same ray answers HIT at a round's step and MISS at the ray's.
+        /// Handing over the whole ray would therefore have shipped an indicator
+        /// that misses every body the round hits.
+        /// ⇒ the segment handed down is the ray's passage through the body's
+        /// GATHER circle, taken from the existing Geometry.SegmentCircleInterval
+        /// -- the very member the band-era resolver used for the same purpose --
+        /// and the winning `t` is carried back into the ray's own
+        /// parameterization, the one the min-scan above ranks in. The probes
+        /// then stand 0.07 m to 0.29 m apart against a thinnest capsule of
+        /// 0.56 m, on all five bodies.
+        /// ⚠ NOTHING IS NARROWED BY IT: a volume is inside its own body's gather
+        /// circle by validation rule 9, so a part the chord cannot reach is
+        /// reachable through no part of the ray.
         ///
         /// ⚠ THE HEIGHT SPAN IS A SINGLE NUMBER, TWICE: the line is horizontal
-        /// at the muzzle's height by definition, so hStart and hEnd are that
-        /// height and Resolve's climbing/descending machinery collapses to the
-        /// flat case it names in its own doc.
+        /// at the muzzle's height by definition, so both ends of the step carry
+        /// that height and the resolver's climbing machinery collapses to the
+        /// flat case.
+        /// ⛔ AND THE SLIDE CEILING STAYS IN FRONT OF THE VOLUMES, exactly as it
+        /// does for the round: the crown of the presented silhouette is the pose
+        /// table's business (HitParts.PoseTop, inside Resolve), while the
+        /// mid-slide profile is a RULE ABOUT A STATE that no table can express.
+        /// Validation rule 5 keeps it alive until T4.
         static bool ResolveBody(in SimConfig cfg, RenderSnapshot snap, int kind, int index,
             float2 p0, float2 p1, float muzzleHeight, out HitZone zone, out float contactT)
         {
+            zone = HitZone.None;
+            contactT = 0f;
+
             HitPart[] parts;
+            PoseTable poses;
             float2 targetPos;
-            float overlapTop;
+            float gatherRadius;
+            // NaN means "no ceiling of that kind", the same "stand down rather
+            // than invent a bound" convention ProjectileSystem's own branch uses.
+            float slideCeiling = float.NaN;
             if (kind == CandidateMob)
             {
                 MobState mob = snap.Mobs[index];
-                parts = SimConfig.MobConfigFor(in cfg, mob.Type).Parts;
+                ref readonly MobSimConfig mobCfg = ref SimConfig.MobConfigFor(in cfg, mob.Type);
+                parts = mobCfg.Parts;
+                poses = mobCfg.Poses;
+                gatherRadius = mobCfg.GatherRadius;
                 targetPos = mob.Pos;
-                overlapTop = HitParts.RestCrown(parts);
             }
             else
             {
                 PlayerState other = snap.Players[index];
                 parts = cfg.Hero.Parts;
+                poses = cfg.Hero.Poses;
+                gatherRadius = cfg.Hero.GatherRadius;
                 targetPos = other.Pos;
                 // Mid-slide a collector presents a lower silhouette, and the
                 // slide bit rides the wire, so this holds in a PvP frame as
                 // much as in a local one -- the same choice ProjectileSystem
                 // makes at the same point.
-                overlapTop = other.SlideTimer > 0f
-                    ? cfg.Hero.SlideProfileTop
-                    : HitParts.RestCrown(parts);
+                if (other.SlideTimer > 0f) slideCeiling = cfg.Hero.SlideProfileTop;
             }
 
-            return HitZones.Resolve(parts, p0, p1, cfg.Weapon.ProjectileRadius, targetPos,
-                muzzleHeight, muzzleHeight, overlapTop, out zone, out _, out _, out contactT);
+            if (!float.IsNaN(slideCeiling) && !HitZones.Overlaps(muzzleHeight, muzzleHeight,
+                    cfg.Weapon.ProjectileRadius, slideCeiling)) return false;
+
+            // The ray's passage through this body's gather circle. A refusal here
+            // cannot happen for a candidate the broad phase just accepted -- it
+            // solves the same quadratic against the same circle -- and is kept
+            // because this method is also the one that must not read past a
+            // degenerate interval.
+            if (!Geometry.SegmentCircleInterval(p0, p1, cfg.Weapon.ProjectileRadius, targetPos,
+                    gatherRadius, out float tEnter, out float tExit)) return false;
+
+            // ⛔ THE STEP IS WOVEN THE ORDINARY WAY -- `new float3(plane, height)`,
+            // the very form ShotGeometry builds its muzzle and aim points with.
+            // The bones arrive in the BODY frame and HitVolumes.ToWorld is what
+            // reconciles the two; nothing is transposed here (app-coou).
+            // ⛔ `poseRow: 0` AND `bodyTilt: zero` UNTIL T6/T6b, the same as every
+            // other caller: the pose key and the tilt vector do not exist yet.
+            if (!HitVolumes.Resolve(parts, in poses, poseRow: 0, bodyTilt: float2.zero,
+                    bodyOrigin: new float3(targetPos, 0f),
+                    bodyFacingSin: 0f, bodyFacingCos: 1f,
+                    p0: new float3(math.lerp(p0, p1, tEnter), muzzleHeight),
+                    p1: new float3(math.lerp(p0, p1, tExit), muzzleHeight),
+                    projRadius: cfg.Weapon.ProjectileRadius,
+                    out zone, out _, out _, out _, out float chordT)) return false;
+
+            // Back into the RAY's parameterization: the min-scan above ranks in
+            // [start, far], and so does everything downstream of `Length`.
+            contactT = tEnter + chordT * (tExit - tEnter);
+            return true;
         }
 
         /// The four points of the two cross strokes (T3 draws them).

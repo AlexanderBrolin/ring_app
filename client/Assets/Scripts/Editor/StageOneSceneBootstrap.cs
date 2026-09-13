@@ -4164,7 +4164,7 @@ namespace Ring.Editor
         /// what a round did.
         ///
         /// app-88jb Т17 (Ruling 87): the belts are built from the archetype's
-        /// `HitPart[]` — THE SAME ARRAY `HitZones.Resolve` walks to decide
+        /// `HitPart[]` — THE SAME ARRAY `HitVolumes.Resolve` walks to decide
         /// which part a shot landed in. One array, one silhouette, and that
         /// is the whole point of the task: before it, the proxy offered a
         /// head the simulation had stopped scoring, and a player could aim at

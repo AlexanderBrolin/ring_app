@@ -754,7 +754,7 @@ namespace Ring.Simulation.Core
         /// question (lesson 687).
         ///
         /// HitZone.None IS UNREACHABLE for a game round and is recorded as
-        /// such: HitZones.Resolve hands back a real zone only together with
+        /// such: HitVolumes.Resolve hands back a real zone only together with
         /// `true`, and the NoOwner paths never reach the counter.
         public int HeadHits, BodyHits, LegHits;
     }

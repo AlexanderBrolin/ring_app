@@ -95,7 +95,7 @@ namespace Ring.Simulation.Tests
             // comment asserted it in words and went stale the moment the bodies
             // grew). The height where the round enters the screening chaser's
             // widest circle must stand above his crown plus the round's own
-            // radius — that sum is exactly what HitZones.Resolve forgives.
+            // radius — that sum is exactly what HitZones.Overlaps forgives.
             // ⛔⛔ MEASURED OVER THE BODY, NOT AT THE GATHER CIRCLE (app-94sk T2).
             // The premise used to take the height where the trace ENTERS the
             // screening chaser's circle, which was the same thing as "over him"
@@ -186,9 +186,11 @@ namespace Ring.Simulation.Tests
             // the grazing line is taken AT 2.87 and the clearing line a round's
             // radius above it. What the
             // test witnesses is unchanged and is the only witness of it in the
-            // suite: the edge forgiveness HitZones.Resolve inherited from
-            // Classify, which pulls a round grazing the crown back ONTO the
-            // crown instead of dropping it off the table.
+            // suite: the edge forgiveness of HitZones.Overlaps, which grows the
+            // presented column by the round's own radius at both ends instead of
+            // dropping a grazing round off the table. ⚠ The clamp that used to
+            // stand beside it inside the band-era resolver went with that
+            // resolver in app-94sk T3; what this fixture rides is the gate.
             // ⛔⛔ THE GRAZE IS TAKEN AT THE CAPSULE'S OWN TOP, NOT AT THE EXACT
             // TANGENT (app-94sk T2). `RestTop + ProjectileRadius` is the tangent
             // point, and a tangent is what the capsule solver is ALLOWED to miss:

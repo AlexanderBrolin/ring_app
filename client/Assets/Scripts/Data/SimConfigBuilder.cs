@@ -2234,8 +2234,9 @@ namespace Ring.Data
         ///    it") is the baker's rule and arrives in T4, so between this task
         ///    and that one NOTHING judges GatherRadius against the volumes —
         ///    a zero would gather nobody at all, in silence.
-        ///    ⚠ And the aim ray is not on GatherRadius until T3: AimLine's own
-        ///    broad phase still asks ProjectileSystem.MobRadiusFor.
+        ///    ⚠ The aim ray joined the round on GatherRadius in T3, and the
+        ///    switch that used to answer its broad phase — ProjectileSystem.
+        ///    MobRadiusFor — was deleted with that move.
         ///
         /// ⚠ RULE 5 (SlideProfileTop coincides with a part boundary) SURVIVES
         /// THEM, and deliberately: rule 16 replaces it, and rule 16 stands on

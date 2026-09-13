@@ -141,6 +141,58 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void ABodyWithNoVolumesOrNoTableRefusesTheHit()
+        {
+            // ⛔ CARRIED OVER FROM HitZoneTests.Resolve_EmptyOrAbsentStack_
+            // RefusesTheHit, WHICH app-94sk T3 DELETED WITH ITS RESOLVER
+            // (Ruling 192). The assertion itself outlived the band era: a body
+            // that declares no hit volume presents nothing to hit, and the
+            // honest answer is a miss rather than a NullReferenceException.
+            // Unreachable through SimConfigBuilder, whose own rule refuses an
+            // empty stack ("Parts must not be empty -- a body with no parts
+            // cannot be hit at all"); what it guards is the hand-built fixture.
+            //
+            // ⛔ THE TABLE IS THE SECOND HALF, AND THE BAND ERA HAD NO NOTION OF
+            // IT: a volume is a pair of BONE INDICES now, so a body whose pose
+            // table is empty names nothing either. That is the very failure
+            // validation rule 12 (T4) exists to turn into a refusal, and until
+            // it arrives this fixture is the only thing standing between a
+            // table-less hand-built section and a body that is unhittable in
+            // silence.
+            SimConfig cfg = TestConfigs.OpenField();
+            PoseTable table = TestConfigs.ChaserRestPose();
+            HitPart[] parts = cfg.Chaser.Parts;
+            var origin = new float3(1f, 0f, 0f);
+            float3 p0 = new float3(0f, 0f, 1f), p1 = new float3(2f, 0f, 1f);
+            float projR = cfg.Weapon.ProjectileRadius;
+
+            // ⛔ THE POSITIVE CONTROL FIRST, or all three refusals below are
+            // true for the wrong reason -- a step that misses anyway refuses
+            // with parts and a table just as readily as without them.
+            Assert.IsTrue(HitVolumes.Resolve(parts, in table, 0, float2.zero, origin, 0f, 1f,
+                    p0, p1, projR, out HitZone zone, out _, out _, out _, out _),
+                "премисса фикстуры: с частями и таблицей этот шаг обязан попадать");
+            Assert.AreNotEqual(HitZone.None, zone, "премисса фикстуры: попадание названо зоной");
+
+            Assert.IsFalse(HitVolumes.Resolve(System.Array.Empty<HitPart>(), in table, 0,
+                    float2.zero, origin, 0f, 1f, p0, p1, projR,
+                    out zone, out _, out _, out _, out _),
+                "пустой набор объёмов разрешён в попадание");
+            Assert.AreEqual(HitZone.None, zone, "пустой набор вернул небезразличную зону");
+
+            Assert.IsFalse(HitVolumes.Resolve(null, in table, 0, float2.zero, origin, 0f, 1f,
+                    p0, p1, projR, out zone, out _, out _, out _, out _),
+                "отсутствующий набор объёмов разрешён в попадание");
+            Assert.AreEqual(HitZone.None, zone, "отсутствующий набор вернул небезразличную зону");
+
+            PoseTable empty = default;
+            Assert.IsFalse(HitVolumes.Resolve(parts, in empty, 0, float2.zero, origin, 0f, 1f,
+                    p0, p1, projR, out zone, out _, out _, out _, out _),
+                "тело без таблицы поз разрешено в попадание — кости объёмов не названы ничем");
+            Assert.AreEqual(HitZone.None, zone, "тело без таблицы вернуло небезразличную зону");
+        }
+
+        [Test]
         public void ATallBoneIsNotReadAsAWideOne()   // fixture 12a, witness of M392
         {
             // ⛔⛔ THE WITNESS OF THE BORDER BETWEEN TWO FRAMES (side-quest

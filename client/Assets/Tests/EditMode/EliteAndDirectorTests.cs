@@ -234,11 +234,13 @@ namespace Ring.Simulation.Tests
             // promised more than any fixture in this method can prove.
             // "Archetype radius" has TWO homes, and this test can only ever
             // see one of them:
-            //   * GATHER (Combat/ProjectileSystem.cs, `MobRadiusFor` — this
-            //     method's own name now says so) — a Stage 2 decision, its
-            //     own doc explains why: a per-mob MobConfigFor(...) call in
-            //     this loop would copy the whole MobSimConfig struct once
-            //     per candidate in the hottest loop in the simulation.
+            //   * GATHER (Combat/ProjectileSystem.cs — this method's own
+            //     name says so) — until app-94sk T3 a switch of its own,
+            //     `MobRadiusFor`, kept because a per-mob MobConfigFor(...)
+            //     call in this loop would have copied the whole MobSimConfig
+            //     struct once per candidate in the hottest loop in the
+            //     simulation. `ref readonly` (Т31) made that copy imaginary
+            //     and T3 deleted the second home outright.
             //     THIS is the switch the fixture below actually exercises,
             //     and its witness is mutation A2 (Pack A, already confirmed
             //     — reverting `Elite => eliteRadius` to `gunnerRadius`
@@ -246,8 +248,8 @@ namespace Ring.Simulation.Tests
             //   * ACCEPT (ProjectileSystem.AcceptCandidate) reads
             //     `w.MobConfigFor(mob.Type)` instead — a SEPARATE,
             //     independent re-derivation, and since T14 what it takes
-            //     from that config is the PARTS array it hands to
-            //     HitZones.Resolve. Mutation B1 (MobConfigFor's
+            //     from that config is the PARTS array it hands to the
+            //     resolver. Mutation B1 (MobConfigFor's
             //     `Elite => _config.Elite` swapped to `_config.Chaser`)
             //     left THIS test green twice in a row (Pack B, both before
             //     and after a descending-shot rewrite) because that era's
@@ -260,11 +262,11 @@ namespace Ring.Simulation.Tests
             //     chaser-sized circle is far too small for this chord),
             //     answers false, and the hit is SWALLOWED outright — under
             //     B1 the Hp assertion below now reads red. That stays a
-            //     side effect, not this test's charter:
-            //     MobRadiusFor_AgreesWith_MobConfigFor_
-            //     ForEveryArchetype below is B1's stated witness, comparing
-            //     the two homes directly instead of inferring their
-            //     agreement through projectile physics.
+            //     side effect, not this test's charter: B1's stated witness
+            //     was MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype,
+            //     which compared the two homes directly — and it went with
+            //     the second home in app-94sk T3, there being nothing left
+            //     for it to hold in agreement.
             //
             // The descending shot itself stays (coordinator: "he's more
             // honest than the old fixture, and earned his keep") — it is a
@@ -297,8 +299,8 @@ namespace Ring.Simulation.Tests
             //   NO candidate at all (this is exactly what A2 kills). Accept
             //   (only reachable when gather's OWN eliteRadius is honest but
             //   MobConfigFor is wrongly Chaser/Gunner-sized, i.e. B1):
-            //   SegmentCircleInterval finds no interval for ANY of the alien
-            //   parts, so HitZones.Resolve has no candidate and answers
+            //   the sweep finds no interval for ANY of the alien
+            //   parts, so the resolver has no candidate and answers
             //   false — the sweep-miss fallback (tEnter=0, tExit=1) this
             //   arithmetic used to run through was deleted by T14 itself
             //   (Т14/Т23 fix-round, Ruling 198) — AcceptCandidate rejects
@@ -310,8 +312,8 @@ namespace Ring.Simulation.Tests
             //   (tFloor check: (0.1-1.5)/(-30/30) = 1.4 > 1 — HitFloor never
             //   gathers this tick either way, so it cannot compete.)
             //
-            // Mutation: revert MobRadiusFor's `MobType.Elite => cfg.Elite.Radius`
-            // to `cfg.Gunner.Radius` (ProjectileSystem.cs) — gather starves,
+            // Mutation: revert the gather phase's Elite radius to the
+            // Gunner's (ProjectileSystem.cs) — gather starves,
             // no candidate, Hp stays 58. This is exactly mutation A2,
             // already confirmed in Pack A; this test does not gain a new
             // witness from the rename, it loses a FALSE one (MobConfigFor's
@@ -324,7 +326,7 @@ namespace Ring.Simulation.Tests
                 // BANDS AND THREE MULTIPLIERS, EXPRESSED AS PARTS. From T14 on,
                 // ProjectileSystem resolves a blow against Parts and not against
                 // the column beside them, and a hand-built body that carries no
-                // Parts presents no hit volume at all (HitZones.Resolve's own
+                // Parts presents no hit volume at all (HitVolumes.Resolve's own
                 // contract, and SimConfigBuilder's own words: "a body with no
                 // parts cannot be hit at all"). Without this the round below
                 // simply misses and the assertion reads red for a reason that
@@ -378,36 +380,6 @@ namespace Ring.Simulation.Tests
                 new float2(180f, 0f), height: 1.5f, velZ: -30f, damage: 10f, radius: 0.1f, ttl: 5f);
             for (int i = 0; i < 3; i++) w.Tick(default);
             Assert.Less(w.Mobs[0].Hp, c.Elite.MaxHp);
-        }
-
-        /// Stage 3 Task 10 (coordinator finding, Pack B): "archetype ->
-        /// body radius" has two homes (see
-        /// ProjectileGather_UsesEliteRadius_NotGunnerRadius's own doc above
-        /// for the full account of why they are separate and what each
-        /// one's own witness is) — ProjectileSystem.MobRadiusFor (gather,
-        /// Stage 2's hot-loop decision) and SimulationWorld.MobConfigFor
-        /// (AcceptCandidate, MobAiSystem, WaveSystem, SeparationSystem,
-        /// VisibilitySystem). Nothing in the type system enforces that the
-        /// two stay in sync — this test is that enforcement, DIRECTLY: for
-        /// every MobType value, the radius each home reports must be
-        /// identical. Mutating either home's own case for any archetype
-        /// (Chaser/Gunner included, not just Elite/Director) reddens this
-        /// test on that archetype's own line, independent of any projectile
-        /// geometry — no fixture design can make it structurally blind the
-        /// way the physics-based test above turned out to be.
-        [Test]
-        public void MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype()
-        {
-            var c = TestConfigs.Open();
-            c.Elite = new MobSimConfig { Radius = 0.65f };
-            c.Director = new MobSimConfig { Radius = 0.95f };
-            var w = new SimulationWorld(1, c);
-            foreach (MobType type in new[]
-                     { MobType.Chaser, MobType.Gunner, MobType.Elite, MobType.Director })
-            {
-                Assert.AreEqual(w.MobConfigFor(type).Radius, ProjectileSystem.MobRadiusFor(type, in c),
-                    $"{type}: gather (MobRadiusFor) and MobConfigFor disagree on body radius");
-            }
         }
 
         /// Stage 3 Task 16 (spec §3.7, coordinator R-126, placed here per

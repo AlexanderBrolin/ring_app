@@ -841,8 +841,9 @@ namespace Ring.Simulation.Core
     /// SimConfigBuilder.Validate's min(SlotCost) rule, the future
     /// tier-of-drop (Т16) and looting (Т17) — resolves it here, never with
     /// its own copy of the search. Two homes of one lookup already cost
-    /// this project three passes on a single test (WaveSystem.PendingRef /
-    /// ProjectileSystem.MobRadiusFor's own docs record the lesson); this is
+    /// this project three passes on a single test (WaveSystem.PendingRef's
+    /// own doc records the lesson, and ProjectileSystem.MobRadiusFor recorded
+    /// it until app-94sk T3 merged that second home away); this is
     /// the same discipline applied before a second home has a chance to
     /// grow.
     public static class ItemCatalogLookup

@@ -123,8 +123,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void PendingRef_EveryArchetypeOfEveryRingInstance_AddressesDistinctStorage()
         {
-            // Coordinator R-51's mandatory sentinel, T10's
-            // MobRadiusFor_AgreesWith_MobConfigFor... precedent: write a
+            // Coordinator R-51's mandatory sentinel, on T10's precedent
+            // (MobRadiusFor_AgreesWith_MobConfigFor..., retired in app-94sk
+            // T3 together with the second home it held in sync): write a
             // DISTINCT value (1..9) through each of the nine pairs, then
             // read the raw fields back and confirm none collided. Mutation
             // M6 (two pairs swapped in PendingRef's switch) misplaces two of

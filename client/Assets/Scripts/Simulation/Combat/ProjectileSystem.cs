@@ -285,12 +285,14 @@ namespace Ring.Simulation.Combat
                 // RADIUS, NOT THE PHYSICAL ONE. A chaser's foot swings 0.9 m out
                 // of his 0.5 m circle, so the physical radius discarded the leg
                 // before the narrow phase could be asked about it at all.
-                // ⛔ AND NO SECOND MobRadiusFor IS BORN FOR IT: that would be a
+                // ⛔ AND NO SECOND SWITCH IS BORN FOR IT: that would be a
                 // FIFTH four-way switch over the archetype, which SimConfig.cs
                 // forbids by name ("The integrator would have been the FOURTH,
-                // which is exactly what rule 2 forbids"). MobRadiusFor's own
-                // reason for existing -- that MobConfigFor would COPY the whole
-                // struct -- expired with Т31: it returns `ref readonly` now.
+                // which is exactly what rule 2 forbids"). The one that used to
+                // stand here -- MobRadiusFor -- existed because MobConfigFor
+                // would COPY the whole struct; that reason expired with Т31,
+                // where it became `ref readonly`, and app-94sk T3 deleted the
+                // member once the aim ray, its last caller, moved here too.
                 float mobRadius = SimConfig.MobConfigFor(in config, mobs[m].Type).GatherRadius;
                 if (RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
                         liveAlive: true, liveSliding: false, liveInvulnerable: false,
@@ -622,13 +624,12 @@ namespace Ring.Simulation.Combat
                     //
                     // The mass comes through SimulationWorld.MobConfigFor,
                     // the same seam AcceptCandidate already uses on this
-                    // RESOLUTION path. The gather phase's one-float
-                    // MobRadiusFor exists because it runs once per
-                    // CANDIDATE in the hottest loop in the simulation; this
-                    // runs once per resolved hit, where the copy is what
-                    // the neighboring code already pays and a second
-                    // archetype switch would be a second place to keep in
-                    // sync (rule 2).
+                    // RESOLUTION path -- and since app-94sk T3 the same seam
+                    // the GATHER phase uses as well: the one-float
+                    // MobRadiusFor that used to spare that loop a struct copy
+                    // was deleted once `ref readonly` (Т31) made the copy
+                    // imaginary, so there is no second archetype switch left
+                    // anywhere to keep in sync (rule 2).
                     //
                     // On `true` the round keeps flying: TryPierce has
                     // seated it at the contact and cut its damage, and BOTH
@@ -1009,48 +1010,6 @@ namespace Ring.Simulation.Combat
             }
         }
 
-        /// Stage 3 Task 10 (coordinator finding, Pack B): the body radius the
-        /// GATHER phase's candidate scan uses — its own home, deliberately
-        /// SEPARATE from SimulationWorld.MobConfigFor (AcceptCandidate below,
-        /// MobAiSystem, WaveSystem, SeparationSystem, VisibilitySystem all go
-        /// through that one instead). The split is a Stage 2 decision, not an
-        /// oversight: a per-mob MobConfigFor(...) call here would copy the
-        /// whole MobSimConfig struct (~30 floats) once per candidate in the
-        /// hottest loop in the simulation, where this needs exactly one of
-        /// them. `in SimConfig cfg` avoids copying SimConfig itself (a larger
-        /// struct still — Hero/Weapon/Chaser/Gunner/Wave/Arena/Visibility/
-        /// Flow/Elite/Director); the field reads below (`cfg.Chaser.Radius`
-        /// etc.) touch only the one float each returns, never materializing a
-        /// MobSimConfig copy — so this extraction changes nothing about that
-        /// Stage 2 tradeoff, only NAMES the switch that used to live inline
-        /// as four precomputed locals, so ProjectileGatherAndMobConfigForTests.
-        /// MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype can call it
-        /// directly and prove the two homes stay in sync.
-        ///
-        /// `default` THROWS, unlike SnapshotBlocks.MaxHpFor's own `_` arm:
-        /// that one is gated upstream by the wire's own MaxMobTypeValue check
-        /// (TryReadMobsBlock refuses an out-of-domain byte before MaxHpFor is
-        /// ever called), an independent gate that does not depend on this
-        /// switch's own case list staying current. This one has no such
-        /// second gate — SimulationWorld.SpawnMob's own MobConfigFor(type)
-        /// call keeps every LIVE mob's Type inside today's four archetypes,
-        /// but that guarantee is only as good as THIS switch being kept in
-        /// sync with MobConfigFor's, which is exactly the coordination the
-        /// agreement test above exists to enforce. A future archetype added
-        /// to MobConfigFor and forgotten here must fail loudly (a crash that
-        /// names the archetype) rather than silently render it Gunner-sized
-        /// for the rest of the match — the same lesson the `0x20` sentinel
-        /// literal (R-47) already cost this task once.
-        internal static float MobRadiusFor(MobType type, in SimConfig cfg) => type switch
-        {
-            MobType.Chaser => cfg.Chaser.Radius,
-            MobType.Gunner => cfg.Gunner.Radius,
-            MobType.Elite => cfg.Elite.Radius,
-            MobType.Director => cfg.Director.Radius,
-            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
-                "unknown archetype"),
-        };
-
         /// ⭐⭐ THE ONE HOME OF "WHERE THAT BODY WAS AND WHAT IT WAS DOING"
         /// (app-88jb Т28, spec §3.6). The call sites are NAMED rather than
         /// counted, because the count this line used to carry ("three callers")
@@ -1143,7 +1102,8 @@ namespace Ring.Simulation.Combat
         /// once (Ruling 191): that is where the round first touches the body.
         ///
         /// app-88jb T14: for the two DAMAGEABLE kinds that whole judgement now
-        /// lives in HitZones.Resolve, over the body's ORDERED STACK OF PARTS,
+        /// lives in HitVolumes.Resolve, over the body's CAPSULES ON BONES
+        /// (app-94sk T2; it was HitZones.Resolve over an ordered stack until then),
         /// and this method only assembles its inputs -- which body, its parts,
         /// the height span of the step and the overlap ceiling. The barrier,
         /// ring-wall and floor branches below are untouched: they have no parts
@@ -1203,7 +1163,7 @@ namespace Ring.Simulation.Combat
         /// arithmetic it already had to compute for its own gate (or, for
         /// the ring wall and an un-topped barrier, the same formula a gated
         /// branch would have used); for the two damageable kinds it is the
-        /// winning PART's own entry height, which HitZones.Resolve hands back.
+        /// winning PART's own entry height, which HitVolumes.Resolve hands back.
         /// Initialized up front so an early `return false` (the body branch's
         /// own gate further down) still leaves it definitely assigned, as C#
         /// requires — a rejected candidate's height is never read by the
@@ -1232,7 +1192,7 @@ namespace Ring.Simulation.Combat
             // contact height with exactly this expression, and the gated barrier
             // branch needs it as its own gate input as well. Bodies do NOT use it
             // -- their contact is the ENTRY into the winning PART's own circle
-            // (HitZones.Resolve, far below), which is a different point on the
+            // (HitVolumes.Resolve, far below), which is a different point on the
             // same step.
             float contactHeight = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
 

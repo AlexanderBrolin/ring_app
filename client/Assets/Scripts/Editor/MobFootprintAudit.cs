@@ -38,9 +38,13 @@ namespace Ring.Editor
     ///      archetype's `GameFeelConfig` scale. Measuring the raw `.fbx` would
     ///      answer a question nobody asks: the game never draws it at 1.
     ///   4. Parts stay a subdivision of the same body: no part may be wider
-    ///      than the body circle (`HitZones.Resolve` walks parts inside a body
-    ///      the broadphase already accepted), and the topmost part's `Top` is
+    ///      than the body circle (the resolver walks parts inside a body the
+    ///      broadphase already accepted), and the topmost part's `Top` is
     ///      the model's crown — that half is what Т16 already pinned.
+    ///      ⚠ HISTORY SINCE app-94sk T2: validation rule 4 was WITHDRAWN with
+    ///      the bands, a volume is a capsule on a pair of bones, and what the
+    ///      broad phase accepts a body by is `GatherRadius` rather than the
+    ///      physical circle — precisely so a limb may reach outside it.
     ///
     /// ⚠ IT REPORTS, IT DOES NOT REPAIR. Every number it compares is a balance
     /// number in a `ScriptableObject` (CRITICAL RULE 6), and the owner tunes
