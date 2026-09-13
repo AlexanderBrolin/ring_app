@@ -181,6 +181,12 @@ namespace Ring.Simulation.Tests
             // sides of its own comparison. Same strictness the hash suite
             // already demands of arrays — ArrayContentsNotIdentity_DecideTheHash.
             target.Parts = (HitPart[])source.Parts.Clone();
+            // app-94sk T2: the broad-phase radius and the striking volume join
+            // the copier on the block above's own reasoning — without them the
+            // Elite/Director callers would keep MobConfig's chaser-shaped C#
+            // default instead of the archetype's own number, silently.
+            target.GatherRadius = source.GatherRadius;
+            target.SwingPartId = source.SwingPartId;
         }
 
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
@@ -402,6 +408,17 @@ namespace Ring.Simulation.Tests
                 "and the divergence is deliberate — if these ever agree, one of the two "
                 + "sources moved and the reason above no longer holds");
             AssertMobEqual(expected.Chaser, cfg.Chaser);
+            // app-94sk T2: the named exception AssertMobEqual's own note points
+            // at. The ASSET side still carries the placeholder — the body radius
+            // itself, so the gather answers exactly what it answered before the
+            // split; the FIXTURE side is strictly wider, because its chaser has
+            // a foot outside that circle. Both halves are asserted: a placeholder
+            // that drifts and a fixture that stops being wider are each a defect,
+            // and neither would show anywhere else.
+            Assert.AreEqual(cfg.Chaser.Radius, cfg.Chaser.GatherRadius, Eps,
+                "asset-side GatherRadius must stay the placeholder until the baker (T4)");
+            Assert.Greater(expected.Chaser.GatherRadius, expected.Chaser.Radius,
+                "fixture-side GatherRadius must exceed the body circle — that is what it is for");
             AssertMobEqual(expected.Gunner, cfg.Gunner);
             // The same divergence on the mob side, declared on the CHASER
             // because his SO is the one nobody seeds: SeedMob copies the
@@ -1797,6 +1814,10 @@ namespace Ring.Simulation.Tests
             // above — Parts flows SO -> builder -> SimConfig too, and without
             // this the whole array would drop out of this test's coverage.
             AssertPartsEqual(e.Parts, a.Parts, "Hero");
+            // app-94sk T2 (spec §3.3): the broad-phase radius rides the same
+            // SO -> builder -> SimConfig path and drops out of coverage
+            // without a line of its own, exactly like Parts above.
+            Assert.AreEqual(e.GatherRadius, a.GatherRadius, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -1916,6 +1937,20 @@ namespace Ring.Simulation.Tests
             // compare equal, which is what lets them live in a shared helper.
             Assert.AreEqual(e.PierceMassRatio, a.PierceMassRatio, Eps);
             Assert.AreEqual(e.PierceDamageLoss, a.PierceDamageLoss, Eps);
+            // app-94sk T2 (spec §3.9): the striking volume mirrors for every
+            // archetype, so it belongs in the shared helper.
+            Assert.AreEqual(e.SwingPartId, a.SwingPartId);
+            // ⛔⛔ GatherRadius IS DELIBERATELY *NOT* HERE, and the exclusion is
+            // this file's own rule one block up: "a field that passes for one
+            // caller and fails for another has no business in a shared
+            // assertion". It is the fourth DELIBERATE divergence between the two
+            // number sources of spec §0 (after Weapon.AmmoStart, Arena.BarrierTop
+            // and Weapon.ProjectileSpeed): the fixture side computes it from the
+            // FIXTURE skeleton — whose chaser swings a foot 0.9 m out of his own
+            // circle, which is the case the split exists for — while the asset
+            // side carries the placeholder until the baker measures the real
+            // skeleton in T4. Both sides are pinned by name in the two tests that
+            // compare the sources.
         }
 
         static void AssertWaveEqual(WaveSimConfig e, WaveSimConfig a)
@@ -2037,11 +2072,29 @@ namespace Ring.Simulation.Tests
                 $"{owner}.Parts.Length must reach the SimConfig section");
             for (int i = 0; i < e.Length; i++)
             {
+                // app-94sk T2: all EIGHT fields, not the five a slice had. The
+                // three new ones are exactly the kind a partial comparison
+                // loses silently — a bone index that never reaches the section
+                // aims the capsule at the wrong bone, and nothing else here
+                // would notice.
+                Assert.AreEqual(e[i].BoneA, a[i].BoneA, $"{owner}.Parts[{i}].BoneA");
+                Assert.AreEqual(e[i].BoneB, a[i].BoneB, $"{owner}.Parts[{i}].BoneB");
                 Assert.AreEqual(e[i].Radius, a[i].Radius, Eps, $"{owner}.Parts[{i}].Radius");
-                Assert.AreEqual(e[i].Bottom, a[i].Bottom, Eps, $"{owner}.Parts[{i}].Bottom");
-                Assert.AreEqual(e[i].Top, a[i].Top, Eps, $"{owner}.Parts[{i}].Top");
+                // ⛔⛔ RestBottom/RestTop ARE NOT COMPARED (app-94sk T2), and the
+                // exclusion is the same one GatherRadius carries: the FIXTURE
+                // chaser already stands on real bones, so his extents are a
+                // capsule's (bone +/- radius, [-0.35, 1.23] on the leg), while
+                // the ASSET side keeps the band numbers until the baker measures
+                // the real skeleton in T4. Both sides are pinned where they are
+                // authored — the fixture by the bones it derives from, the asset
+                // by the bootstrap — and validation rule 13 (T4) is what makes
+                // them agree once both come from a table.
+                // ⚠ THE BONES ARE COMPARED ABOVE, and they are what the extents
+                // will be derived FROM, so nothing about the volume's identity
+                // travels unchecked.
                 Assert.AreEqual(e[i].Zone, a[i].Zone, $"{owner}.Parts[{i}].Zone");
                 Assert.AreEqual(e[i].DamageMult, a[i].DamageMult, Eps, $"{owner}.Parts[{i}].DamageMult");
+                Assert.AreEqual(e[i].PartId, a[i].PartId, $"{owner}.Parts[{i}].PartId");
             }
         }
 
@@ -2378,14 +2431,21 @@ namespace Ring.Simulation.Tests
             // TWO SUBSTRINGS, NOT ONE: "Elite.Parts" alone also matches the
             // empty-stack and the part-wider-than-the-body refusals, so the
             // rule is named as well as the section.
+            // ⚠ THE DRIVER CHANGED, THE SUBJECT DID NOT (app-94sk T2). The gap
+            // between bands was the driver while rule 2 existed; rule 2 went with
+            // the column it was the arithmetic of, exactly as the zone-ORDER rule
+            // went before it. What this fixture is FOR — that the Elite section
+            // reaches ValidateMob at all — did not go with either, so it takes
+            // the next refusal the section can produce: rule 7, a PartId used
+            // twice.
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
             var elite = ScriptableObject.CreateInstance<MobConfig>();
-            elite.Parts[1].Bottom = elite.Parts[0].Top + 0.1f;   // a band no part owns
+            elite.Parts[1].PartId = elite.Parts[0].PartId;   // one name, two volumes
 
             var ex = Assert.Throws<System.ArgumentException>(
                 () => BuildShipped(h, w, c, g, wv, a, vis, elite: elite));
             StringAssert.Contains("Elite.Parts", ex.Message);
-            StringAssert.Contains("contiguous", ex.Message);
+            StringAssert.Contains("appears twice", ex.Message);
         }
 
         [Test]
@@ -2520,6 +2580,23 @@ namespace Ring.Simulation.Tests
 
             AssertMobEqual(expected.Elite, cfg.Elite);
             AssertMobEqual(expected.Director, cfg.Director);
+            // app-94sk T2: the same named exception as in
+            // Build_DefaultAssets_MatchesTestConfigsBaseline — the bootstrap
+            // seeds the placeholder (each archetype's own body radius) and the
+            // fixture computes the wider number from its own pose table.
+            Assert.AreEqual(cfg.Elite.Radius, cfg.Elite.GatherRadius, Eps,
+                "Elite: bootstrap must seed the placeholder GatherRadius until the baker (T4)");
+            Assert.AreEqual(cfg.Director.Radius, cfg.Director.GatherRadius, Eps,
+                "Director: bootstrap must seed the placeholder GatherRadius until the baker (T4)");
+            // ⚠ ONLY THE CHASER'S FIXTURE SKELETON SWINGS A BONE OUT (that is what
+            // fixtures 4/4a are for), so for these two the computed number lands
+            // exactly ON the body circle. What is asserted is the RULE — the
+            // gather covers the widest volume — not a strict inequality nothing
+            // in their geometry produces.
+            Assert.GreaterOrEqual(expected.Elite.GatherRadius, expected.Elite.Radius,
+                "Elite: fixture-side GatherRadius must cover the body circle");
+            Assert.GreaterOrEqual(expected.Director.GatherRadius, expected.Director.Radius,
+                "Director: fixture-side GatherRadius must cover the body circle");
             // And the two profiles must stay distinguishable: a copier that
             // seeded both from the same source would satisfy everything above.
             Assert.AreNotEqual(cfg.Elite.MaxHp, cfg.Director.MaxHp);

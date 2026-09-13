@@ -1,4 +1,5 @@
 using Ring.Data;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using UnityEngine;
 using UnityEngine.Pool;
@@ -827,7 +828,19 @@ namespace Ring.Presentation
         /// An absent or empty stack answers 0 instead of throwing. This runs on
         /// a death event on the client, and an archetype whose Inspector array
         /// was never filled must not take the whole burst down with it — the
-        /// same refusal shape HitZones.StackTop makes on the simulation side.
+        /// same refusal shape HitParts.RestCrown makes on the simulation side.
+        ///
+        /// ⛔⛔ ALL THREE BRANCHES ASK BY ZONE NOW (app-94sk T2, contract
+        /// `app-81jx`), AND TWO OF THEM USED TO BE WRONG SILENTLY. They read an
+        /// INDEX — "the crown belt is the LAST part", "rule 2 puts
+        /// Parts[0].Bottom on the ground" — and both indices were right only
+        /// while validation rule 2 enforced a sorted column. That rule goes with
+        /// this task: the volume layout of spec §3.2 puts the head THIRD and a
+        /// shin LAST, and it puts a LEG at index 0 on some bodies and a TORSO on
+        /// others. So the head's gibs would have flown from a shin's height and
+        /// the legs' from half a torso's, and NOTHING would have failed: these
+        /// are cosmetic spawn heights, read by no test and by nothing in the
+        /// simulation.
         static float PartHeight(GibPartKind kind, in MobSimConfig archetype)
         {
             HitPart[] parts = archetype.Parts;
@@ -835,34 +848,28 @@ namespace Ring.Presentation
             switch (kind)
             {
                 case GibPartKind.Head:
-                {
-                    // The crown belt is the LAST part, the same convention
-                    // HitZones.StackTop reads a body's crown by.
-                    HitPart head = parts[parts.Length - 1];
-                    return (head.Bottom + head.Top) * 0.5f;
-                }
+                    return MidOfZone(parts, HitZone.Head);
                 case GibPartKind.LegL:
                 case GibPartKind.LegR:
-                    // Half the top of the lowest part — identical to the middle
-                    // of that part for any validated body (rule 2 puts
-                    // Parts[0].Bottom on the ground), and the literal port of
-                    // what this branch read before.
-                    return parts[0].Top * 0.5f;
+                    return MidOfZone(parts, HitZone.Legs);
                 default: // Torso, ArmL, ArmR
                     return MidOfZone(parts, HitZone.Body);
             }
         }
 
-        /// The middle of the band a body gives to `zone`, or 0 when its stack
-        /// names no such part. Validation rule 3 forbids a zone appearing
-        /// twice, so the first match is the only match; the 0 covers a
-        /// hand-built archetype, the same answer the empty stack gets above.
+        /// The middle of the volume a body gives to `zone`, or 0 when it names
+        /// no such part — the 0 covers a hand-built archetype, the same answer
+        /// the empty stack gets above.
+        ///
+        /// ⚠ "THE FIRST MATCH IS THE ONLY MATCH" IS GONE WITH VALIDATION RULE 3
+        /// (app-94sk T2): a zone now sits on SEVERAL volumes — two legs, two
+        /// arms — so which one answers has to be decided rather than assumed.
+        /// It is decided in ONE place, HitParts.TryFindByZone, by the same
+        /// smaller-PartId tie-break the simulation resolves a hit with.
         static float MidOfZone(HitPart[] parts, HitZone zone)
-        {
-            for (int i = 0; i < parts.Length; i++)
-                if (parts[i].Zone == zone) return (parts[i].Bottom + parts[i].Top) * 0.5f;
-            return 0f;
-        }
+            => HitParts.TryFindByZone(parts, zone, out HitPart part)
+                ? (part.RestBottom + part.RestTop) * 0.5f
+                : 0f;
 
         /// The authoritative mark, at the dashing player's own position on the
         /// tick the dash began (`SimEvent.Pos`, the trace rule of the class

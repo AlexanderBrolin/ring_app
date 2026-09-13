@@ -918,7 +918,7 @@ namespace Ring.Simulation.Tests
                 "fixture premise: this must be a one-shot kill, so both events land in one tick");
             var targetPos = new float2(1f, 0f); // under one tick of travel — the round lands next tick
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, targetPos));
-            float headBand = 0.5f * (gunnerHead.Bottom + gunnerHead.Top);
+            float headBand = 0.5f * (gunnerHead.RestBottom + gunnerHead.RestTop);
             int projectileId = TestWorlds.FireAimed3D(w, float2.zero, headBand, targetPos, headBand);
             Assert.Greater(projectileId, 0, "fixture premise: the round must actually have spawned");
             int mobId = w.Mobs[0].Id;

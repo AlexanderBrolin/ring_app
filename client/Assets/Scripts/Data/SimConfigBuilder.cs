@@ -120,7 +120,15 @@ namespace Ring.Data
                     // constructor sizes an array off it, so no stable
                     // snapshot is owed (SimConfig.Items, which IS topology, is
                     // the one array that clones — see its own note below).
-                    Parts = hero.Parts
+                    Parts = hero.Parts,
+                    // app-94sk T2 (spec §3.3): the broad-phase radius rides
+                    // across as a plain number. ⛔ `Poses` is NOT mapped yet --
+                    // the table is an ASSET the baker produces in T4, and until
+                    // then every shipped section carries an empty one. That is a
+                    // known intermediate state of this branch, not an omission:
+                    // validation rule 12 (T4) is what makes an empty table a
+                    // refusal instead of a silently unhittable body.
+                    GatherRadius = hero.GatherRadius
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -329,6 +337,11 @@ namespace Ring.Data
             // mapping serves all four mob sections, because Chaser/Gunner/
             // Elite/Director all come through this method.
             Parts = m.Parts,
+            // app-94sk T2 (spec §3.3, §3.9): broad-phase radius and the striking
+            // volume, through the same one mapping. `Poses` waits for T4 -- see
+            // the hero's own note above.
+            GatherRadius = m.GatherRadius,
+            SwingPartId = m.SwingPartId,
             // app-88jb Т19 (spec §3.4): this archetype's ricochet mapping,
             // through the same one method, for the same reason.
             MaxRicochets = m.MaxRicochets,
@@ -741,7 +754,7 @@ namespace Ring.Data
             // Read ONCE here, because two rules deriving the same height
             // separately are two chances to disagree about where a collector's
             // head begins (rule 2 of AGENT.md, and the same discipline
-            // HitZones.StackTop already applies to a body's crown).
+            // HitParts.RestCrown already applies to a body's crown).
             //
             // NaN means "this body cannot express the question" (HeadPartBottom's
             // own doc): both rules then stand down rather than invent a bound,
@@ -760,10 +773,10 @@ namespace Ring.Data
             // ITS FORMER LOWER TWIN (the profile had to reach at least the top
             // of the collector's legs band) IS GONE, AND THAT IS A PROOF RATHER
             // THAN A PREFERENCE: rule 5 requires the profile to coincide with a
-            // part boundary, rule 2 makes the boundary set {0, Parts[0].Top,
-            // Parts[1].Top, ...}, and ReqPositive right above already refuses
+            // part boundary, rule 2 makes the boundary set {0, Parts[0].RestTop,
+            // Parts[1].RestTop, ...}, and ReqPositive right above already refuses
             // the 0. Every value that survives those two is therefore at least
-            // Parts[0].Top -- the top of the legs part, i.e. exactly what the
+            // Parts[0].RestTop -- the top of the legs part, i.e. exactly what the
             // old rule asked for. It guarded the empty set.
             if (!float.IsNaN(heroHeadBottom) && cfg.Hero.SlideProfileTop > heroHeadBottom)
             {
@@ -1089,7 +1102,7 @@ namespace Ring.Data
             // app-88jb Т13 (spec §3.10 rules 2/3/4): the collector's own stack
             // of parts. Same helper the four archetypes go through in
             // ValidateMob — one body, every caller.
-            ValidateParts(errors, "Hero", cfg.Hero.Parts, cfg.Hero.Radius);
+            ValidateParts(errors, "Hero", cfg.Hero.Parts);
             // Rule 6, REWRITTEN BY Т13 exactly as its Т1 form promised: the
             // center of mass cannot sit above the body it belongs to, and the
             // body is now the stack of parts rather than the old zone column. The
@@ -2173,7 +2186,10 @@ namespace Ring.Data
             // parts, and the center of mass measured against IT rather than
             // against the old zone column — see the Hero block's own note for why
             // the rewrite is load-bearing rather than cosmetic.
-            ValidateParts(errors, name, m.Parts, m.Radius);
+            ValidateParts(errors, name, m.Parts);
+            // Rule 10 (app-94sk T2): only an archetype has a strike, so this rule
+            // has no counterpart in the Hero block.
+            ValidateSwingPart(errors, name, in m);
             float top = PartsTop(m.Parts);
             if (!float.IsNaN(top))
                 ReqInRange(errors, $"{name}.CenterOfMassHeight", m.CenterOfMassHeight, 0f, top);
@@ -2186,34 +2202,43 @@ namespace Ring.Data
             ReqStableSpring(errors, name, m.TiltDampingRatio, m.TiltSettleSeconds);
         }
 
-        /// app-88jb Т13 (spec §3.10 rules 2/3/4): the shape a body's stack of
-        /// hit parts has to have. ONE home for all five bodies — the
-        /// collector's call site is in the Hero block, the four archetypes come
-        /// through ValidateMob.
+        /// app-94sk T2 (spec §3.13): the shape a body's set of hit volumes has
+        /// to have. ONE home for all five bodies — the collector's call site is
+        /// in the Hero block, the four archetypes come through ValidateMob.
         ///
-        /// RULE 2 IS ONE COMPARISON DOING THREE JOBS. `Parts[i].Bottom ==
-        /// Parts[i-1].Top` rejects a gap, an overlap AND an out-of-order pair
-        /// at once, because only a sorted, contiguous stack can satisfy it.
-        /// Written as three separate scans it would be three chances to
-        /// disagree with itself, and the disagreement would show up as a body
-        /// with a band nobody owns.
+        /// ⛔⛔ RULES 2, 3 AND 4 WERE WITHDRAWN HERE, AND EACH WENT FOR ITS OWN
+        /// REASON RATHER THAN FOR CONVENIENCE:
+        ///  - RULE 2 (the parts form a contiguous, sorted column starting at the
+        ///    ground) described a COLUMN. A capsule on a pair of bones is not
+        ///    one: a leg swings out and hangs BELOW the ground once its radius
+        ///    is counted (-0.30 m on the chaser), a head sits third while a shin
+        ///    sits last, and two legs occupy the same height band by design.
+        ///    The "band nobody owns" it protected against cannot happen either:
+        ///    a shot that meets no capsule is a miss, not a hit with no zone.
+        ///  - RULE 3 (a zone appears once) was false the moment a body got TWO
+        ///    legs and TWO arms. What it really guarded — "which multiplier
+        ///    applies must not depend on who looks first" — is now a decision
+        ///    rather than an absence: HitVolumes.Resolve ranks by zone, then by
+        ///    first entry, then by the smaller PartId, and HitParts.TryFindByZone
+        ///    answers the same way.
+        ///  - RULE 4 (a part is no wider than its body) is replaced by rule 9:
+        ///    the broad phase reads GatherRadius now, so a volume wider than the
+        ///    body circle is gathered rather than lost, and what has to be
+        ///    checked is that the gather covers it — which is the baker's number
+        ///    and the baker's rule (T4).
         ///
-        /// WHY EACH RULE EXISTS, not merely what it says:
-        ///  - a GAP is a band of the body no part owns, so a shot through it
-        ///    resolves to no zone at all — a miss on a body that is visibly there;
-        ///  - a REPEATED zone makes "which multiplier applies" ambiguous, and
-        ///    whichever reader looks first wins, silently;
-        ///  - a part WIDER than its body is never gathered as a candidate at
-        ///    all (the sweep tests the body's own Radius first), so the extra
-        ///    width is invisible rather than generous — findings B-I6/D-I2, and
-        ///    the reason this is the most expensive of the three.
+        /// ⚠ RULE 5 (SlideProfileTop coincides with a part boundary) SURVIVES
+        /// THEM, and deliberately: rule 16 replaces it, and rule 16 stands on
+        /// the crown of the slide clip BY THE TABLE, i.e. on numbers the baker
+        /// produces in T4. Dropping rule 5 here would leave the slide with no
+        /// rule for two whole tasks.
         ///
-        /// Exact float equality on the contiguity check, no tolerance: every
-        /// boundary is authored ONCE and read twice (as one part's Top and the
-        /// next part's Bottom), so the two are the same literal by construction
-        /// — while a tolerance would legalize a band thinner than it that
-        /// belongs to nobody.
-        static void ValidateParts(List<string> errors, string name, HitPart[] parts, float bodyRadius)
+        /// RULE 7 IS HALF-CHECKABLE AND THIS IS THE CHECKABLE HALF. "Append-only"
+        /// cannot be seen at runtime — a configuration does not remember its own
+        /// history — so what is enforced here is UNIQUENESS; the other half is a
+        /// pinned list in HitPartsTests, exactly the way ProtocolVersion and the
+        /// length of the zone enum are pinned.
+        static void ValidateParts(List<string> errors, string name, HitPart[] parts)
         {
             if (parts == null || parts.Length == 0)
             {
@@ -2221,87 +2246,108 @@ namespace Ring.Data
                 return;
             }
 
-            if (parts[0].Bottom != 0f)
-            {
-                errors.Add($"{name}.Parts[0].Bottom must be 0 — the stack starts at the ground " +
-                    $"(got {parts[0].Bottom:F3}).");
-            }
-
             for (int i = 0; i < parts.Length; i++)
             {
                 ReqPositive(errors, $"{name}.Parts[{i}].Radius", parts[i].Radius);
-                ReqFinite(errors, $"{name}.Parts[{i}].Bottom", parts[i].Bottom);
-                ReqFinite(errors, $"{name}.Parts[{i}].Top", parts[i].Top);
+                ReqFinite(errors, $"{name}.Parts[{i}].RestBottom", parts[i].RestBottom);
+                ReqFinite(errors, $"{name}.Parts[{i}].RestTop", parts[i].RestTop);
                 ReqNonNegative(errors, $"{name}.Parts[{i}].DamageMult", parts[i].DamageMult);
 
-                if (parts[i].Top <= parts[i].Bottom)
+                if (parts[i].RestTop <= parts[i].RestBottom)
                 {
-                    errors.Add($"{name}.Parts[{i}] must have Top > Bottom — a part of zero or " +
-                        $"negative height owns no band at all (got Bottom={parts[i].Bottom:F3}, " +
-                        $"Top={parts[i].Top:F3}).");
+                    errors.Add($"{name}.Parts[{i}] must have RestTop > RestBottom — a volume of zero " +
+                        $"or negative height owns nothing at all (got RestBottom=" +
+                        $"{parts[i].RestBottom:F3}, RestTop={parts[i].RestTop:F3}).");
                 }
 
-                // Rule 4.
-                if (parts[i].Radius > bodyRadius)
-                {
-                    errors.Add($"{name}.Parts[{i}].Radius must not exceed {name}.Radius — a part " +
-                        $"wider than its body never enters the candidate gather, so the extra width " +
-                        $"is lost silently (got {parts[i].Radius:F3}, Radius={bodyRadius:F3}).");
-                }
-
-                // Rule 2, the contiguity half (see this method's own doc).
-                if (i > 0 && parts[i].Bottom != parts[i - 1].Top)
-                {
-                    errors.Add($"{name}.Parts must be contiguous and sorted by Bottom — " +
-                        $"Parts[{i}].Bottom must equal Parts[{i - 1}].Top (got {parts[i].Bottom:F3} " +
-                        $"against {parts[i - 1].Top:F3}).");
-                }
-
-                // Rule 3.
+                // Rule 7, the checkable half (see this method's own doc).
                 for (int j = 0; j < i; j++)
                 {
-                    if (parts[j].Zone == parts[i].Zone)
+                    if (parts[j].PartId == parts[i].PartId)
                     {
-                        errors.Add($"{name}.Parts: zone {parts[i].Zone} appears twice " +
-                            $"(Parts[{j}] and Parts[{i}]) — which damage multiplier applies would " +
-                            $"be settled by whichever reader looks first.");
+                        errors.Add($"{name}.Parts: PartId {parts[i].PartId} appears twice " +
+                            $"(Parts[{j}] and Parts[{i}]) — the id is the wire's name for this volume, " +
+                            "and two volumes under one name are two answers to one question.");
                     }
                 }
             }
         }
 
-        /// The crown of a body: the top of its LAST part. NaN when the stack is
-        /// unusable (null or empty), which is a refusal ValidateParts has
-        /// already made by name — callers skip their own rule rather than
-        /// quoting a number nobody authored. "Last" is meaningful only because
-        /// rule 2 above rejects an unsorted stack.
-        static float PartsTop(HitPart[] parts)
-            => parts == null || parts.Length == 0 ? float.NaN : parts[parts.Length - 1].Top;
-
-        /// app-88jb Т15: the seam between a body's HEAD and whatever stands
-        /// directly under it. `Parts[last].Bottom` and "the top of the torso"
-        /// are ONE NUMBER by validation rule 2 (the stack is contiguous and
-        /// sorted), so this is one index rather than a search by zone, and it
-        /// does not care how many parts a body is cut into.
+        /// Rule 10 (app-94sk T2, spec §3.9): an archetype that strikes names the
+        /// volume it strikes with; one that does not carries the sentinel.
         ///
-        /// NaN WHEN THE STACK CANNOT EXPRESS THE QUESTION: a body of a single
-        /// part has Parts[0].Bottom == 0 by rule 2, and a rule reading that
-        /// would refuse every positive height instead of refusing nothing.
-        /// Callers skip their own rule on NaN, the same convention PartsTop
-        /// above already sets.
+        /// ⛔ THE SENTINEL IS MANDATORY AND IS -1 RATHER THAN A "NONE" ID: 0 is a
+        /// perfectly valid PartId — it is the first volume of every body — and
+        /// the gunner's AttackRange is 0, so "does not strike" and "strikes with
+        /// volume 0" would be the same number. An index is non-negative by its
+        /// own type, so -1 cannot be mistaken for one.
+        static void ValidateSwingPart(List<string> errors, string name, in MobSimConfig m)
+        {
+            if (m.AttackRange <= 0f)
+            {
+                if (m.SwingPartId != -1)
+                {
+                    errors.Add($"{name}.SwingPartId must be -1 — this archetype does not strike " +
+                        $"(AttackRange={m.AttackRange:F3}) and a volume it never swings is a claim " +
+                        $"nothing can honour (got {m.SwingPartId}).");
+                }
+                return;
+            }
+
+            if (m.Parts == null) return;   // the empty-array refusal is ValidateParts' own
+            int matches = 0;
+            for (int i = 0; i < m.Parts.Length; i++)
+                if (m.Parts[i].PartId == m.SwingPartId) matches++;
+            if (matches != 1)
+            {
+                errors.Add($"{name}.SwingPartId must name EXACTLY ONE of this archetype's volumes — " +
+                    $"it strikes (AttackRange={m.AttackRange:F3}), and a strike with no volume has no " +
+                    $"geometry while a strike with two has two (got {m.SwingPartId}, matched {matches}).");
+            }
+        }
+
+        /// The crown of a body. NaN when the array is unusable (null or empty),
+        /// which is a refusal ValidateParts has already made by name — callers
+        /// skip their own rule rather than quoting a number nobody authored.
+        ///
+        /// ⛔ IT DELEGATES (app-94sk T2): the arithmetic lives in
+        /// HitParts.RestCrown, the one home of this question, and only the NaN
+        /// stays here — that is this caller's own convention, not the crown's.
+        /// "The top of the LAST part" was meaningful only while validation rule
+        /// 2 rejected an unsorted stack, and that rule is being withdrawn.
+        static float PartsTop(HitPart[] parts)
+            => parts == null || parts.Length == 0 ? float.NaN : HitParts.RestCrown(parts);
+
+        /// The bottom of a body's HEAD.
+        ///
+        /// ⛔⛔ THIS IS A CHANGE OF MEANING, NOT A RENAMED FIELD (app-94sk T2).
+        /// It used to read `Parts[last].Bottom`, and that was right only
+        /// because validation rule 2 made the stack contiguous and sorted, so
+        /// "the last part" and "the head" were ONE NUMBER. The volume layout of
+        /// spec §3.2 puts the head THIRD and a shin LAST ⇒ the old index would
+        /// now answer with the bottom of a shin, under the name "head", and
+        /// nothing would have failed. It searches BY ZONE instead, through the
+        /// one home of that search.
+        ///
+        /// NaN WHEN THE BODY CANNOT EXPRESS THE QUESTION: a body with no head
+        /// zone at all has no such seam, and a rule reading 0 there would
+        /// refuse every positive height instead of refusing nothing. Callers
+        /// skip their own rule on NaN, the same convention PartsTop sets.
         static float HeadPartBottom(HitPart[] parts)
-            => parts == null || parts.Length < 2 ? float.NaN : parts[parts.Length - 1].Bottom;
+            => parts != null && HitParts.TryFindByZone(parts, HitZone.Head, out HitPart head)
+                ? head.RestBottom
+                : float.NaN;
 
         /// app-88jb Т13 (rule 5): is `h` one of the heights this stack is cut
-        /// at? The ground (Parts[0].Bottom) counts — a slide profile of 0 is a
+        /// at? The ground (Parts[0].RestBottom) counts — a slide profile of 0 is a
         /// degenerate authoring choice, not a broken one, and refusing it here
         /// would be this rule inventing a second opinion about a number
         /// ReqPositive already owns.
         static bool IsPartBoundary(HitPart[] parts, float h)
         {
-            if (parts[0].Bottom == h) return true;
+            if (parts[0].RestBottom == h) return true;
             for (int i = 0; i < parts.Length; i++)
-                if (parts[i].Top == h) return true;
+                if (parts[i].RestTop == h) return true;
             return false;
         }
 
@@ -2310,8 +2356,8 @@ namespace Ring.Data
         /// been, not just the one it was.
         static string PartBoundaryList(HitPart[] parts)
         {
-            var b = new List<string>(parts.Length + 1) { $"{parts[0].Bottom:F3}" };
-            for (int i = 0; i < parts.Length; i++) b.Add($"{parts[i].Top:F3}");
+            var b = new List<string>(parts.Length + 1) { $"{parts[0].RestBottom:F3}" };
+            for (int i = 0; i < parts.Length; i++) b.Add($"{parts[i].RestTop:F3}");
             return string.Join("/", b);
         }
 

@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;   // float2, for the Т14 additions this class receives
 
@@ -54,39 +55,73 @@ namespace Ring.Simulation.Tests
     /// never the earliest circle entry; its direct twin lives in HitZoneTests.
     public class HitPartsTests
     {
-        [Test]
-        public void Validate_PartWiderThanTheBody_Throws()
-        {
-            // Rule 4 — the most expensive one: a part wider than its body would
-            // drop out of the candidate gather SILENTLY, and the only thing that
-            // would ever show it is a playtest (findings B-I6/D-I2).
-            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            g.Parts[1].Radius = g.Radius + 0.01f;          // the SECOND part
-            var ex = Assert.Throws<System.ArgumentException>(
-                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("Gunner.Parts[1].Radius"));
-            Assert.That(ex.Message, Does.Contain("must not exceed"));
-        }
+        // ⛔⛔ THREE REFUSAL WITNESSES LEFT THIS FILE WITH THEIR OWN SUBJECTS
+        // (app-94sk T2): Validate_PartWiderThanTheBody_Throws (rule 4),
+        // Validate_GapBetweenParts_Throws (rule 2) and
+        // Validate_DuplicateZone_Throws (rule 3). They are not "relaxed
+        // expectations" — the rules they witnessed were withdrawn, each for a
+        // reason SimConfigBuilder.ValidateParts' own doc spells out, and a test
+        // whose subject no longer exists witnesses nothing (lesson 427). The
+        // three below take their place: two halves of rule 7 and one of rule 10.
 
         [Test]
-        public void Validate_GapBetweenParts_Throws()
+        public void Validate_DuplicatePartId_Throws()
         {
+            // Rule 7, the checkable half. The id is the wire's NAME for a volume,
+            // and two volumes under one name are two answers to one question —
+            // the very ambiguity rule 3 used to prevent by zone, now prevented by
+            // identity instead, which is what survives a body having two legs.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            g.Parts[1].Bottom = g.Parts[0].Top + 0.1f;     // a gap between 0 and 1
+            g.Parts[1].PartId = g.Parts[0].PartId;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Gunner.Parts"));
-            Assert.That(ex.Message, Does.Contain("contiguous"));
+            Assert.That(ex.Message, Does.Contain("appears twice"));
         }
 
         [Test]
-        public void Validate_DuplicateZone_Throws()
+        public void ShippedPartIds_AreThePinnedAppendOnlySet()
         {
+            // Rule 7, the OTHER half — and it is pinned rather than checked
+            // because "append-only" is unobservable at runtime: a configuration
+            // does not remember its own history. The same way ProtocolVersion and
+            // the length of the zone enum are pinned.
+            // ⚠ THE SET, NOT THE ORDER: append-only forbids REUSING a number, not
+            // rearranging the volumes that carry them.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            g.Parts[1].Zone = g.Parts[0].Zone;             // two sets of "legs"
+            SimConfig cfg = ConfigTests.BuildShipped(h, w, c, g, wv, a, vis);
+            foreach ((string name, HitPart[] parts) in new[]
+            {
+                ("Hero", cfg.Hero.Parts), ("Chaser", cfg.Chaser.Parts),
+                ("Gunner", cfg.Gunner.Parts), ("Elite", cfg.Elite.Parts),
+                ("Director", cfg.Director.Parts),
+            })
+            {
+                var ids = new System.Collections.Generic.List<int>(parts.Length);
+                foreach (HitPart part in parts) ids.Add(part.PartId);
+                ids.Sort();
+                CollectionAssert.AreEqual(new[] { 0, 1, 2 }, ids,
+                    $"{name}: набор PartId сменился — id может только дописываться, " +
+                    "иначе провод переименует уже названный объём");
+            }
+        }
+
+        [Test]
+        public void Validate_StrikerWithoutItsSwingVolume_Throws()
+        {
+            // Rule 10: an archetype that strikes names the ONE volume it strikes
+            // with. A strike with no volume has no geometry at all, and a strike
+            // with two has two — neither is a body anything can hit back.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            // Premise AS A PROPERTY: the chaser must actually be a striker, or
+            // the rule under test does not even apply to him.
+            Assert.Greater(c.AttackRange, 0f,
+                "премисса фикстуры: чейзер обязан быть бьющим, иначе правило 10 к нему не применяется");
+            c.SwingPartId = 99;                            // names no volume he has
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("appears twice"));
+            Assert.That(ex.Message, Does.Contain("Chaser.SwingPartId"));
+            Assert.That(ex.Message, Does.Contain("EXACTLY ONE"));
         }
 
         [Test]
@@ -112,7 +147,7 @@ namespace Ring.Simulation.Tests
             // (finding C-I1).
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             var (elite, director) = ConfigTests.MakeShippedArchetypes();
-            h.MaxAimHeight = director.Parts[director.Parts.Length - 1].Top - 0.1f;
+            h.MaxAimHeight = director.Parts[director.Parts.Length - 1].RestTop - 0.1f;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, elite, director));
             Assert.That(ex.Message, Does.Contain("Hero.MaxAimHeight"));
@@ -190,7 +225,7 @@ namespace Ring.Simulation.Tests
             // else about the fixture moves, so a red here is the rule and
             // nothing but the rule.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            h.MuzzleHeight = h.Parts[h.Parts.Length - 1].Bottom;   // exactly the seam
+            h.MuzzleHeight = h.Parts[h.Parts.Length - 1].RestBottom;   // exactly the seam
             Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
         }
 
@@ -206,13 +241,26 @@ namespace Ring.Simulation.Tests
             // 22.92 % (director) — and this reads green on the shipped numbers. What it catches is the
             // v1-shaped mistake — one Top raised on its own — whenever it is
             // made, which is the only thing it was ever asked to catch.
+            // ⛔⛔ MEASURED ON THE BONES, NOT ON THE EXTENTS (app-94sk T2). A
+            // volume is a CAPSULE now, so its RestTop/RestBottom include two
+            // caps: on the chaser that alone turns a 21.5 % head into a 32.1 %
+            // one, and the band would have to be widened to admit a number that
+            // says nothing about anatomy. The bones are where the anatomy lives,
+            // and the measure on them reproduces the five percentages this test's
+            // own doc quotes — 21.48 / 22.86 / 22.86 / 22.91 / 22.92 — i.e. it is
+            // the SAME guard, asked of the source the geometry moved to.
             SimConfig cfg = TestConfigs.Default();
-            foreach (var parts in new[] { cfg.Chaser.Parts, cfg.Gunner.Parts,
-                cfg.Elite.Parts, cfg.Director.Parts, cfg.Hero.Parts })
+            foreach ((HitPart[] parts, PoseTable table) in new[]
+            {
+                (cfg.Chaser.Parts, cfg.Chaser.Poses), (cfg.Gunner.Parts, cfg.Gunner.Poses),
+                (cfg.Elite.Parts, cfg.Elite.Poses), (cfg.Director.Parts, cfg.Director.Poses),
+                (cfg.Hero.Parts, cfg.Hero.Poses),
+            })
             {
                 HitPart head = parts[parts.Length - 1];
-                float column = head.Top;
-                float share = (head.Top - head.Bottom) / column;
+                float a = table.Bones[head.BoneA].y, b = table.Bones[head.BoneB].y;
+                float crown = math.max(a, b);
+                float share = math.abs(a - b) / crown;
                 Assert.That(share, Is.InRange(0.18f, 0.26f),
                     $"доля головы {share:F3} вне полосы жанра");
             }
@@ -238,7 +286,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             HitPart head = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
-            float headMid = 0.5f * (head.Bottom + head.Top);
+            float headMid = 0.5f * (head.RestBottom + head.RestTop);
             // The aim is offset sideways: wider than the head, narrower than
             // the shoulders.
             float offset = 0.5f * (head.Radius + cfg.Gunner.Radius);
@@ -280,7 +328,7 @@ namespace Ring.Simulation.Tests
             // 0.5 m over the six ticks of flight (Accel 30, MaxSpeed 5.2, minus
             // one tick spent leaving Idle). That moves the entry from x = 5.71
             // to x = 6.21 and the contact height from 2.5703 m to 2.70775 m --
-            // 0.0078 m ABOVE head.Top itself, so the test would pass only
+            // 0.0078 m ABOVE head.RestTop itself, so the test would pass only
             // through the crown-graze clamp rather than through the crown being
             // shootable. A margin of 8 mm is a coincidence, not a margin.
             // Frozen, the contact lands at 2.5703 m, 0.13 m clear of the crown,
@@ -292,7 +340,7 @@ namespace Ring.Simulation.Tests
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
 
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
-                targetXY: new float2(6f, 0f), targetH: head.Top - 0.05f);
+                targetXY: new float2(6f, 0f), targetH: head.RestTop - 0.05f);
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
@@ -301,7 +349,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void HitExactlyOnAPartBoundary_BelongsToTheUpperPart()
+        public void AtTheSharedBone_TheWiderVolumeIsMetFirst_AndTheLadderIsPerStep()
         {
             // THE BOUNDARY TAKEN IS BODY/HEAD, NOT LEGS/BODY (review finding
             // D-C7). On the legs(R 0.35)/body(R 0.50) seam the "boundary closed
@@ -311,17 +359,55 @@ namespace Ring.Simulation.Tests
             // min-scan either way and the zone reads Body for the mutant too.
             // On the body(0.50)/head(0.17) seam the same rules give OPPOSITE
             // answers: Head when correct, Body for the mutant.
+            // ⛔⛔ THE BOUNDARY IS A SHARED BONE NOW, NOT A SHARED NUMBER
+            // (app-94sk T2). While parts were bands, `head.RestBottom` WAS the
+            // seam — validation rule 2 made "top of the torso" and "bottom of the
+            // head" one number. A capsule's RestBottom is its lower CAP (1.95 on
+            // this chaser), which sits inside the torso and names no seam at all.
+            // What the two volumes genuinely share is the CHEST BONE, and that is
+            // what the shot is aimed at.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart torso = cfg.Chaser.Parts[1];
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
 
-            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: head.Bottom,
-                targetXY: new float2(6f, 0f), targetH: head.Bottom);   // EXACTLY the boundary
+            float seam = cfg.Chaser.Poses.Bones[head.BoneA].y;
+            // Premise AS A PROPERTY: the bone really is shared, or there is no
+            // boundary here to award to anybody.
+            Assert.AreEqual(seam, cfg.Chaser.Poses.Bones[torso.BoneB].y, 1e-6f,
+                "премисса фикстуры: у головы и корпуса обязана быть общая кость");
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: seam,
+                targetXY: new float2(6f, 0f), targetH: seam);   // EXACTLY the shared bone
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e));
-            Assert.AreEqual(HitZone.Head, e.Zone, "граница отдана НИЖНЕЙ части");
+            // ⛔⛔ THE ANSWER IS Body, AND THAT IS THE NEW TRUTH RATHER THAN A
+            // RELAXED EXPECTATION (app-94sk T2). Under bands the seam was awarded
+            // to the upper part by a strict comparison — the torso's own `lo <
+            // part.RestTop` excluded it at exactly this height. Under capsules
+            // there is nothing to exclude: the torso is 0.50 m wide against the
+            // head's 0.17, so the round ENTERS ITS FLANK 0.33 m earlier along the
+            // flight (x >= 5.38 against x >= 5.71, recomputed), and the two
+            // entries fall in different tick-steps. The zone ladder arbitrates
+            // between volumes met on ONE step; it does not reach across steps,
+            // and making it reach would mean judging a contact that has not
+            // happened yet.
+            Assert.AreEqual(HitZone.Body, e.Zone,
+                "лестница приоритета перепрыгнула через шаг — попадание отдано объёму, " +
+                "до которого снаряд на этом шаге ещё не дошёл");
+            // ⚠ AND THE HEAD IS GENUINELY REACHABLE AT THIS HEIGHT — asked of the
+            // resolver directly, on a step that spans both windows. Without this
+            // half the fixture would pass on a body whose head is simply missing.
+            float3 origin = new float3(6f, 0f, 0f);
+            bool onOneStep = HitVolumes.Resolve(cfg.Chaser.Parts, in cfg.Chaser.Poses, 0,
+                float2.zero, origin, 0f, 1f,
+                new float3(5.0f, 0f, seam), new float3(6.2f, 0f, seam),
+                cfg.Weapon.ProjectileRadius,
+                out HitZone oneStepZone, out _, out _, out _, out _);
+            Assert.IsTrue(onOneStep, "премисса: на общем шаге тело обязано быть задето");
+            Assert.AreEqual(HitZone.Head, oneStepZone,
+                "на ОДНОМ шаге лестница обязана отдать общую кость голове");
         }
 
         [Test]
@@ -331,8 +417,8 @@ namespace Ring.Simulation.Tests
             // the contact height -- and with it the moment arm. Taken off the
             // body circle the height would be a different number.
             // THE EXPECTATION IS AN EXACT NUMBER, NOT A RANGE (review finding
-            // D-C8): the first draft asserted Is.InRange(head.Bottom,
-            // head.Top), and the entry heights into the BODY circle (3.533) and
+            // D-C8): the first draft asserted Is.InRange(head.RestBottom,
+            // head.RestTop), and the entry heights into the BODY circle (3.533) and
             // into the HEAD circle (3.632) both sit inside [3.24, 4.20] -- so
             // mutation M12 passed. The gap between them is 0.1 m, hence the
             // 0.03 tolerance.
@@ -359,7 +445,7 @@ namespace Ring.Simulation.Tests
             cfg.Gunner.MaxSpeed = 0f; cfg.Gunner.Accel = 0f;   // Ruling 70, see above
             var w = new SimulationWorld(7, cfg);
             HitPart head = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
-            float headMid = 0.5f * (head.Bottom + head.Top);
+            float headMid = 0.5f * (head.RestBottom + head.RestTop);
             const float shooterX = 0f, targetX = 9f, muzzleH = 1f;
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(targetX, 0f)));
 
@@ -409,7 +495,7 @@ namespace Ring.Simulation.Tests
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle; w.SetMobForTest(0, m);
 
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
-                targetXY: new float2(9f, 0f), targetH: 0.5f * (head.Bottom + head.Top));
+                targetXY: new float2(9f, 0f), targetH: 0.5f * (head.RestBottom + head.RestTop));
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e));
@@ -417,19 +503,59 @@ namespace Ring.Simulation.Tests
                 "урон по голове не умножен на множитель ЧАСТИ");
         }
 
+        /// A bone of a body standing at the origin, carried into the WORLD frame
+        /// the way HitVolumes.ToWorld carries it: the body's plan `(x, z)` becomes
+        /// the world's plan `(x, y)`, and the body's height `.y` becomes `.z`.
+        /// ⚠ Written out here rather than borrowed from the resolver on purpose
+        /// (lesson 427): a witness that calls the code under test proves only
+        /// that the code agrees with itself.
+        static float3 Chaser3D(in PoseTable table, int bone)
+        {
+            float3 b = table.Bones[bone];
+            return new float3(b.x, b.z, b.y);
+        }
+
         [Test]
         public void ShotUnderTheKnees_IsNotAHeadshot()
         {
             // Spec test 13: the negative half -- a low shot is obliged to be
             // Legs.
+            // ⛔⛔ THE AIM MOVED ONTO THE BONES (app-94sk T2), and not because the
+            // old one "stopped passing". `0.5f * legs.RestTop` meant the middle
+            // of the LEGS BAND while a part was a band; RestTop is the top of a
+            // CAPSULE now — bone plus radius — so half of it (0.615) sits inside
+            // the torso capsule, whose bottom cap reaches 0.38. Worse, the
+            // chaser's leg runs out to a foot swung 0.9 m aside, so a shot down
+            // his own axis at any leg height misses the leg by 0.49 m
+            // (recomputed). "Under the knees" now has to be said where the knee
+            // IS, and PartMidWorld is what says it.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             HitPart legs = cfg.Chaser.Parts[0];
-            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            var body = new float2(6f, 0f);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle; w.SetMobForTest(0, m);
 
-            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 0.5f * legs.Top,
-                targetXY: new float2(6f, 0f), targetH: 0.5f * legs.Top);
+            TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in legs, body,
+                out float2 legPlan, out float legH);
+            // Premise AS A PROPERTY, AND THE PROPERTY IS THE GEOMETRY ITSELF: the
+            // leg's middle must lie OUTSIDE the torso's capsule, or the zone
+            // ladder would rightly answer Body and the fixture would be measuring
+            // the ladder instead of the legs. ⚠ It is NOT enough to be below the
+            // torso's RestBottom — that is a height, and a capsule is refused by
+            // DISTANCE: this point sits 0.44 m below the pelvis and 0.45 m aside,
+            // i.e. 0.63 m away from the torso segment against its 0.50 m radius.
+            HitPart torsoPart = cfg.Chaser.Parts[1];
+            float3 tA = new float3(body.x, body.y, 0f)
+                + Chaser3D(in cfg.Chaser.Poses, torsoPart.BoneA);
+            float3 tB = new float3(body.x, body.y, 0f)
+                + Chaser3D(in cfg.Chaser.Poses, torsoPart.BoneB);
+            float3 legMid = new float3(legPlan, legH);
+            float3 closest = Geometry.ClosestPointOnSegment(legMid, tA, tB, out _);
+            Assert.Greater(math.distance(legMid, closest), torsoPart.Radius,
+                "премисса фикстуры: середина ноги обязана лежать ВНЕ капсулы корпуса");
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: legH,
+                targetXY: legPlan, targetH: legH);
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e));
@@ -488,7 +614,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
-            float headMid = 0.5f * (head.Bottom + head.Top);
+            float headMid = 0.5f * (head.RestBottom + head.RestTop);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle;
             m.Tilt = cfg.Chaser.TiltFallAngle * 0.9f;   // almost flat on the ground
@@ -565,10 +691,18 @@ namespace Ring.Simulation.Tests
             float hLegsIn = muzzleH + slope * sLegsIn;
             float sTorsoIn = sAxis - math.sqrt(torsoPad * torsoPad - lateral * lateral);
             float hTorsoIn = muzzleH + slope * sTorsoIn;
-            Assert.Less(hLegsIn, legs.Top,
-                "вход в круг ног лежит выше их полосы — правда не Legs, фикстура не об окне дефекта");
-            Assert.Less(hTorsoIn, torso.Bottom,
-                "вход в круг корпуса лежит уже в его полосе — окно дефекта закрыто, фикстура не о нём");
+            // ⛔⛔ THE BAND PREMISES ARE GONE WITH THE BANDS (app-94sk T2), and
+            // so is the defect they framed. "Enters the circle below its band"
+            // described a body made of a CIRCLE and a BAND checked separately;
+            // a capsule is ONE shape, and SegmentCapsule returns the first entry
+            // into that shape, so awarding "the earliest circle entry" is not a
+            // mistake an implementation can make any more.
+            // ⇒ WHAT THIS FIXTURE WITNESSES NOW IS THE ANSWER THAT REPLACED IT:
+            // a round reaching both volumes is judged by the ZONE LADDER, and
+            // the torso outranks the legs — which is the opposite verdict, and
+            // deliberately so (the same ladder fixture 11 pins by calling the
+            // resolver directly; this is its world-side twin).
+            Assert.Greater(hTorsoIn, 0f, "премисса фикстуры: подъём луча обязан быть восходящим");
 
             // The freeze is probed, not narrated: three idle ticks would move
             // a live body, a frozen one must not. (After the blow the impact
@@ -583,11 +717,20 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
                 "снаряд вовсе не попал — фикстура не об окне дефекта");
-            Assert.AreEqual(HitZone.Legs, e.Zone,
-                "победитель выбран по входу в КРУГ, а не по первому совпадению круга и полосы");
-            Assert.AreEqual(hLegsIn, e.Height, 0.03f,
-                "высота контакта взята не у первого совпадения круга и полосы победителя");
-            Assert.AreEqual(cfg.Weapon.Damage * legs.DamageMult, e.Amount, 1e-3f,
+            Assert.AreEqual(HitZone.Body, e.Zone,
+                "лестница приоритета зон не отработала — корпус обязан перебить ноги");
+            // ⚠ THE HEIGHT IS ASSERTED AS A PROPERTY, NOT AS A LITERAL: computing
+            // the exact first entry into a capsule would mean writing the solver
+            // a second time in the fixture, which is the duplication rule 2
+            // forbids. What matters — and what a contact taken from the body
+            // circle would break — is that the height lies ON THE ROUND'S OWN
+            // CLIMB and is not the middle of the part it struck.
+            Assert.That(e.Height, Is.InRange(muzzleH, targetH),
+                "высота контакта вне подъёма снаряда — взята не с шага");
+            TestConfigs.PartMidWorld(in cfg.Director.Poses, in torso, body, out _, out float torsoMid);
+            Assert.Greater(math.abs(e.Height - torsoMid), 1e-3f,
+                "высота контакта равна середине части — контакт взят у объёма, а не у шага");
+            Assert.AreEqual(cfg.Weapon.Damage * torso.DamageMult, e.Amount, 1e-3f,
                 "урон не умножен на множитель части-победителя");
         }
     }

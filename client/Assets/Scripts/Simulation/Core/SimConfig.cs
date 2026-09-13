@@ -103,6 +103,24 @@ namespace Ring.Simulation.Core
         /// follow (balance data, not topology -- nothing in SimulationWorld's
         /// constructor sizes an array off it).
         public HitPart[] Parts;
+
+        /// ⛔ THE RADIUS SPLIT IN TWO MEANINGS (app-94sk T2, spec §3.3, Р507).
+        /// `Radius` above stays PHYSICAL and does not move at all: bodies shove
+        /// each other with it (A13), it pushes them out of walls, and it
+        /// answers visibility -- a circle is right for all three. `GatherRadius`
+        /// is the projectile's BROAD PHASE alone, and it must cover the
+        /// FURTHEST bone in any phase of any clip plus the radius of the volume
+        /// on it. Measured cost of not splitting them: a chaser's foot swings
+        /// 0.9 m out of a 0.5 m circle, so the broad phase discarded the leg
+        /// before the narrow phase could be asked about it.
+        /// ⚠ THE NUMBER IS THE BAKER'S (T4); until then this is a fixture
+        /// number, exactly like ProjectileSpeed 35 against the game's 52.5.
+        public float GatherRadius;
+
+        /// This archetype's baked poses. ⛔ ONE TABLE PER ARCHETYPE SECTION,
+        /// not one shared table on SimConfig: a table carries ONE BoneCount and
+        /// the five bodies do not share a skeleton -- see PoseTable's own doc.
+        public PoseTable Poses;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -289,6 +307,23 @@ namespace Ring.Simulation.Core
         /// contract and same reason as HeroSimConfig.Parts above, which carries
         /// the full account of what it replaced.
         public HitPart[] Parts;
+
+        /// The projectile broad phase's radius -- see HeroSimConfig.GatherRadius
+        /// for the whole argument; `Radius` above stays physical here too.
+        public float GatherRadius;
+
+        /// This archetype's baked poses -- one table per section, see PoseTable.
+        public PoseTable Poses;
+
+        /// Which volume this archetype STRIKES with (validation rule 10).
+        /// ⛔ `int` WITH SENTINEL -1, NOT `byte` WITH 0xFF, and this is a
+        /// recorded deviation from the spec: SimConfigHashTests.Bump understands
+        /// float/int/bool and throws NotSupportedException on anything else, and
+        /// an exception is not a RED by this project's rule (332/498/630) -- a
+        /// byte field would have broken the section sweep in a way that does not
+        /// even show up as a failing test. The sentinel cannot be confused with
+        /// a PartId either: a part index is non-negative by its type.
+        public int SwingPartId;
 
         /// app-88jb Т19 (spec §3.4): this archetype's own ricochet numbers, the
         /// mob-side twin of WeaponSimConfig's three -- see that doc for the
@@ -669,16 +704,95 @@ namespace Ring.Simulation.Core
     /// an array member either; SimConfigBuilder.Validate is the real gate,
     /// exactly as ArenaConfig's Obstacle/Wall structs already document.
     ///
-    /// Ranges are HALF-OPEN [Bottom, Top) except for the topmost part, whose
-    /// Top is INCLUSIVE -- exactly what HitZones.Resolve enforces. A hit
-    /// landing exactly on a boundary belongs to the UPPER part.
+    /// ⛔ A PART IS A CAPSULE ON A PAIR OF BONES, NOT A COAXIAL SLICE
+    /// (app-94sk T2, spec §3.2). The slice could only ever express one shape --
+    /// a circle around the body's own axis -- and the measurement that opened
+    /// this task is what a circle costs: a mob's circle is HALF the width of
+    /// its drawn body, a collector's is THREE TIMES wider, and a pose moves a
+    /// bone three times further than the radius of the whole volume the body
+    /// was described by. BoneA/BoneB index THIS archetype's pose table.
+    ///
+    /// BONE INDICES AND PartId ARE LOCAL TO THE ARCHETYPE AND APPEND-ONLY
+    /// (spec §3.2, ruling Р510). One global flat table cost Jedi Academy the
+    /// boss's parts: the bits ran out and the surfaces were cut FROM THE TABLE
+    /// (COMBAT-001 §3.7). Five bodies here carry 65 / 47 / 17 / 20 / 28 bones,
+    /// so a shared table is not merely awkward, it is arithmetically
+    /// impossible -- and had it been sized to the maximum, the chaser's bone
+    /// indices would point into the collector's fingers.
     [System.Serializable]
     public struct HitPart
     {
-        public float Radius;      // the part's half-width in plan view
-        public float Bottom, Top; // its height bounds above the ground
+        /// The segment's ends: indices into this archetype's PoseTable row.
+        public byte BoneA, BoneB;
+        /// The capsule's half-width around that segment.
+        public float Radius;
         public HitZone Zone;
         public float DamageMult;
+        /// Local, append-only -- the wire's name for this volume (rule 7).
+        public byte PartId;
+        /// ⛔ ONE DEFINITION, AND IT IS HERE: the CAPSULE'S extent in the rest
+        /// pose, i.e. the bone ends grown by the radius, NOT the bone ends
+        /// themselves:
+        ///     RestBottom = min(bone[BoneA].y, bone[BoneB].y) - Radius
+        ///     RestTop    = max(bone[BoneA].y, bone[BoneB].y) + Radius
+        /// Without a single definition validation rule 13 ("RestTop agrees with
+        /// the table") is unprovable, and the fixtures and rule 16 measure
+        /// different things. ⚠ `.y` is the height because these are BONES, and
+        /// bones live in the BODY frame -- HitVolumes.ToWorld is the one place
+        /// that carries them into the world frame, where height is `.z`.
+        /// ⚠ DERIVED DATA: the baker computes both, and rule 13 checks them
+        /// against the table, so they never become a third source of truth
+        /// about the body's geometry.
+        public float RestBottom, RestTop;
+    }
+
+    /// Baked bone positions: `clip + phase -> where each bone is`, in the BODY
+    /// frame (app-94sk, spec §3.5, owner decision Н50).
+    ///
+    /// ⛔ FLAT ARRAYS, NOT AN ARRAY OF ARRAYS, and that is a decision:
+    /// `float3[][]` would hand SimConfigHash a second level of nesting none of
+    /// its helpers know (HashFloatArray / HashItemArray / HashHitPartArray are
+    /// all one-level), and would cost an allocation per row at config build.
+    ///
+    /// ⛔ ROTATIONS ARE NOT STORED (Р512): a volume is given by TWO ENDS, so
+    /// its tilt is derived. nlerp against slerp at a 30-degree inter-frame gap
+    /// differ by 0.033 degrees -- spherical interpolation buys nothing here.
+    ///
+    /// ⛔⛔ THE FRAME IS THE BODY'S, NOT THE WORLD'S: height is `.y` and the
+    /// plan is `.x`/`.z`, because these numbers come from Unity through
+    /// SkeletonAudit, which is also where the baker is carved out of (Р527).
+    /// Everything else in Ring.Simulation puts the plan in `.xy` and the height
+    /// in `.z`. HitVolumes.ToWorld is the ONE crossing between the two, and it
+    /// has its own witness (fixture 12a, mutant M392).
+    [System.Serializable]
+    public struct PoseTable
+    {
+        /// How many bones this archetype has. A row is exactly this many float3.
+        public int BoneCount;
+        /// First row of each clip; length is ClipCount + 1, and the last entry
+        /// equals the total number of rows (the CSR trick: a clip's length is a
+        /// subtraction, so no separate array of lengths is kept).
+        public int[] ClipFirstRow;
+        /// Rows back to back: row r, bone b sits at Bones[r * BoneCount + b].
+        public float3[] Bones;
+        /// Lower-layer blend-tree thresholds -- the baker reads them FROM THE
+        /// CONTROLLER (`BlendTree.children[i].threshold`), not from bootstrap
+        /// literals (Р564). ⛔ They travel HERE because the tree's weight is
+        /// computed in Ring.Simulation, from which Editor/AnimatorCatalog is
+        /// not visible at all.
+        public float[] BlendThresholds;
+        /// ⛔⛔ THE AIM LAYER'S MASK -- ONE BIT PER BONE (spec §3.6). Measured:
+        /// on the collector Body, Head, both arms and both hands are on; Root,
+        /// both legs and all four *IK are off -- six of eleven volumes take
+        /// their pose from the aim layer, five from locomotion.
+        /// ⚠ MOBS HAVE ONE LAYER: the mask is empty, and that is their build
+        /// rather than an omission.
+        /// An array, not a scalar: 65 bones do not fit in a `ulong`, so the
+        /// length is `(BoneCount + 63) / 64`.
+        public ulong[] UpperLayerMask;
+        /// Checksum OF THE LOADED BYTES (Р514). ⛔ The asset's field is a cache,
+        /// not the source of truth: the config build recomputes and compares.
+        public ulong Checksum;
     }
 
     /// Stage 3 Task 13 (spec §3.7): what one catalog entry IS — the ONLY

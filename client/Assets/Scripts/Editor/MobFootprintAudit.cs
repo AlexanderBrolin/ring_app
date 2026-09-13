@@ -1,4 +1,5 @@
 using Ring.Data;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using UnityEditor;
 using UnityEngine;
@@ -108,14 +109,16 @@ namespace Ring.Editor
             float footprint = Mathf.Max(width, depth) * 0.5f;
             float ratio = cfg.Radius > 0f ? footprint / cfg.Radius : float.PositiveInfinity;
 
-            float topPart = 0f, widestPart = 0f;
-            if (cfg.Parts != null && cfg.Parts.Length > 0)
+            // app-94sk T2: the crown comes from HitParts.RestCrown, the one
+            // home of it -- this loop used to be the fourth copy of the same
+            // maximum, and "one home" that leaves a copy behind closes nothing.
+            // The widest part stays here: nobody else asks that question.
+            float topPart = HitParts.RestCrown(cfg.Parts);
+            float widestPart = 0f;
+            if (cfg.Parts != null)
             {
                 for (int i = 0; i < cfg.Parts.Length; i++)
-                {
-                    if (cfg.Parts[i].Top > topPart) topPart = cfg.Parts[i].Top;
                     if (cfg.Parts[i].Radius > widestPart) widestPart = cfg.Parts[i].Radius;
-                }
             }
 
             // WHOLE BODY, and then the TORSO BAND on its own. The band is what

@@ -87,15 +87,32 @@ namespace Ring.Data
         /// shot at what the player SAW as the head passed over an empty
         /// number. Radii are 0.7 / 1.0 / 0.35 of Radius, the same humanoid
         /// proportion all five bodies use.
+        /// ⚠ app-94sk T2: same migration as HeroConfig.Parts -- the heights kept
+        /// their numbers and changed their names, and BoneA/BoneB are the
+        /// placeholder column the baker (T4) overwrites from the real skeleton.
         public HitPart[] Parts =
         {
-            new HitPart { Radius = 0.35f, Bottom = 0f, Top = 0.88f,
-                Zone = HitZone.Legs, DamageMult = 0.75f },
-            new HitPart { Radius = 0.50f, Bottom = 0.88f, Top = 2.12f,
-                Zone = HitZone.Body, DamageMult = 1.0f },
-            new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
-                Zone = HitZone.Head, DamageMult = 1.7f },
+            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 0.88f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.88f, RestTop = 2.12f,
+                Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 2.12f, RestTop = 2.70f,
+                Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
         }; // Was the sync-marker key until app-88jb Т19.
+
+        /// app-94sk T2 (spec §3.3, Р507): the projectile broad phase's radius —
+        /// see HeroConfig.GatherRadius for the whole argument. Default is the
+        /// body radius until the baker writes the real one.
+        [Range(0.05f, 12f)] public float GatherRadius = 0.5f;
+
+        /// app-94sk T2 (spec §3.9): WHICH volume this archetype strikes with.
+        /// ⛔ -1 IS THE SENTINEL "this archetype does not strike at all", and it
+        /// has to be one: 0 is a valid PartId, and the gunner's AttackRange is
+        /// 0. Validation rule 10 is what pairs the two.
+        /// ⚠ THE DEFAULT IS THE CHASER'S, like every number in this class: he
+        /// strikes (AttackRange 1.1), so he names a volume. The Gunner's own
+        /// .asset carries the sentinel instead, because his AttackRange is 0.
+        [Range(-1, 255)] public int SwingPartId = 1;
 
         /// app-88jb Т19 (spec §3.4): this archetype's own ricochet numbers,
         /// the mob-side twin of WeaponConfig's three — same fields, same

@@ -43,8 +43,9 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EveryConfigNumberAffectsHash_Hero()
         {
-            AssertSectionAffectsHash("Hero", "Parts");
+            AssertSectionAffectsHash("Hero", "Parts", "Poses");
             AssertHitPartArrayFieldAffectsHash("Hero", "Parts");
+            AssertPoseTableAffectsHash("Hero");
         }
 
         [Test]
@@ -53,15 +54,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EveryConfigNumberAffectsHash_Chaser()
         {
-            AssertSectionAffectsHash("Chaser", "Parts");
+            AssertSectionAffectsHash("Chaser", "Parts", "Poses");
             AssertHitPartArrayFieldAffectsHash("Chaser", "Parts");
+            AssertPoseTableAffectsHash("Chaser");
         }
 
         [Test]
         public void EveryConfigNumberAffectsHash_Gunner()
         {
-            AssertSectionAffectsHash("Gunner", "Parts");
+            AssertSectionAffectsHash("Gunner", "Parts", "Poses");
             AssertHitPartArrayFieldAffectsHash("Gunner", "Parts");
+            AssertPoseTableAffectsHash("Gunner");
         }
 
         [Test]
@@ -137,15 +140,17 @@ namespace Ring.Simulation.Tests
         [Test]
         public void EveryConfigNumberAffectsHash_Elite()
         {
-            AssertSectionAffectsHash("Elite", "Parts");
+            AssertSectionAffectsHash("Elite", "Parts", "Poses");
             AssertHitPartArrayFieldAffectsHash("Elite", "Parts");
+            AssertPoseTableAffectsHash("Elite");
         }
 
         [Test]
         public void EveryConfigNumberAffectsHash_Director()
         {
-            AssertSectionAffectsHash("Director", "Parts");
+            AssertSectionAffectsHash("Director", "Parts", "Poses");
             AssertHitPartArrayFieldAffectsHash("Director", "Parts");
+            AssertPoseTableAffectsHash("Director");
         }
 
         [Test]
@@ -332,9 +337,15 @@ namespace Ring.Simulation.Tests
                 // dies with NotSupportedException. A raised exception is not a
                 // RED (332/498): it hides which fields the sweep did reach and
                 // makes the run's own prediction unverifiable.
+                // app-94sk T2: PoseTable joins them for exactly the same
+                // reason, and it is not an array but a STRUCT -- Bump(object)
+                // would box it and die on the first section swept. Its own
+                // witness is AssertPoseTableAffectsHash below: a field taken
+                // out of the general sweep must own a dedicated one, which is
+                // the argument HitPart[] already carries.
                 if (field.FieldType == typeof(float2[]) || field.FieldType == typeof(float[])
                     || field.FieldType == typeof(int[]) || field.FieldType == typeof(byte[])
-                    || field.FieldType == typeof(HitPart[]))
+                    || field.FieldType == typeof(HitPart[]) || field.FieldType == typeof(PoseTable))
                 {
                     skippedArrayFields.Add(field.Name);
                     continue;
@@ -578,9 +589,17 @@ namespace Ring.Simulation.Tests
 
             for (int i = 0; i < length; i++)
             {
+                // app-94sk T2: a part became a capsule on a pair of bones, so
+                // the list grew from five names to eight. ⛔ THERE IS NO
+                // REFLECTION OVER HitPart HERE -- the fields are named BY HAND,
+                // which is why a new one added to the struct and left out of
+                // the fold would pass silently unless it is also added here.
+                AssertFieldBump(i, "BoneA", part => { part.BoneA = (byte)(part.BoneA + 1); return part; });
+                AssertFieldBump(i, "BoneB", part => { part.BoneB = (byte)(part.BoneB + 1); return part; });
                 AssertFieldBump(i, "Radius", part => { part.Radius += 1f; return part; });
-                AssertFieldBump(i, "Bottom", part => { part.Bottom += 1f; return part; });
-                AssertFieldBump(i, "Top", part => { part.Top += 1f; return part; });
+                AssertFieldBump(i, "PartId", part => { part.PartId = (byte)(part.PartId + 1); return part; });
+                AssertFieldBump(i, "RestBottom", part => { part.RestBottom += 1f; return part; });
+                AssertFieldBump(i, "RestTop", part => { part.RestTop += 1f; return part; });
                 // Rotated inside the enum's own domain rather than incremented
                 // past it: a value outside HitZone would test the hash against
                 // a body no config can express.
@@ -599,7 +618,8 @@ namespace Ring.Simulation.Tests
             Array.Copy(original, extended, original.Length);
             extended[original.Length] = new HitPart
             {
-                Radius = 1f, Bottom = 90f, Top = 91f, Zone = HitZone.None, DamageMult = 1f
+                BoneA = 0, BoneB = 1, Radius = 1f, Zone = HitZone.None, DamageMult = 1f,
+                PartId = 90, RestBottom = 90f, RestTop = 91f
             };
             arrayField.SetValue(lenSection, extended);
             sectionField.SetValue(lenCfg, lenSection);
@@ -618,6 +638,53 @@ namespace Ring.Simulation.Tests
                 var mutated = (SimConfig)cfg;
                 Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
                     $"{sectionName}.{fieldName}[{index}].{fieldLabel} is not in the hash");
+            }
+        }
+
+        /// app-94sk T2: the pose table's own witness in the digest.
+        ///
+        /// ⛔ WITHOUT IT THE TABLE WOULD EITHER GO INTO THE HASH SILENTLY OR NOT
+        /// GO IN AT ALL: the skip-list takes a field out of the general sweep,
+        /// and that is exactly why every field taken out owes a dedicated
+        /// witness -- the same argument HitPart[] carries since Т13.
+        /// Checked PER PIECE rather than by one bump, because the fold walks
+        /// four different shapes (a scalar, an int array, a float3 array and a
+        /// float array) and dropping any one of them is its own mutation.
+        static void AssertPoseTableAffectsHash(string sectionName)
+        {
+            var baselineCfg = TestConfigs.Default();
+            ulong baseline = SimConfigHash.Compute(in baselineCfg);
+            FieldInfo sectionField = Section(sectionName);
+            FieldInfo tableField = sectionField.FieldType.GetField("Poses");
+            Assert.IsNotNull(tableField, $"{sectionName}.Poses does not exist");
+
+            // Premise: the fixture table must actually carry bones, or every
+            // assertion below passes on an empty one and measures nothing.
+            var probe = (PoseTable)tableField.GetValue(sectionField.GetValue(TestConfigs.Default()));
+            Assert.IsNotNull(probe.Bones, $"premise: {sectionName}.Poses.Bones must not be null");
+            Assert.Greater(probe.Bones.Length, 0, $"premise: {sectionName}.Poses carries no bones");
+
+            AssertTableBump("Bones", t => { t.Bones[0] += new float3(1f, 0f, 0f); return t; });
+            AssertTableBump("BoneCount", t => { t.BoneCount += 1; return t; });
+            AssertTableBump("ClipFirstRow", t => { t.ClipFirstRow[0] += 1; return t; });
+            AssertTableBump("BlendThresholds", t => { t.BlendThresholds[0] += 1f; return t; });
+
+            void AssertTableBump(string label, Func<PoseTable, PoseTable> bump)
+            {
+                object cfg = TestConfigs.Default();
+                object section = sectionField.GetValue(cfg);
+                var table = (PoseTable)tableField.GetValue(section);
+                // The arrays are shared with the fixture factory's own instance,
+                // so they are cloned before being bumped -- otherwise the
+                // "baseline" recomputed later would carry the mutation too.
+                table.Bones = (float3[])table.Bones.Clone();
+                table.ClipFirstRow = (int[])table.ClipFirstRow.Clone();
+                table.BlendThresholds = (float[])table.BlendThresholds.Clone();
+                tableField.SetValue(section, bump(table));
+                sectionField.SetValue(cfg, section);
+                var mutated = (SimConfig)cfg;
+                Assert.AreNotEqual(baseline, SimConfigHash.Compute(in mutated),
+                    $"{sectionName}.Poses.{label} is not in the hash");
             }
         }
 

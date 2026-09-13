@@ -928,11 +928,22 @@ namespace Ring.Simulation.Core
             return into < 0f ? vel - normal * into : vel;
         }
 
+        /// The rotation ITSELF, taking the pair a caller already holds.
+        ///
+        /// ⛔ THE OVERLOAD EXISTS BECAUSE A HEADING ARRIVES AS A PAIR, NOT AS AN
+        /// ANGLE (app-94sk T2). A body's facing is carried as `(sin, cos)` and
+        /// computed ONCE per body; asking the radian form for it would mean an
+        /// `atan2` followed by decomposing the angle straight back — two
+        /// trigonometric calls for every volume of every body the broad phase
+        /// gathered, i.e. 9-15 pairs per body against one.
+        public static float2 Rotate(float2 v, float sin, float cos)
+            => new float2(cos * v.x - sin * v.y, sin * v.x + cos * v.y);
+
+        /// The radian form, for callers that hold an angle. ⛔ IT DELEGATES: one
+        /// home for the arithmetic of a turn (rule 2), so the two forms cannot
+        /// answer differently on one input.
         public static float2 Rotate(float2 v, float rad)
-        {
-            float s = math.sin(rad), c = math.cos(rad);
-            return new float2(c * v.x - s * v.y, s * v.x + c * v.y);
-        }
+            => Rotate(v, math.sin(rad), math.cos(rad));
 
         /// Rotates `from` towards `to` by at most `maxRad` radians, along the
         /// shorter arc, preserving `from`'s magnitude (direction-only steer —

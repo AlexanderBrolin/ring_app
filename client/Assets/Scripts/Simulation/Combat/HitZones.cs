@@ -12,10 +12,15 @@ namespace Ring.Simulation.Combat
     /// ⚠ THE CLASS IS NO LONGER THE ARITHMETIC OF A THREE-BAND COLUMN
     /// (app-88jb Т15). `Classify` and `MultFor` — the pair that read a zone and
     /// a multiplier off six scalars — were deleted together with those scalars;
-    /// what a shot lands on is decided by `Resolve` over the parts, and the two
-    /// survivors beside it are the silhouette gate (`Overlaps`, which the
-    /// barrier and the floor need and which knows nothing of parts) and the
-    /// crown of a stack (`StackTop`).
+    /// what a shot lands on is decided by `Resolve` over the parts, and the
+    /// survivor beside it is the silhouette gate (`Overlaps`, which the barrier
+    /// and the floor need and which knows nothing of parts).
+    ///
+    /// ⚠ THE CLASS IS ALSO NO LONGER THE HOME OF A BODY'S CROWN (app-94sk T2):
+    /// `StackTop` moved to HitParts.RestCrown with the rest of the questions
+    /// asked about the parts array. `Resolve` itself is on its way out too --
+    /// the capsules of HitVolumes replace it -- and what stays here for good is
+    /// the height gate, which is about a COLUMN and knows nothing of parts.
     ///
     /// Internal on purpose: nothing outside the simulation assembly needs to
     /// re-derive a zone. Presentation reads the resolved `SimEvent.Zone`.
@@ -72,27 +77,13 @@ namespace Ring.Simulation.Combat
         /// that nothing reads it, held only for as long as that mismatch went
         /// unnoticed.
         ///
-        /// The crown of a body's own model: the top of its LAST part
-        /// (app-88jb T14). One home, because both damageable branches of
-        /// ProjectileSystem.AcceptCandidate need exactly this number as the
-        /// silhouette ceiling they hand to Resolve, and a body's crown written
-        /// out twice is a crown that drifts.
-        ///
-        /// AN EMPTY OR ABSENT STACK ANSWERS 0, NOT A CRASH, and that is the
-        /// half this method exists for. `parts[parts.Length - 1]` at the call
-        /// site would throw a NullReferenceException on a hand-built fixture
-        /// that never filled the array -- inside ProjectileSystem.Update, i.e.
-        /// on the hot path, for a body the simulation was merely asked to shoot
-        /// at. A zero crown pairs with Resolve's own empty-stack refusal below:
-        /// a body that declares no hit volume presents nothing to hit, which is
-        /// SimConfigBuilder.ValidateParts' own wording for the same rule
-        /// ("Parts must not be empty -- a body with no parts cannot be hit at
-        /// all" -- cited by its words, not by a line number: the address this
-        /// doc used to quote drifted twice, Ruling 196). Every config that
-        /// went through the builder is non-empty by validation, so this arm is
-        /// unreachable in the game and reachable only from a fixture.
-        public static float StackTop(HitPart[] parts)
-            => parts == null || parts.Length == 0 ? 0f : parts[parts.Length - 1].Top;
+        /// ⛔ `StackTop` IS GONE (app-94sk T2): the crown of a body now lives
+        /// in HitParts.RestCrown, the ONE public home of the questions asked
+        /// about the parts array itself. It left because validation rule 2 --
+        /// the sorted column -- is being withdrawn: "the top of the LAST part"
+        /// was right only while a column was enforced, and the volume layout of
+        /// spec §3.2 puts a shin last. Four copies of that index existed; see
+        /// HitParts' own doc for the full account.
 
         /// THE ORDER OF THE THREE DECISIONS IS LOAD-BEARING, so it is written
         /// out here rather than left to be read off the loop:
@@ -172,7 +163,7 @@ namespace Ring.Simulation.Combat
             // own refusal wording -- cited by its words, not by a line number
             // that has already drifted once, Ruling 196), so capping at it
             // hides whole parts rather than slicing one in half.
-            float ceiling = math.min(parts[last].Top, overlapTop);
+            float ceiling = math.min(parts[last].RestTop, overlapTop);
             // Cheap necessary condition on the step, before any quadratic: a
             // chord's height span is a SUBSET of its step's, so a body the
             // whole step cannot reach is reachable through no part of it.
@@ -214,14 +205,14 @@ namespace Ring.Simulation.Combat
                 // OUTER HALVES ARE IDENTICALLY TRUE and are kept for the
                 // shape, not the arithmetic (Т14/Т23 fix-round, Ruling 193):
                 // at `i == last` the clamp one line up already capped `lo` at
-                // `ceiling <= parts[last].Top`, and at `i == 0` the same clamp
-                // floors `hi` at 0 while `Parts[0].Bottom == 0` is
+                // `ceiling <= parts[last].RestTop`, and at `i == 0` the same clamp
+                // floors `hi` at 0 while `Parts[0].RestBottom == 0` is
                 // SimConfigBuilder.ValidateParts' own rule ("Parts[0].Bottom
                 // must be 0 -- the stack starts at the ground"). What actually
                 // carries "a hit exactly on a boundary belongs to the UPPER
-                // part" is the strict `lo < part.Top` on the NON-last parts,
+                // part" is the strict `lo < part.RestTop` on the NON-last parts,
                 // paired with that clamp.
-                if (!(hi >= part.Bottom && (i == last ? lo <= part.Top : lo < part.Top))) continue;
+                if (!(hi >= part.RestBottom && (i == last ? lo <= part.RestTop : lo < part.RestTop))) continue;
 
                 // THE PART'S FIRST CONTACT, NOT ITS CIRCLE ENTRY (Т14/Т23
                 // fix-round, Ruling 191 / review finding A-1). The circle and
@@ -247,13 +238,13 @@ namespace Ring.Simulation.Combat
                 float hA = math.clamp(hIn, 0f, ceiling);
                 float tBand = tEnter;
                 float hBand = hA;
-                if (hA < part.Bottom || hA > part.Top)
+                if (hA < part.RestBottom || hA > part.RestTop)
                 {
                     float dh = hEnd - hStart;
                     // Division guard only: a flat chord cannot put hA outside
                     // a band its gate just passed (see above).
                     if (math.abs(dh) < 1e-9f) continue;
-                    float edge = dh > 0f ? part.Bottom : part.Top;
+                    float edge = dh > 0f ? part.RestBottom : part.RestTop;
                     float tEdge = (edge - hStart) / dh;
                     // Crossing outside this part's chord: the round is never
                     // inside the circle and the band at once.

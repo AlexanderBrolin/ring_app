@@ -346,13 +346,24 @@ namespace Ring.Simulation.Tests
                 // satisfied with the torso exactly at the limit.
                 Parts = new[]
                 {
-                    new HitPart { Radius = 0.7f * 2.6f, Bottom = 0f, Top = 0.60f,
-                        Zone = HitZone.Legs, DamageMult = 1f },
-                    new HitPart { Radius = 2.6f, Bottom = 0.60f, Top = 1.45f,
-                        Zone = HitZone.Body, DamageMult = 1f },
-                    new HitPart { Radius = 0.35f * 2.6f, Bottom = 1.45f, Top = 1.85f,
-                        Zone = HitZone.Head, DamageMult = 0f },
+                    new HitPart { BoneA = 0, BoneB = 1, Radius = 0.7f * 2.6f, RestBottom = 0f, RestTop = 0.60f,
+                        Zone = HitZone.Legs, DamageMult = 1f, PartId = 0 },
+                    new HitPart { BoneA = 1, BoneB = 2, Radius = 2.6f, RestBottom = 0.60f, RestTop = 1.45f,
+                        Zone = HitZone.Body, DamageMult = 1f, PartId = 1 },
+                    new HitPart { BoneA = 2, BoneB = 3, Radius = 0.35f * 2.6f, RestBottom = 1.45f, RestTop = 1.85f,
+                        Zone = HitZone.Head, DamageMult = 0f, PartId = 2 },
                 },
+                // ⛔ app-94sk T2: a hand-built section needs a pose table, or its
+                // body is unhittable in silence — HitVolumes.Resolve refuses an
+                // empty one, which is the very failure validation rule 12 (T4)
+                // exists to turn into a refusal. Its column is this fixture's own
+                // three heights.
+                Poses = TestConfigs.ColumnPose(0.60f, 1.45f, 1.85f),
+                // ⛔ app-94sk T2: the broad phase reads GatherRadius now, and a
+                // hand-built section that leaves it 0 gathers nobody at all —
+                // which is this fixture's own subject inverted. It equals the
+                // widest volume, exactly as validation rule 9 requires.
+                GatherRadius = 2.6f,
             };
             // MaxSpeed/Accel left at 0 (deliberate freeze, same idiom
             // Chaser_Standing_FarPlayer_NoTelegraph in MobAiTests.cs uses):

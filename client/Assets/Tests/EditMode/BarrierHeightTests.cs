@@ -172,7 +172,7 @@ namespace Ring.Simulation.Tests
             // Nothing about the SUBJECT moves: a round whose remaining step
             // stands above Arena.BarrierTop is handed back by the barrier and
             // resolves onto what stands behind it, on the same tick.
-            float flightHeight = 0.5f * (GunnerHead().Bottom + GunnerHead().Top);
+            float flightHeight = 0.5f * (GunnerHead().RestBottom + GunnerHead().RestTop);
 
             SimulationWorld Shoot(float barrierTop, out SimConfig cfg)
             {
@@ -202,9 +202,9 @@ namespace Ring.Simulation.Tests
             // one used to say "inside the mob's own column"; the column is not
             // what resolves a hit any more, so it says "inside the model" and
             // measures it against the crown the silhouette actually presents.
-            Assert.LessOrEqual(flightHeight, c.Gunner.Parts[^1].Top + c.Weapon.ProjectileRadius,
+            Assert.LessOrEqual(flightHeight, c.Gunner.Parts[^1].RestTop + c.Weapon.ProjectileRadius,
                 "fixture premise: and still falls inside the mob's own model");
-            Assert.That(flightHeight, Is.InRange(GunnerHead().Bottom, GunnerHead().Top),
+            Assert.That(flightHeight, Is.InRange(GunnerHead().RestBottom, GunnerHead().RestTop),
                 "fixture premise: the flight must land in the HEAD part, or the kill below is not a headshot");
             Assert.GreaterOrEqual(c.Weapon.Damage * GunnerHead().DamageMult, c.Gunner.MaxHp,
                 "fixture premise: one head hit is lethal, so 'reached the mob' reads as a kill");

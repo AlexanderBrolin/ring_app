@@ -37,7 +37,7 @@ namespace Ring.Simulation.Tests
         static float AimAtTheGunnersHead()
         {
             HitPart head = TestConfigs.Default().Gunner.Parts[^1];
-            return head.Bottom + 0.8f * (head.Top - head.Bottom);
+            return head.RestBottom + 0.8f * (head.RestTop - head.RestBottom);
         }
 
         /// A Chaser screening the line of fire plus the Gunner behind it, both
@@ -89,17 +89,24 @@ namespace Ring.Simulation.Tests
             var w = SpawnPair(6.5f, GunnerX, out SimConfig cfg);
             HitPart gunnerHead = cfg.Gunner.Parts[^1];
             HitPart chaserCrown = cfg.Chaser.Parts[^1];
-            Assert.That(AimH, Is.InRange(gunnerHead.Bottom, gunnerHead.Top),
+            Assert.That(AimH, Is.InRange(gunnerHead.RestBottom, gunnerHead.RestTop),
                 "фикстура: прицел обязан лежать в поясе ГОЛОВЫ ганнера, иначе тест не о хедшоте");
             // THE CLEARANCE, STATED AS GEOMETRY RATHER THAN AS PROSE (the old
             // comment asserted it in words and went stale the moment the bodies
             // grew). The height where the round enters the screening chaser's
             // widest circle must stand above his crown plus the round's own
             // radius — that sum is exactly what HitZones.Resolve forgives.
+            // ⛔⛔ MEASURED OVER THE BODY, NOT AT THE GATHER CIRCLE (app-94sk T2).
+            // The premise used to take the height where the trace ENTERS the
+            // screening chaser's circle, which was the same thing as "over him"
+            // while that circle was his physical radius. GatherRadius is 2.5
+            // times wider now, so the entry sits 0.75 m further back along the
+            // flight, where a climbing trace is still LOW — the premise would
+            // fail on a shot that clears him comfortably. What it has to say is
+            // what it always meant: above his crown WHERE HE STANDS.
             const float screenX = 6.5f;
-            float screenEntryX = screenX - (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius);
-            float screenEntryH = MuzzleH + (AimH - MuzzleH) * screenEntryX / GunnerX;
-            Assert.Greater(screenEntryH, chaserCrown.Top + cfg.Weapon.ProjectileRadius,
+            float screenTraceH = MuzzleH + (AimH - MuzzleH) * screenX / GunnerX;
+            Assert.Greater(screenTraceH, chaserCrown.RestTop + cfg.Weapon.ProjectileRadius,
                 "фикстура: трасса не проходит над экранирующим чейзером — рескан по высоте нечем показать");
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "фикстура: один хедшот обязан быть смертельным, иначе «достал ганнера» не читается смертью");
@@ -140,7 +147,7 @@ namespace Ring.Simulation.Tests
             const float screenX = 2f;
             float screenEntryH = MuzzleH + (AimH - MuzzleH)
                 * (screenX - (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius)) / GunnerX;
-            Assert.That(screenEntryH, Is.InRange(torso.Bottom, torso.Top),
+            Assert.That(screenEntryH, Is.InRange(torso.RestBottom, torso.RestTop),
                 "фикстура: экран ловит раунд не КОРПУСОМ — множитель ниже посчитан не от той части");
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH, new float2(GunnerX, 0f), AimH);
             TestWorlds.RunUntilProjectilesDie(w);
@@ -180,7 +187,17 @@ namespace Ring.Simulation.Tests
             // suite: the edge forgiveness HitZones.Resolve inherited from
             // Classify, which pulls a round grazing the crown back ONTO the
             // crown instead of dropping it off the table.
-            float column = cfg.Chaser.Parts[^1].Top + cfg.Weapon.ProjectileRadius;
+            // ⛔⛔ THE GRAZE IS TAKEN AT THE CAPSULE'S OWN TOP, NOT AT THE EXACT
+            // TANGENT (app-94sk T2). `RestTop + ProjectileRadius` is the tangent
+            // point, and a tangent is what the capsule solver is ALLOWED to miss:
+            // it finds the first entry by scanning 16 probes across the step, and
+            // at the exact tangent the contact window is 0.015 m against a probe
+            // spacing of 0.073 — the cost recorded as deviation 3 of this plan
+            // ("a tangential pass can be missed by the scan — accepted and
+            // written down"). Taken at the crown itself the window is 0.47 m
+            // wide, i.e. six probes, and the fixture measures what it is for:
+            // a round level with the crown reads HEAD, one above it misses.
+            float column = cfg.Chaser.Parts[^1].RestTop;
 
             var grazing = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(grazing, (MobType.Chaser, new float2(5f, 0f)));
@@ -194,8 +211,13 @@ namespace Ring.Simulation.Tests
             // one projectile radius higher and the column is genuinely cleared
             var over = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(over, (MobType.Chaser, new float2(5f, 0f)));
-            TestWorlds.FireAimed3D(over, float2.zero, column + 1e-3f,
-                new float2(5f, 0f), column + 1e-3f);
+            // ⚠ CLEARLY above, not 1e-3 above: the tangent itself is where the
+            // scan's resolution lives (deviation 3), so the negative half asks a
+            // question the solver can answer rather than one it is allowed to
+            // miss in either direction.
+            TestWorlds.FireAimed3D(over, float2.zero,
+                column + cfg.Weapon.ProjectileRadius + 0.05f,
+                new float2(5f, 0f), column + cfg.Weapon.ProjectileRadius + 0.05f);
             TestWorlds.RunUntilProjectilesDie(over);
             Assert.AreEqual(0, TestEvents.CountOf(over, SimEventKind.ProjectileHit));
             Assert.AreEqual(1, over.MobCount);

@@ -1067,7 +1067,7 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.Damage = 1000f;         // lethal beyond doubt
 
             HitPart torso = cfg.Hero.Parts[^2];
-            float band = 0.5f * (torso.Bottom + torso.Top);
+            float band = 0.5f * (torso.RestBottom + torso.RestTop);
             HitPart chaserTrunk = cfg.Chaser.Parts[^2];
 
             Assert.AreEqual(0, cfg.Arena.ZoneRadius.Length,
@@ -1082,9 +1082,9 @@ namespace Ring.Simulation.Tests
             Assert.Less(cfg.Weapon.ProjectileMass / cfg.Hero.Mass, noPierceRatio,
                 "fixture premise: the control's threshold really is out of reach, so the two "
                 + "halves below differ in the pierce and in nothing else");
-            Assert.Greater(band, chaserTrunk.Bottom,
+            Assert.Greater(band, chaserTrunk.RestBottom,
                 "fixture premise: the shot's height falls inside the far body's trunk");
-            Assert.Less(band, chaserTrunk.Top,
+            Assert.Less(band, chaserTrunk.RestTop,
                 "fixture premise: the shot's height falls inside the far body's trunk");
             Assert.Greater(farX - victimX, cfg.Hero.Radius + cfg.Chaser.Radius
                 + 2f * cfg.Weapon.ProjectileRadius,
@@ -1186,7 +1186,7 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.Damage = 1000f;         // lethal beyond doubt
 
             HitPart torso = cfg.Hero.Parts[^2];
-            float band = 0.5f * (torso.Bottom + torso.Top);
+            float band = 0.5f * (torso.RestBottom + torso.RestTop);
 
             Assert.Greater(cfg.Weapon.ProjectileMass / cfg.Hero.Mass, cfg.Weapon.PierceMassRatio,
                 "fixture premise: the MASS half of the rule holds against a collector");
@@ -1259,9 +1259,9 @@ namespace Ring.Simulation.Tests
                 "fixture premise: the band this shot lands in multiplies damage by exactly one, "
                 + "so the damage the rule compares IS the number the fixture states — a boundary "
                 + "test cannot be built on a blow the zone multiplier moves");
-            Assert.Greater(shotHeight, trunk.Bottom,
+            Assert.Greater(shotHeight, trunk.RestBottom,
                 "fixture premise: the shot lands in that band");
-            Assert.Less(shotHeight, trunk.Top,
+            Assert.Less(shotHeight, trunk.RestTop,
                 "fixture premise: the shot lands in that band");
             Assert.Greater(cfg.Weapon.ProjectileMass / cfg.Chaser.Mass, cfg.Weapon.PierceMassRatio,
                 "fixture premise: the MASS half of the rule holds, so what the two halves below "
@@ -1336,9 +1336,9 @@ namespace Ring.Simulation.Tests
 
             float pr = cfg.Weapon.ProjectileRadius;
             float dropOverTheGap = (muzzleH - aimH) * (bodyX / 9f);
-            Assert.Greater(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].Bottom,
+            Assert.Greater(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].RestBottom,
                 "fixture premise: the descending round meets the body in its trunk band");
-            Assert.Less(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].Top,
+            Assert.Less(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].RestTop,
                 "fixture premise: the descending round meets the body in its trunk band");
             Assert.Greater((muzzleH - pr) / ((muzzleH - aimH) / 9f), bodyX,
                 "fixture premise: the ground arrives well AFTER the body, so this measures a "

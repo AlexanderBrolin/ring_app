@@ -96,7 +96,7 @@ namespace Ring.Simulation.Tests
             // was the chaser's zone-column top (1.85) and is now the top of his
             // last part (2.70) — the premise "above the muzzle" only gets stronger, and
             // the number itself is a fixture height, not this test's subject.
-            float aim = HitZones.StackTop(c.Chaser.Parts);
+            float aim = HitParts.RestCrown(c.Chaser.Parts);
             Assert.Greater(aim, h, "fixture premise: the aimed point is ABOVE the muzzle");
 
             Assert.AreEqual(1f, Trajectory.FloorCutFraction(h, aim, c.Weapon.ProjectileRadius), 1e-6f,

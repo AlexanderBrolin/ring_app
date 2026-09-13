@@ -58,8 +58,8 @@
 |---|---|
 | **T0** | **НОЛЬ.** Прибор печатает строку в `LongRunHarness`; поведения мира он не трогает |
 | **T1** | ⭐ **11 собственных фикстур, дописанных в существующий `GeometryTests`** — и только они. ⛔ **Эталоны зелёные**: три новых члена `Geometry` никем из боевого пути ещё не зовутся. Красный эталон здесь — **стоп** |
-| **T2** | ⛔⛔ **САМЫЙ ШИРОКИЙ КРАСНЫЙ ЗАХОДА, И ОН ЖДЁТСЯ.** (1) собственные фикстуры 4, 4а, 11 (половина) и 12 — ⚠ **32а и 32б живут в **плане 2****, потому что до него удар идёт прежним `CircleOverlap` и красной фазы у них нет (находка круга 5 В-I5); (2) **`HitPartsTests` (17)** — дом снимаемых правил 2/3/4; (3) **`HitZoneTests` (16)**; (4) ⛔ **`RewindTests` — три ассерта на `cfg.Chaser.Parts[1].Radius`** (`:2368`, `:2888`, `:3049` — сверено лично: все три читают `Parts[1].Radius + Weapon.ProjectileRadius`); (5) **`TrajectoryTests:99`** — живой вызов `StackTop` (ожидается **ЗЕЛЁНЫМ**: сигнатура сохраняется, §3.4; красный — находка); (6) ⛔ **три эталона `DeterminismTests`** — с этого таска и до **T-W1** они красны **намеренно**; (7) ⛔ **`SimConfigHashTests`** — `AssertHitPartArrayFieldAffectsHash` перечисляет **пять** полей `HitPart` руками (`:581–589`, сверено лично), и новые поля надо дописать туда же; (8) ещё **одиннадцать** файлов по свипу `HitPart` (`AimLineTests`, `BarrierHeightTests`, `ConfigTests`, `EliteAndDirectorTests`, `EventDeliveryTests`, `ImpactConfigTests`, **`ImpactPhysicsTests`**, `ProjectileFlightTests`, `ProjectileHeightTests`, `PvpDamageTests`, `TestWorlds`), **`Editor/StageOneSceneBootstrap.cs`** (девять литералов `new HitPart{Bottom,Top}` — шипованные числа пяти тел) и **`Editor/MobFootprintAudit.cs`** по свипу ПО ЧЛЕНАМ — у них **ошибка компиляции**, а она ≠ RED, поэтому они правятся Step 2 этого же таска; (9) ⛔ **высотные фикстуры, которым капсула меняет вертикальный габарит**: `ProjectileHeightTests`, `PvpDamageTests`, `BarrierHeightTests`, `EventDeliveryTests` и `ImpactPhysicsTests` (`:730-731` целится в долю головной части) — их ожидания пересчитываются **числом фикстуры**, а не подгоняются |
-| **T3** | **НОЛЬ.** `AimLine` переходит на `HitVolumes`; его собственные 24 фикстуры обязаны остаться зелёными, кроме фикстуры 42, которую таск и пишет |
+| **T2** | ⛔⛔ **САМЫЙ ШИРОКИЙ КРАСНЫЙ ЗАХОДА, И ОН ЖДЁТСЯ.** (1) собственные фикстуры 4, 4а, 11 (половина), 12 и 🆕 **12а** (свидетель транспонирования, заведена сессией 105 по `app-coou`) — ⚠ **32а и 32б живут в **плане 2****, потому что до него удар идёт прежним `CircleOverlap` и красной фазы у них нет (находка круга 5 В-I5); (2) **`HitPartsTests` (17)** — дом снимаемых правил 2/3/4; (3) **`HitZoneTests` (16)**; (4) ⛔ **`RewindTests` — три ассерта на `cfg.Chaser.Parts[1].Radius`** (`:2368`, `:2888`, `:3049` — сверено лично: все три читают `Parts[1].Radius + Weapon.ProjectileRadius`); (5) ⛔ **`TrajectoryTests:99`** — живой вызов `StackTop`, **ОШИБКА КОМПИЛЯЦИИ, А НЕ КРАСНЫЙ**: `StackTop` удаляется, и этот вызов переезжает на `HitParts.RestCrown` шагом **2д** (правка сессии 105 по находкам **B-C3/D-C7** — прежняя формулировка «ожидается ЗЕЛЁНЫМ, сигнатура сохраняется» была третьим из трёх несовместимых утверждений); (6) ⛔ **три эталона `DeterminismTests`** — с этого таска и до **T-W1** они красны **намеренно**; (7) ⛔ **`SimConfigHashTests`** — `AssertHitPartArrayFieldAffectsHash` перечисляет **пять** полей `HitPart` руками (`:581–589`, сверено лично), и новые поля надо дописать туда же; (8) ещё **одиннадцать** файлов по свипу `HitPart` (`AimLineTests`, `BarrierHeightTests`, `ConfigTests`, `EliteAndDirectorTests`, `EventDeliveryTests`, `ImpactConfigTests`, **`ImpactPhysicsTests`**, `ProjectileFlightTests`, `ProjectileHeightTests`, `PvpDamageTests`, `TestWorlds`), **`Editor/StageOneSceneBootstrap.cs`** (девять литералов `new HitPart{Bottom,Top}` — шипованные числа пяти тел) и **`Editor/MobFootprintAudit.cs`** по свипу ПО ЧЛЕНАМ — у них **ошибка компиляции**, а она ≠ RED, поэтому они правятся Step 2 этого же таска; (9) ⛔ **высотные фикстуры, которым капсула меняет вертикальный габарит**: `ProjectileHeightTests`, `PvpDamageTests`, `BarrierHeightTests`, `EventDeliveryTests` и `ImpactPhysicsTests` (`:730-731` целится в долю головной части) — их ожидания пересчитываются **числом фикстуры**, а не подгоняются |
+| **T3** | **НОЛЬ** (сверх трёх эталонов). ⛔ **И ДВЕ ИЗ НИХ ПРИХОДЯТ КРАСНЫМИ ИЗ T2** — находка сессии 105: `AMuzzleInsideABodyCircleIsPinnedExplicitly` и `InASlideTheAxisPassesLower` краснеют на T2 потому, что `AimLine` там ещё зовёт **старый** `HitZones.Resolve`, а габариты частей уже капсульные; чинить их числами против резолвера, который этот таск и удаляет, значит делать работу дважды и, вероятно, неверно. ⇒ они **закрываются переводом `AimLine` на `HitVolumes`**, а не подгонкой. `AimLine` переходит на `HitVolumes`; его 24 фикстуры обязаны стать зелёными, плюс фикстура 42, которую таск и пишет |
 | **T4** | Собственные 4б, 27, 28, 28а, 28б, 28в. ⚠ Плюс **`HitZoneTests.GunnerShot_MissesSlidingHero` и `SlidingHero_HitOnlyBelowProfile`** — они краснеют **здесь**, а не в T2: правило 5 (`SlideProfileTop`) снимается **вместе с механикой**, в T4 (находка круга 5 В-I11, принята) |
 | **T4b** | Собственные 44 и 45 (46 — **сторож**, см. §Распределение). ⛔ Плюс **пересчёт высотных фикстур пяти файлов**: `ProjectileHeightTests`, `PvpDamageTests`, `BarrierHeightTests`, `EventDeliveryTests`, `ImpactPhysicsTests` — они целятся в доли головной части, и с одиннадцатью объёмами их числа двигаются |
 | **T5a** | ⛔ **НОЛЬ КРАСНЫХ, НО ОДНА ОШИБКА КОМПИЛЯЦИИ И ОДНО МОЛЧАЛИВОЕ ПРЕОБРАЗОВАНИЕ, КОТОРОЕ КОМПИЛЯТОР НЕ ПОЙМАЕТ.** (1) `DeterminismTests.cs:2091` — `peakTilt = math.max(peakTilt, math.abs(mob.Tilt))`: `math.max(float2, float2)` **применим** через implicit-конверсию, и падает **присваивание** (`CS0266: float2 → float`). (2) ⛔⛔ `HitPartsTests.cs:494` — `m.Tilt = cfg.Chaser.TiltFallAngle * 0.9f` **СОБЕРЁТСЯ МОЛЧА**: в `Unity.Mathematics` есть `implicit operator float2(float)` (`float2.gen.cs:155`, проверено лично), и `0.81f` станет `(0.81, 0.81)` длиной **1.1455 рад** — то есть **выше** `TiltFallAngle 0.9`, и тест «almost flat on the ground» тихо сменит предмет. ⇒ **гейт таска — свип `\.Tilt\s*=` и `\.TiltVel\s*=` по всем 18 файлам**, глазами, а не надежда на компилятор. (3) ⛔ `ImpactPulse.cs` тянет за собой `Networking/Client/ImpactPulseLog.cs:106` (складывает `TiltImpulse`) и `ImpactPulseLogTests.cs` (**6 тестов**, строит `new ImpactPulse(new float2(…), 0.1f)` литералами) — оба в свип `.Tilt|.TiltVel` **не попадают** и правятся этим же шагом (§4.1 строка 17). (4) ⛔ `SimulationWorld.ApplyConfig:815` — `m.Tilt = math.clamp(m.Tilt, -θ, θ)` после векторизации станет **покомпонентным** клампом (длина до `θ√2`), то есть живая правка `TiltFallAngle` смогла бы **уронить стоящее тело**; кламп переписывается по длине, и его свидетель — `ApplyConfig_LoweringTheFallAngle_DoesNotStandTheFallenUp`. (5) ⚠ §4.1 строка 14 (`MobTiltIntegratorTests`, 8 тестов) краснеет **компиляцией** на `float[] _tilt` и правится здесь же. ⚠ **`PredictionParityTests`, `ReconcileCodecTests`, `WorldLifecycleTests` остаются ЗЕЛЁНЫМИ без единой правки** — их компараторы `float2` уже знают (сверено лично: `PredictionParityTests.cs:231/285`, `ReconcileCodecTests.cs:56/109`, `WorldLifecycleTests.cs:413`). ⛔ **И это ровно то место, где сторожа нет:** `WorldLifecycleTests.Bump` двигает у `float2` **только `.x`**, поэтому свёртка, забывшая `.y`, прошла бы молча — таск заводит **свою** фикстуру 23б против этого |
@@ -880,10 +880,12 @@ public static bool PointCapsule(float3 p, float r, float3 a, float3 b, float cap
   и это правка формулировки v1** (сигнатуры несовместимы по построению: у старой нет ни таблицы,
   ни строки позы, ни курса). Он **перестаёт зваться боевым путём вовсе**: сегодня его зовут двое
   (`ProjectileSystem.cs:1405`, `AimLine.cs:356`), и оба переходят на `HitVolumes.Resolve` (T2 и
-  T3). ⇒ `Resolve` **удаляется вместе со своими четырьмя тестовыми вызовами**, которые переезжают
-  на новый разбор; `StackTop` (`:94-95`) **УДАЛЯЕТСЯ** вместе с `Resolve` (Step 2), а шесть его читателей-тестов
-  переезжают на `HitParts.RestCrown`: `TrajectoryTests:99`, `PvpDamageTests:514`,
-  `HitZoneTests:81/145/194/226-232` (см. Step 2);
+   T3). ⇒ `Resolve` **удаляется вместе со своими четырьмя тестовыми вызовами** — но **в Step 7**,
+   а не в Step 2: до Step 6 звать вместо него нечего, а гейт Step 3 требует зелёного прогона.
+   ⚠ `StackTop` (`:94-95`) **УДАЛЯЕТСЯ раньше, в Step 2б** — это чистая смена дома (ответ на
+   отсортированных частях тот же), а шесть его читателей-тестов переезжают на
+   `HitParts.RestCrown` в Step **2д**: `TrajectoryTests:99`, `PvpDamageTests:514`,
+   `HitZoneTests:81/145/194/226-232`;
   `Overlaps` (`:310-315`) **остаётся нетронутым** — он дом высотного гейта, его зовут барьер
   (`ProjectileFlight.cs:476`) и сам `HitVolumes` (Step 6)
 - Modify: `client/Assets/Scripts/Simulation/Combat/ProjectileSystem.cs` (широкая фаза `:282-289`
@@ -1035,22 +1037,32 @@ public int SwingPartId;
 /// владельца, а приоритет — правило.
 internal static class HitVolumes
 {
-    /// `pose` — строка таблицы для ЭТОГО тела на ЭТОМ тике (до T6 фикстуры
+    /// `poseRow` — строка таблицы для ЭТОГО тела на ЭТОМ тике (до T6 фикстуры
     /// передают строку покоя). `t` — доля шага, в той же параметризации
     /// [p0, p1], которой пользуется мин-скан вызывающего.
-    // ⛔ `bodyTilt` ВВОДИТСЯ УЖЕ ЗДЕСЬ и до T6b везде передаётся `float2.zero`:
-// иначе T6b пришлось бы править семь вызовов ВТОРОЙ раз.
-public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt,
+    ///
+    /// ⛔⛔ ДВЕ СИСТЕМЫ КООРДИНАТ, И ГРАНИЦА МЕЖДУ НИМИ — ЗДЕСЬ (app-coou,
+    /// решение сессии 105). Кости таблицы лежат в системе ТЕЛА, как их меряет
+    /// SkeletonAudit: высота в `.y`, план в `.x`/`.z`. Всё остальное — origin,
+    /// p0/p1, hitHeight — в системе МИРА, как её строит вся Ring.Simulation:
+    /// план в `.xy`, высота в `.z` (ShotGeometry, поле VelZ). Транспонирование
+    /// делает ToWorld, и ТОЛЬКО он; вызывающий строит шаг своим обычным
+    /// `new float3(plane, height)` и не плетёт ничего.
+    /// ⚠ Свидетель границы — фикстура 12а (мутант M392).
+    ///
+    /// ⛔ `bodyTilt` ВВОДИТСЯ УЖЕ ЗДЕСЬ и до T6b везде передаётся `float2.zero`:
+    /// иначе T6b пришлось бы править семь вызовов ВТОРОЙ раз.
+    public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt,
         float3 bodyOrigin, float bodyFacingSin, float bodyFacingCos,
         float3 p0, float3 p1, float projRadius,
         out HitZone zone, out float mult, out float hitHeight, out byte partId, out float t);
-
-    /// Габарит ЖИВОЙ позы — крона, которую тело показывает прямо сейчас.
-    /// ⛔ ЭТО НЕ RestTop: тот — высота части в позе ПОКОЯ, посчитанная пекарем
-    /// и лежащая в HitPart (коллизия имён зафиксирована в словаре, §9 A10).
-    public static float PoseTop(HitPart[] parts, in PoseTable table, int poseRow);
 }
 ```
+
+⛔⛔ **`PoseTop` ЖИВЁТ В `HitParts`, А НЕ ЗДЕСЬ** — правка сессии 105 по находке **C-C7**: правило 16
+(T4) зовёт крону живой позы из `SimConfigBuilder`, то есть из `Ring.Data`, а `HitVolumes`
+`internal` и `InternalsVisibleTo` открыт только тестам. Сниппет — в Step 2. ⚠ И его позные
+параметры мигрируют **вместе с `Resolve`** в T6b (находка **A-C11**).
 
 ⭐ **Почему `bodyFacingSin`/`bodyFacingCos`, а не кватернион и не `float2 dir`:** поворот тела
 приходит в T5c, и до него фикстуры передают `(0, 1)` — то есть тождественный поворот. Пара
@@ -1073,40 +1085,37 @@ cd "$WT/client/Assets"
       `Tests/EditMode/RewindTests.cs`, `Tests/EditMode/TrajectoryTests.cs` — ни один из трёх слова
       `HitPart` не содержит; сверено машиной). Расхождение — стоп: значит, инвентарь снялся не тем
       шаблоном (уроки 471 и 750).
-⛔⛔ **STEP 2 РАЗРЕЗАН НА ЧЕТЫРЕ — ПРАВКА КРУГА 3 ПО ГРАНУЛЯРНОСТИ.** «Перевести 28 файлов одним
-шагом» — это часы, а не 2–10 минут, и внутри лежат три РАЗНЫХ решения (`StackTop` меняет тело;
-`PersistentPropsDirector` — три ветки; `MobFootprintAudit` — одну строку). Порядок такой, и между
-каждыми двумя — **R-COMPILE**, иначе ошибка компиляции всплывёт в чужом слое и будет искаться
-вслепую: **2** — структуры и хеш (ниже); **2б** — `Simulation/**`, **пять** файлов;
+⛔⛔ **STEP 2 РАЗРЕЗАН НА ПЯТЬ — ПРАВКА КРУГА 3 ПО ГРАНУЛЯРНОСТИ; ЧЕКБОКСЫ ВНЕСЕНЫ СЕССИЕЙ 105**
+(находка **D-C17**: разрез был обещан прозой, а исполняется шагами, и без чекбоксов исполнитель
+их не видит). «Перевести 28 файлов одним шагом» — это часы, а не 2–10 минут, и внутри лежат три
+РАЗНЫХ решения (крона меняет **дом**; `PersistentPropsDirector` — три ветки; `MobFootprintAudit` —
+одну строку). Порядок такой, и между каждыми двумя — **R-COMPILE**, иначе ошибка компиляции
+всплывёт в чужом слое и будет искаться вслепую: **2** — только структуры и новый дом крон;
+**2а** — хеш и его сторож; **2б** — `Simulation/**`, **пять** файлов;
 **2в** — ⛔ **`Data/**`, три файла** (`HeroConfig.cs`, `MobConfig.cs`, `SimConfigBuilder.cs` — здесь
 живут `ValidateParts` и оба C#-дефолта частей; круг 4 поймал, что этот каталог не был назначен ни
 одному подшагу вовсе); **2г** — `Editor/**` и `Presentation/**`, три файла (⛔ именно здесь три
 ветки `PersistentPropsDirector`); **2д** — `Tests/EditMode/**`, **семнадцать** файлов.
 ⚠ Числа снова сняты машиной: объединение свипов — 28 файлов, раскладка по каталогам
 **5 / 3 / 3 / 17**.
+⛔ **Step 2 сам по себе НИ ОДНОГО читателя не переводит**, иначе разрез не имеет смысла: он
+объявляет новые формы и новый дом, а 2б–2д сажают на них читателей по каталогам.
 
-- [ ] **Step 2 (структуры и хеш — миграция БЕЗ поведения):** переопределить
+- [ ] **Step 2 (только структуры и новый дом крон — ни одного читателя):** переопределить
       `HitPart`, завести `PoseTable`, `GatherRadius`, `SwingPartId` и **поле `Poses` в каждой из
       двух секций-архетипов** (`HeroSimConfig`, `MobSimConfig` — последняя обслуживает все четыре
-      тела мобов); перевести **все 28 файлов объединённого инвентаря** на новые имена полей, **сохранив сегодняшний
-      ответ**: `Bottom`/`Top` читателей заменяются на `RestBottom`/`RestTop`, `HitVolumes` ещё не
-      зовётся, `HitZones.Resolve` работает по-прежнему.
-      ⚠ **`StackTop` СОХРАНЯЕТ СИГНАТУРУ, но тело становится максимумом:**
-
-```csharp
-/// ⛔ БЫЛО «верх ПОСЛЕДНЕЙ части», СТАЛО «максимум по RestTop», и это не
-/// оптимизация, а следствие снятия правила 2: части больше не образуют
-/// отсортированный столб, и раскладка §3.2 ставит голову ТРЕТЬЕЙ, а последней
-/// — голень. «Верх последней» вернул бы крону голени.
-public static float StackTop(HitPart[] parts)
-{
-    if (parts == null || parts.Length == 0) return 0f;
-    float top = parts[0].RestTop;
-    for (int i = 1; i < parts.Length; i++)
-        if (parts[i].RestTop > top) top = parts[i].RestTop;
-    return top;
-}
-```
+      тела мобов); завести `Simulation/Combat/HitParts.cs` (`RestCrown`, `TryFindByZone`, `PoseTop`
+      — сниппет ниже). ⛔ Читатели **не трогаются здесь** — их переводят 2б–2д, и до конца 2д
+      дерево не компилируется; это ожидание, а не поломка (ошибка компиляции ≠ RED).
+      ⚠ **`HitZones.StackTop` УДАЛЯЕТСЯ, А ЕГО ТЕЛО ПЕРЕЕЗЖАЕТ В `HitParts.RestCrown`** — так
+      находка **B-C3/D-C7** решена **в одну сторону** сессией 105 (было три несовместимых
+      утверждения: «сохраняет сигнатуру» в Files, «удаляется» в шаге, «`TrajectoryTests:99`
+      ожидается зелёным» в таблице). ⛔ **Решает правило 2:** оставить `StackTop` в `HitZones`
+      значило бы держать пятую копию «верха столба» рядом с новым единственным домом, а имя
+      «stack» пережило бы отсортированный столб, которого правило 2 валидации больше не требует.
+      ⚠ **Цена записана отклонением 10** — спека §3.4 просит сохранить сигнатуру; шесть её
+      читателей-тестов переезжают на `HitParts.RestCrown` шагом **2д**, и это дешевле, чем
+      четыре дома, которые спека сама же называет дефектом двумя абзацами выше.
 
       ⛔⛔ **И ДОМ КРОНЫ СТАНОВИТСЯ ОДИН — ПРАВКА КРУГА 3 ПРОТИВ ЧЕТЫРЁХ КОПИЙ.** Сегодня «верх
       столба» считают **четверо**: `HitZones.StackTop` (`:94-95`), `SimConfigBuilder.PartsTop`
@@ -1120,17 +1129,49 @@ public static float StackTop(HitPart[] parts)
       `Ring.Presentation`, `Ring.Editor` — на него уже ссылаются):
 
 ```csharp
-// Simulation/Combat/HitParts.cs — НОВЫЙ ФАЙЛ, один дом двух вопросов.
+// Simulation/Combat/HitParts.cs — НОВЫЙ ФАЙЛ, один дом ТРЁХ вопросов о частях.
 /// ⛔ ЗАВЕДЁН ПОТОМУ, ЧТО СНИМАЕТСЯ ПРАВИЛО 2: пока части были отсортированным
 /// столбом, «крона» и «низ головы» читались индексом, и четыре копии индекса
 /// были одинаково правы. Теперь правы ноль из четырёх.
+/// ⛔ ПУБЛИЧНЫЙ, А НЕ internal, и это не стиль: его зовут Ring.Data
+/// (SimConfigBuilder — правила 13 и 16), Ring.Presentation
+/// (PersistentPropsDirector) и Ring.Editor (MobFootprintAudit), а
+/// InternalsVisibleTo у Ring.Simulation открыт ТОЛЬКО тестам.
 public static class HitParts
 {
     /// Верх тела в позе ПОКОЯ — максимум по RestTop. Пустой массив → 0.
-    public static float RestCrown(HitPart[] parts);
+    /// ⛔ БЫЛО «верх ПОСЛЕДНЕЙ части» (HitZones.StackTop, удаляется этим же
+    /// шагом), СТАЛО «максимум по RestTop», и это не оптимизация, а следствие
+    /// снятия правила 2: части больше не образуют отсортированный столб, и
+    /// раскладка §3.2 ставит голову ТРЕТЬЕЙ, а последней — голень. «Верх
+    /// последней» вернул бы крону голени.
+    public static float RestCrown(HitPart[] parts)
+    {
+        if (parts == null || parts.Length == 0) return 0f;
+        float top = parts[0].RestTop;
+        for (int i = 1; i < parts.Length; i++)
+            if (parts[i].RestTop > top) top = parts[i].RestTop;
+        return top;
+    }
+
     /// Первая часть зоны; при равенстве — с МЕНЬШИМ PartId (тот же тай-брейк,
     /// что у HitVolumes.Resolve, и это не совпадение).
     public static bool TryFindByZone(HitPart[] parts, HitZone zone, out HitPart part);
+
+    /// Габарит ЖИВОЙ позы — крона, которую тело показывает прямо сейчас.
+    /// ⛔ ЭТО НЕ RestCrown и НЕ RestTop: те описывают позу ПОКОЯ, посчитанную
+    /// пекарем (коллизия имён фиксируется в словаре, §9 A10, таском T-W2).
+    /// ⛔⛔ ДОМ ЗДЕСЬ, А НЕ В HitVolumes — правка сессии 105 по находке C-C7:
+    /// правило 16 зовёт крону по таблице из SimConfigBuilder, то есть из
+    /// Ring.Data, откуда internal-член HitVolumes не виден вовсе; оставив его
+    /// там, заход получил бы ТРЕТЬЮ копию «кроны по таблице».
+    /// ⛔ ПОЗНЫЕ ПАРАМЕТРЫ У НЕГО ТЕ ЖЕ, ЧТО У HitVolumes.Resolve, И МИГРИРУЮТ
+    /// ОНИ ВМЕСТЕ (находка A-C11): в T6b `int poseRow` обоих становится
+    /// `float3[] pose`, и пересигнатурить надо ОБА — иначе CS0103 в T6b.
+    /// ⚠ Крен держится в подписи по той же причине, по которой он держится в
+    /// Resolve: накренённое тело показывает НЕ ту крону, что стоящее, а
+    /// править семь вызывающих второй раз дороже. До T6b — float2.zero.
+    public static float PoseTop(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt);
 }
 ```
 
@@ -1166,6 +1207,41 @@ public static class HitParts
       `AssertPoseTableAffectsHash` (её код — в Step 10, он не меняется).
       ⚠ Это **не** «поведение раньше времени»: хеш конфигурации — не игровой исход, а её
       идентичность, и миграция полей обязана двигать именно его.
+- [ ] **Step 2б (`Simulation/**` — ПЯТЬ файлов):** `HitZones.cs`, `ProjectileSystem.cs`,
+      `AimLine.cs`, `SimConfigHash.cs`, `SimConfig.cs` — читатели переходят с `Bottom`/`Top` на
+      `RestBottom`/`RestTop` и с «верха последней части» на `HitParts.RestCrown`, **сохраняя
+      сегодняшний ответ**.
+      ⛔⛔ **`HitZones.Resolve` НА ЭТОМ ШАГЕ ОСТАЁТСЯ ЖИВЫМ И РАБОТАЮЩИМ, И ЭТО НЕ ПОБЛАЖКА:**
+      удалить его здесь значит оставить `ProjectileSystem` без разбора вовсе (`HitVolumes`
+      появляется заглушкой лишь в Step 5, телом — в Step 6), а тогда **Step 3 недостижим**: его
+      гейт требует `total` 1960 при нуле красных и зелёных эталонах. ⇒ `Resolve` и `Overlaps`
+      живут до **Step 7**, где вызывающие переходят на `HitVolumes`; удаляется `Resolve` там же.
+      ⚠ **`StackTop` — другое дело, он уходит здесь:** его тело переезжает в
+      `HitParts.RestCrown`, и **ответ при этом не меняется**, потому что правило валидации 2
+      (отсортированный столб) ещё живо — оно снимается только в Step 9, — а на отсортированных
+      частях «верх последней» и «максимум по `RestTop`» совпадают по построению.
+      ⛔ **R-COMPILE после шага.** ⚠ Дерево целиком не соберётся до 2д — гейтом здесь служит
+      **отсутствие `error CS` в файлах этого каталога**, а не `EXIT=0` прогона.
+- [ ] **Step 2в (⛔ `Data/**` — ТРИ файла):** `HeroConfig.cs`, `MobConfig.cs`,
+      `SimConfigBuilder.cs` — оба C#-дефолта массивов частей на новую структуру; `PartsTop`
+      делегирует `HitParts.RestCrown` (свой `NaN` на пустом оставляя себе); `HeadPartBottom`
+      становится `TryFindByZone(parts, HitZone.Head, out var h) ? h.RestBottom : float.NaN` —
+      ⛔ **правка смысла, а не переименования**; `IsPartBoundary` и `PartBoundaryList` — на
+      `RestTop`/`RestBottom`. ⚠ Круг 4 поймал, что этот каталог не был назначен ни одному подшагу
+      вовсе. ⛔ **R-COMPILE после шага.**
+- [ ] **Step 2г (`Editor/**` и `Presentation/**` — ТРИ файла):** `StageOneSceneBootstrap.cs`
+      (девять литералов `new HitPart{…}` плюс `EnsureAimProxyChildren` `:4170-4171`),
+      `MobFootprintAudit.cs` (`:116-117`, садится на `HitParts.RestCrown`),
+      `PersistentPropsDirector.cs` — ⛔ **все три ветки** (`PartHeight` голова `:838-842`,
+      `MidOfZone` `:860`, `LegL`/`LegR` `:843-850`) переходят на `HitParts.TryFindByZone`.
+      ⛔ **Зона коллег — контракт `app-81jx`;** issue закрывается на T5b, не здесь.
+      ⛔ **R-COMPILE после шага.**
+- [ ] **Step 2д (`Tests/EditMode/**` — СЕМНАДЦАТЬ файлов):** включая шесть читателей удалённого
+      `StackTop` (`TrajectoryTests.cs:99`, `PvpDamageTests.cs:514`,
+      `HitZoneTests.cs:81/145/194/226-232`) — на `HitParts.RestCrown`.
+      ⚠ **Четыре тестовых вызова `HitZones.Resolve` здесь НЕ трогаются** — он ещё жив; они
+      переезжают на новый разбор в **Step 7**, вместе с боевыми вызывающими.
+      ⛔ **Только после этого шага дерево компилируется целиком**, и Step 3 становится достижим.
 - [ ] **Step 3 (verify — миграция не изменила ответов):** R-TEST полный →
       `total` = **1960**, красных **ноль**, `EXIT=0`; **три эталона ЗЕЛЁНЫЕ**.
       ⛔⛔ **ЭТО ГЕЙТ, А НЕ ФОРМАЛЬНОСТЬ:** миграция полей не имеет права двигать ни одного
@@ -1183,12 +1259,15 @@ public static class HitParts
 /// ⭐ У ЧЕЙЗЕРА СТОПА ВЫНЕСЕНА ВБОК НА 0.9 м, И ЭТО ПРЕДМЕТ ФИКСТУР 4/4а:
 /// его физический круг 0.5 м, то есть нога торчит за него — ровно тот случай,
 /// ради которого GatherRadius и расщеплён с Radius.
-/// ⛔⛔ ВЫНОС ИДЁТ ПО `z`, А НЕ ПО `x`, И ЭТО НЕ СТИЛЬ: в системе тела `.y` —
+/// ⛔⛔ ВЫНОС ИДЁТ ПО `z`, А НЕ ПО `x`, И ЭТО НЕ СТИЛЬ: в системе ТЕЛА `.y` —
 /// высота, а `.x`/`.z` — план; при тождественном повороте (курса нет до T5c)
 /// `local.x` смотрит НА СТРЕЛКА, стоящего в начале координат, то есть вынос по
 /// `x` лёг бы ВДОЛЬ линии огня и фикстура 4 стала бы красной на верном коде
 /// (пересчитано: боковой зазор 0.52 м против радиуса ноги 0.35). Вынос по `z`
 /// кладёт стопу поперёк — ровно туда, куда фикстура и стреляет.
+/// ⚠ И В МИРЕ ЭТО `+y`: ToWorld кладёт план тела `(x, z)` в план мира `(x, y)`,
+/// а высоту тела `.y` — в мировую `.z`. Поэтому фикстура 4 целится в
+/// `targetXY (6, 0.9)`: шесть — это место тела, ноль девять — вынос стопы.
 public static PoseTable ChaserRestPose() => new PoseTable
 {
     BoneCount = 5,
@@ -1202,34 +1281,72 @@ public static PoseTable ChaserRestPose() => new PoseTable
         new float3(0f, 2.70f, 0f),          // 4: макушка
     },
     BlendThresholds = new[] { 0f, 0.33f, 0.66f, 1f },
-    Checksum = 0UL,                          // считает сборка конфигурации (T4)
+    // ⛔⛔ CHECKSUM НЕ ПИШЕТСЯ ЛИТЕРАЛОМ ВООБЩЕ — правка сессии 105 по находке
+    // A-C15. `Checksum = 0UL` у фикстурных таблиц валит правило 27 (T4: «сумма
+    // загруженных байтов сходится с полем»), и валит его у КАЖДОГО BuildShipped,
+    // то есть у всех пяти секций сразу. Поле оставляется НЕЗАПОЛНЕННЫМ здесь и
+    // проставляется фабрикой — одной строкой на все три таблицы:
+    //     static PoseTable Sealed(PoseTable t) { t.Checksum = PoseTableChecksum(t); return t; }
+    // ⛔ И `PoseTableChecksum` — НЕ новый дом: это тот же StateHash64-фолд, что
+    // считает сборка конфигурации; до T4 у него нет вызывающего в бою, поэтому
+    // фабрика фикстур зовёт его же, а не свою копию (правило 2).
+    // ⚠ ОБЯЗАТЕЛЬСТВО T4, НАЗВАННОЕ ЗДЕСЬ: таском, который вводит правило 27,
+    // все три фабрики обязаны уйти под `Sealed(...)`; до него сумма фикстурных
+    // таблиц ни на что не влияет и остаётся нулём легально.
 };
 ```
 
       и части чейзера переезжают на кости:
 
 ```csharp
+// ⛔⛔ RestBottom/RestTop — ЭТО ГАБАРИТ КАПСУЛЫ, ТО ЕСТЬ КОСТЬ ± РАДИУС, А НЕ
+// КОНЦЫ КОСТЕЙ (находка A-C14, внесена сессией 105: v4 писал здесь концы, а
+// канон в доке HitPart — кость ± радиус, и правило 13 «RestTop сходится с
+// таблицей» отвергло бы эту самую фикстуру). Числа пересчитаны и совпали с
+// замером, который план приводит в Step 13: нога [-0.30, 1.23], голова
+// [1.95, 2.87].
 Parts = new[]
 {
-    // Нога: таз -> вынесенная стопа. Радиус 0.35 — как был.
+    // Нога: таз (0.88) -> вынесенная стопа (0.05). Радиус 0.35 — как был.
     new HitPart { BoneA = 2, BoneB = 1, Radius = 0.35f, Zone = HitZone.Legs,
-        DamageMult = 0.75f, PartId = 0, RestBottom = 0.05f, RestTop = 0.88f },
-    // Корпус: таз -> грудь.
+        DamageMult = 0.75f, PartId = 0, RestBottom = -0.30f, RestTop = 1.23f },
+    // Корпус: таз (0.88) -> грудь (2.12).
     new HitPart { BoneA = 2, BoneB = 3, Radius = 0.50f, Zone = HitZone.Body,
-        DamageMult = 1.0f, PartId = 1, RestBottom = 0.88f, RestTop = 2.12f },
-    // Голова: грудь -> макушка.
+        DamageMult = 1.0f, PartId = 1, RestBottom = 0.38f, RestTop = 2.62f },
+    // Голова: грудь (2.12) -> макушка (2.70).
     new HitPart { BoneA = 3, BoneB = 4, Radius = 0.17f, Zone = HitZone.Head,
-        DamageMult = 1.7f, PartId = 2, RestBottom = 2.12f, RestTop = 2.70f },
+        DamageMult = 1.7f, PartId = 2, RestBottom = 1.95f, RestTop = 2.87f },
 },
 GatherRadius = 1.25f,   // 0.9 (стопа) + 0.35 (радиус ноги) = 1.25 — правило 9 в T4
-// ⛔⛔ И ОСТАЛЬНЫМ ЧЕТЫРЁМ СЕКЦИЯМ ТОЖЕ — ИНАЧЕ ПРАВИЛО 9 (T4) ОТВЕРГНЕТ ЧЕТЫРЕ
-// КОНФИГУРАЦИИ ИЗ ПЯТИ, и покраснеют те же ~45 чужих тестов, ради которых
-// писался T4 Step 7б. Значение — ФИКСТУРНЫМ ВЫРАЖЕНИЕМ, не литералом:
-//   hero.GatherRadius    = MaxBoneReach(HeroRestAndSlidePose()) + MaxPartRadius(hero.Parts);
-//   gunner/elite/director — то же по своей таблице.
-// ⚠ До пекаря (T4) это фикстурные числа, ровно как ProjectileSpeed 35 против
-// игровых 52.5 — и это записано, чтобы их не приняли за игровые.
 ```
+
+      ⛔⛔ **И `GatherRadius` СТАВИТСЯ ВСЕМ ПЯТИ СЕКЦИЯМ, А НЕ ОДНОМУ ЧЕЙЗЕРУ** — находка
+      **A-C16**, внесена сессией 105 отдельным требованием шага, а не примечанием внутри чужого
+      блока (иначе правило 9 в T4 отвергнет **четыре конфигурации из пяти**, и покраснеют те же
+      ~45 чужих тестов, ради которых писался T4 Step 7б). ⛔ **Значение — фикстурным выражением,
+      не литералом**, по одному на каждую секцию `TestConfigs`:
+
+```csharp
+// Tests/EditMode/TestConfigs.cs — пять строк, по одной на секцию.
+// Оба помощника — свои, фикстурные, и живут рядом с таблицами (их же зовёт
+// фикстура 4б в T4, которая правило 9 и проверяет).
+hero.GatherRadius     = MaxBoneReach(HeroRestAndSlidePose()) + MaxPartRadius(hero.Parts);
+chaser.GatherRadius   = MaxBoneReach(ChaserRestPose())       + MaxPartRadius(chaser.Parts);
+gunner.GatherRadius   = MaxBoneReach(ChaserRestPose())       + MaxPartRadius(gunner.Parts);
+elite.GatherRadius    = MaxBoneReach(ChaserRestPose())       + MaxPartRadius(elite.Parts);
+director.GatherRadius = MaxBoneReach(ChaserRestPose())       + MaxPartRadius(director.Parts);
+
+/// Максимум ПЛАНОВОГО выноса кости от оси тела. ⛔ Плоскость тела — (x, z):
+/// кости лежат в системе ТЕЛА, где высота в .y (см. ToWorld).
+static float MaxBoneReach(in PoseTable t);
+/// Максимум Radius по частям.
+static float MaxPartRadius(HitPart[] parts);
+```
+
+      ⚠ До пекаря (T4) это фикстурные числа, ровно как `ProjectileSpeed` 35 против игровых 52.5 —
+      и это записано, чтобы их не приняли за игровые. ⚠ У ганнера, элиты и Директора до T4 стоит
+      **та же** таблица чейзера, поэтому и `MaxBoneReach` у них общий; расходятся они только
+      радиусами своих частей.
 
       И **вторая фикстурная таблица — для тай-брейка**, потому что на теле с разными зонами
       ничью не построить:
@@ -1248,7 +1365,7 @@ public static PoseTable TwinLegPose() => new PoseTable
         new float3(0f, 0f, -0.3f), new float3(0f, 0.9f, -0.3f),   // 2-3: левая
     },
     BlendThresholds = new[] { 0f },
-    Checksum = 0UL,
+    // ⛔ Checksum — через Sealed(...), не литералом (находка A-C15, см. выше).
 };
 ```
 
@@ -1271,7 +1388,7 @@ public static PoseTable HeroRestAndSlidePose() => new PoseTable
         new float3(0f, 0.34f, 0f), new float3(0f, 0.42f, 0f),   // слайд, крона 0.42
     },
     BlendThresholds = new[] { 0f, 1f },
-    Checksum = 0UL,
+    // ⛔ Checksum — через Sealed(...), не литералом (находка A-C15, см. выше).
 };
 ```
 
@@ -1352,8 +1469,11 @@ public void TheHeadBeatsTheTorsoOnThePriorityLadder()   // тест 11 (поло
     // Луч идёт снизу вверх сквозь грудь В ГОЛОВУ: корпус (широкий, R 0.50)
     // встречается РАНЬШЕ по t, голова (R 0.17) — позже. По одному t победил бы
     // корпус; по приоритету зоны обязана победить голова.
-    float3 p0 = new float3(6f, 1.6f, -1.2f), p1 = new float3(6f, 2.4f, 1.2f);
-    bool hit = HitVolumes.Resolve(parts, in table, poseRow: 0,
+    // ⛔ ШАГ — В СИСТЕМЕ МИРА: план в .xy, высота в .z. Тело стоит в плане
+    // (6, 0), луч идёт поперёк него по y от −1.2 к +1.2 и поднимается по
+    // высоте с 1.6 до 2.4.
+    float3 p0 = new float3(6f, -1.2f, 1.6f), p1 = new float3(6f, 1.2f, 2.4f);
+    bool hit = HitVolumes.Resolve(parts, in table, poseRow: 0, bodyTilt: float2.zero,
         bodyOrigin: new float3(6f, 0f, 0f), bodyFacingSin: 0f, bodyFacingCos: 1f,
         p0, p1, projRadius: cfg.Weapon.ProjectileRadius,
         out HitZone zone, out _, out _, out _, out float t);
@@ -1361,7 +1481,7 @@ public void TheHeadBeatsTheTorsoOnThePriorityLadder()   // тест 11 (поло
     Assert.AreEqual(HitZone.Head, zone, "корпус отобрал попадание у головы — приоритета зоны нет");
     // Премисса СВОЙСТВОМ: корпус обязан быть задет РАНЬШЕ, иначе тест зелен
     // и без приоритета.
-    bool torsoFirst = HitVolumes.Resolve(new[] { parts[1] }, in table, 0,
+    bool torsoFirst = HitVolumes.Resolve(new[] { parts[1] }, in table, 0, float2.zero,
         new float3(6f, 0f, 0f), 0f, 1f, p0, p1, cfg.Weapon.ProjectileRadius,
         out _, out _, out _, out _, out float tTorso);
     Assert.IsTrue(torsoFirst && tTorso < t,
@@ -1380,39 +1500,96 @@ public void AnExactTieGoesToTheSmallerPartId()   // тест 12, M334
     PoseTable table = TestConfigs.TwinLegPose();     // две ноги зеркально, ±0.3 по z
     HitPart[] parts =
     {
+        // ⛔ RestBottom/RestTop — кость ± радиус (канон HitPart, находка A-C14):
+        // кости стоят на 0 и 0.9, радиус 0.35 ⇒ габарит [-0.35, 1.25].
         new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, Zone = HitZone.Legs,
-            DamageMult = 0.75f, PartId = 7, RestBottom = 0f, RestTop = 0.9f },
+            DamageMult = 0.75f, PartId = 7, RestBottom = -0.35f, RestTop = 1.25f },
         new HitPart { BoneA = 2, BoneB = 3, Radius = 0.35f, Zone = HitZone.Legs,
-            DamageMult = 0.75f, PartId = 3, RestBottom = 0f, RestTop = 0.9f },
+            DamageMult = 0.75f, PartId = 3, RestBottom = -0.35f, RestTop = 1.25f },
     };
-    float3 p0 = new float3(0f, 0.45f, 0f), p1 = new float3(0f, 0.45f, 0.1f);
+    // ⛔ ШАГ В СИСТЕМЕ МИРА: обе ноги уезжают в план по y (±0.3), шаг стоит
+    // между ними на высоте 0.45 и ползёт на 0.1 вдоль y.
+    float3 p0 = new float3(0f, 0f, 0.45f), p1 = new float3(0f, 0.1f, 0.45f);
     // ⛔⛔ ПРЕМИССА — «ЗАДЕТЫ ОБЕ, И ОБЕ С t == 0», И БЕЗ НЕЁ МУТАНТ M334 ВЫЖИВАЕТ
     // (находка круга 2): если задета только одна капсула, ответ «3» верен и на
     // перевёрнутом сравнении. Спрашиваем каждую поодиночке.
-    bool hitFirst = HitVolumes.Resolve(new[] { parts[0] }, in table, 0, float3.zero, 0f, 1f,
-        p0, p1, 0f, out _, out _, out _, out _, out float tFirst);
-    bool hitSecond = HitVolumes.Resolve(new[] { parts[1] }, in table, 0, float3.zero, 0f, 1f,
-        p0, p1, 0f, out _, out _, out _, out _, out float tSecond);
+    bool hitFirst = HitVolumes.Resolve(new[] { parts[0] }, in table, 0, float2.zero,
+        float3.zero, 0f, 1f, p0, p1, 0f, out _, out _, out _, out _, out float tFirst);
+    bool hitSecond = HitVolumes.Resolve(new[] { parts[1] }, in table, 0, float2.zero,
+        float3.zero, 0f, 1f, p0, p1, 0f, out _, out _, out _, out _, out float tSecond);
     Assert.IsTrue(hitFirst && hitSecond, "премисса: обе капсулы обязаны быть задеты");
     Assert.AreEqual(tFirst, tSecond, 1e-6f, "премисса: t обеих совпадают — иначе решает не PartId");
 
-    bool hit = HitVolumes.Resolve(parts, in table, 0, float3.zero, 0f, 1f, p0, p1, 0f,
-        out _, out _, out _, out byte partId, out float t);
+    bool hit = HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+        p0, p1, 0f, out _, out _, out _, out byte partId, out float t);
     Assert.IsTrue(hit, "ни одна из двух капсул не задета — фикстура мерит не свой предмет");
     Assert.AreEqual(0f, t, 1e-6f, "шаг начинается внутри обеих: солвер обязан отдать t = 0");
     Assert.AreEqual((byte)3, partId, "тай-брейк недетерминирован — победил больший PartId");
 }
+
+[Test]
+public void ATallBoneIsNotReadAsAWideOne()   // тест 12а, M392
+{
+    // ⛔⛔ СВИДЕТЕЛЬ ГРАНИЦЫ ДВУХ СИСТЕМ КООРДИНАТ — фикстура заведена сессией
+    // 105 по side-quest'у app-coou, в плане и в §4.4 спеки её не было.
+    // Предмет: кость приходит в системе ТЕЛА (высота .y), шаг — в системе МИРА
+    // (высота .z), и обмен двух компонент в ToWorld не виден НИЧЕМУ: солвер
+    // меряет только расстояния, компилятор типов не различает, эталоны
+    // детерминизма молчат. Тело, положенное набок, отвечает так же уверенно.
+    const float boneHeight = 1.75f;   // середина капсулы ПО ВЫСОТЕ
+    const float lateral = 0.25f;      // её вынос В ПЛАНЕ
+    const float capsuleR = 0.20f, projR = 0.05f;
+    // Премисса СВОЙСТВОМ: высота и вынос обязаны разойтись больше, чем на
+    // сумму радиусов, иначе обмен компонент ненаблюдаем и тест зелен всегда.
+    Assert.Greater(math.abs(boneHeight - lateral), capsuleR + projR,
+        "премисса фикстуры: высота и боковой вынос кости обязаны различаться");
+
+    PoseTable table = new PoseTable
+    {
+        BoneCount = 2,
+        ClipFirstRow = new[] { 0, 1 },
+        Bones = new[]
+        {
+            new float3(0f, boneHeight - 0.15f, lateral),   // система ТЕЛА: высота в .y
+            new float3(0f, boneHeight + 0.15f, lateral),
+        },
+        BlendThresholds = new[] { 0f },
+    };
+    HitPart[] parts =
+    {
+        new HitPart { BoneA = 0, BoneB = 1, Radius = capsuleR, Zone = HitZone.Body,
+            DamageMult = 1f, PartId = 0,
+            RestBottom = boneHeight - 0.15f - capsuleR, RestTop = boneHeight + 0.15f + capsuleR },
+    };
+
+    // ВЫСОКО и НЕМНОГО ВБОК — там, где кость стоит на самом деле.
+    Assert.IsTrue(HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+            new float3(-2f, lateral, boneHeight), new float3(2f, lateral, boneHeight), projR,
+            out _, out _, out float hitHeight, out _, out _),
+        "кость не найдена там, где она стоит: высота тела не доехала до высоты мира");
+    Assert.AreEqual(boneHeight, hitHeight, 1e-4f,
+        "высота контакта пришла не из шага — её берут из .z, как и весь мир");
+
+    // ...и НИЗКО, ДАЛЕКО ВБОК — там, куда кость уехала бы при обмене компонент.
+    Assert.IsFalse(HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+            new float3(-2f, boneHeight, lateral), new float3(2f, boneHeight, lateral), projR,
+            out _, out _, out _, out _, out _),
+        "попадание засчитано по ЛЕЖАЩЕЙ кости — .y и .z обменялись местами в ToWorld");
+}
 ```
 
 - [ ] **Step 5 (заглушка `HitVolumes` — КОНСТАНТА):** `Resolve` → `zone = HitZone.None; mult = 1f;
-      hitHeight = 0f; partId = 0; t = 0f; return false;`, `PoseTop` → `0f`.
-      R-FILTER `HitVolumeTests` → `EXIT=2`, `testcasecount` = **4**, красных — **по собственному
-      пересчёту** (ориентир: **три**; `InsideTheGatherRadiusButPastEveryVolumeIsAMiss` на
+      hitHeight = 0f; partId = 0; t = 0f; return false;`, `HitParts.PoseTop` → `0f`,
+      `HitParts.TryFindByZone` → `part = default; return false;`.
+      R-FILTER `HitVolumeTests` → `EXIT=2`, `testcasecount` = **5**, красных — **по собственному
+      пересчёту** (ориентир: **четыре**; `InsideTheGatherRadiusButPastEveryVolumeIsAMiss` на
       заглушке зелен «по совпадению», и это записано **до** прогона, а не обнаружено после).
+      ⚠ **У фикстуры 12а красна ПОЛОЖИТЕЛЬНАЯ половина** (заглушка отвечает `false` на всё),
+      негативная проходит «по совпадению» — ровно поэтому обе половины стоят в одном тесте.
 - [ ] **Step 6 (GREEN, `HitVolumes.Resolve`):**
 
 ```csharp
-public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
+public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt,
     float3 bodyOrigin, float bodyFacingSin, float bodyFacingCos,
     float3 p0, float3 p1, float projRadius,
     out HitZone zone, out float mult, out float hitHeight, out byte partId, out float t)
@@ -1425,10 +1602,12 @@ public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
     // (находка круга ревью): высотный гейт живёт в HitZones.Overlaps, его зовёт
     // барьер, и второй такой же здесь был бы ровно тем задвоением, ради
     // предотвращения которого дома и разведены. Потолок — габарит ЖИВОЙ позы
-    // (PoseTop), а не RestTop: последний описывает позу ПОКОЯ и в движении
-    // неверен. Свидетель — приборная фикстура 8 (T6c): гейт обязан СОКРАЩАТЬ
-    // число разборов, не меняя ни одного исхода.
-    if (!HitZones.Overlaps(p0.y, p1.y, projRadius, PoseTop(parts, in table, poseRow)))
+    // (HitParts.PoseTop), а не RestTop: последний описывает позу ПОКОЯ и в
+    // движении неверен. Свидетель — приборная фикстура 8 (T6c): гейт обязан
+    // СОКРАЩАТЬ число разборов, не меняя ни одного исхода.
+    // ⛔ ВЫСОТА ШАГА — `.z`: p0/p1 приходят в системе МИРА (план .xy, высота .z).
+    if (!HitZones.Overlaps(p0.z, p1.z, projRadius,
+            HitParts.PoseTop(parts, in table, poseRow, bodyTilt)))
         return false;
 
     int winner = -1;
@@ -1442,6 +1621,9 @@ public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
         // Кости этой части, повёрнутые вместе с телом и сдвинутые в его место.
         float3 a = ToWorld(table.Bones[rowBase + part.BoneA], bodyOrigin, bodyFacingSin, bodyFacingCos);
         float3 b = ToWorld(table.Bones[rowBase + part.BoneB], bodyOrigin, bodyFacingSin, bodyFacingCos);
+        // ⛔ ПОСЛЕ ToWorld ОБЕ СТОРОНЫ СОЛВЕРА — В ОДНОЙ СИСТЕМЕ, и это ровно то
+        // обязательство, которое дока Geometry.SegmentCapsule возлагает на
+        // вызывающего: он меряет только расстояния и рассогласования не видит.
         if (!Geometry.SegmentCapsule(p0, p1, projRadius, a, b, part.Radius, out float ti)) continue;
 
         // ⛔ ПРИОРИТЕТ ЗОНЫ ПЕРВЫМ, t ВТОРЫМ, PartId ТРЕТЬИМ. Порядок
@@ -1457,7 +1639,8 @@ public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow,
         winner = i; bestRank = rank; bestT = ti;
         // Высота контакта — точка на шаге, а не середина части: плечо момента
         // считается от РЕАЛЬНОЙ точки касания (Н61, §3.20).
-        bestHeight = math.lerp(p0.y, p1.y, ti);
+        // ⛔ `.z`, потому что шаг — в системе мира: высота там третья.
+        bestHeight = math.lerp(p0.z, p1.z, ti);
     }
     if (winner < 0) return false;
 
@@ -1475,20 +1658,39 @@ static int ZoneRank(HitZone z) => z == HitZone.Head ? 0 : z == HitZone.Body ? 1 
 /// тот дефект, который круг 1 объявил исправленным, заведя перегрузку
 /// Rotate(float2, sin, cos), после чего её никто не позвал. Дом арифметики
 /// поворота один (правило 2).
+///
+/// ⛔⛔ И ЭТА ФУНКЦИЯ — ЕДИНСТВЕННАЯ ГРАНИЦА ДВУХ СИСТЕМ КООРДИНАТ (app-coou,
+/// решение сессии 105). СЛЕВА система ТЕЛА, как её меряет SkeletonAudit и как
+/// её запекает пекарь (Р527: пекарь — выделение из аудитора): высота в `.y`,
+/// план в `.x`/`.z`, потому что кости приходят из Unity. СПРАВА система МИРА,
+/// как её строит вся Ring.Simulation: план в `.xy`, высота в `.z` (ShotGeometry
+/// кладёт `new float3(AimPoint, AimHeight)`, вертикальная скорость названа
+/// VelZ). Обмен двух компонент здесь — это тело, положенное набок, и ни
+/// компилятор, ни эталоны детерминизма этого не увидят: солвер меряет только
+/// расстояния. ⇒ свидетель обязателен и назван — фикстура 12а, мутант M392.
 static float3 ToWorld(float3 local, float3 origin, float s, float c)
 {
-    float2 xz = Geometry.Rotate(new float2(local.x, local.z), s, c);
-    return origin + new float3(xz.x, local.y, xz.y);
+    // Рыскание — в плане ТЕЛА, то есть по паре (x, z).
+    float2 plane = Geometry.Rotate(new float2(local.x, local.z), s, c);
+    // ...а в мир она уезжает как план, и высота тела становится третьей.
+    return origin + new float3(plane, local.y);
 }
 ```
 
 - [ ] **Step 7 (GREEN, широкая фаза и вызывающие):** в `ProjectileSystem` обе ветки сбора
       кандидатов (`:282-289` для мобов и `:363-369` для сборщиков) читают `GatherRadius` вместо
       физического радиуса; `AcceptCandidate` зовёт `HitVolumes.Resolve` вместо
-      `HitZones.Resolve` для двух поражаемых видов; `overlapTop` берётся у `HitVolumes.PoseTop`.
-      ⚠ **`MobRadiusFor` (`ProjectileSystem.cs:1030`) НЕ ТРОГАЕТСЯ** — он отвечает на вопрос о
-      **физическом** радиусе, и его тест-близнец `MobRadiusFor_AgreesWith_MobConfigFor_ForEvery
-      Archetype` держит два дома в синхроне.
+      `HitZones.Resolve` для двух поражаемых видов; `overlapTop` берётся у `HitParts.PoseTop`.
+      ⚠ **`MobRadiusFor` (`ProjectileSystem.cs:1030`) НА ЭТОМ ТАСКЕ НЕ ТРОГАЕТСЯ** — здесь у него
+      уходит только **первый** из двух боевых вызывающих, второй живёт в `AimLine.cs:231` до T3.
+      ⛔⛔ **НО ПОСЛЕ T3 ОН СТАНОВИТСЯ МЁРТВЫМ SWITCH, И ТОГДА ОН УДАЛЯЕТСЯ — находка C-C1,
+      решение сессии 105 (правило 2).** Свип по всему `client/Assets` даёт ровно двух боевых
+      вызывающих (`ProjectileSystem.cs:282` — уходит здесь, `AimLine.cs:231` — уходит в T3) и один
+      тест `MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype` (`EliteAndDirectorTests.cs:388`).
+      Договорный тест держал в синхроне **два** дома физического радиуса; после T3 дом остаётся
+      один — `SimConfig.MobConfigFor`, — и тест перестаёт быть свидетелем чего бы то ни было
+      (правило 427: зелёный на сегодняшнем коде и ни от чего не охраняющий). ⇒ **удаляются оба,
+      шагом T3**, и `total` T3 записан с учётом снятой фикстуры.
       ⛔⛔ **НО ВТОРОГО ТАКОГО ХЕЛПЕРА НЕ ЗАВОДИТСЯ, И ЭТО ПРАВКА КРУГА 3.** v1–v3 объявляли рядом
       `MobGatherRadiusFor` «с докой, объясняющей, почему их два». Он стал бы **пятым** switch по
       архетипу, а `SimConfig.cs:970-984` запрещает это поимённо: «Before Т31 the same four-way
@@ -1584,10 +1786,10 @@ static void AssertPoseTableAffectsHash(string sectionName)
       ⚠ **И `Checksum` в хеш НЕ входит** — это кеш загруженных байтов (Р514), а не игровое число;
       его расхождение ловит сборка конфигурации (правило 27 в T4), и свидетель этому — фикстура 27,
       а не хеш.
-- [ ] **Step 11 (verify GREEN):** R-FILTER `HitVolumeTests` → PASS 4/4; R-FILTER `HitPartsTests`
+- [ ] **Step 11 (verify GREEN):** R-FILTER `HitVolumeTests` → PASS **5/5**; R-FILTER `HitPartsTests`
       → PASS; R-FILTER `HitZoneTests` → PASS; R-FILTER `SimConfigHashTests` → PASS;
       R-FILTER `RewindTests` → PASS; R-FILTER `ConfigTests` → PASS.
-- [ ] **Step 12 (гоняются ЧЕТЫРЕ — M327, M328, M333-половина, M334; M331 и M363-половина
+- [ ] **Step 12 (гоняются ПЯТЬ — M327, M328, M333-половина, M334, M392; M331 и M363-половина
       **названа и гоняется в T6b** по правилу 696 (M363 уехала в план 2 вместе с фикстурами 32а/32б), это приведено в согласие с таблицей
       распределения кругом 3;
       предсказания ДО прогона):**
@@ -1599,9 +1801,11 @@ static void AssertPoseTableAffectsHash(string sectionName)
   | **M331** | объём не поворачивается вместе с телом (`ToWorld` игнорирует `sin`/`cos`) | ⚠ **ЖЕРТВА ПРИХОДИТ В T6b** (тест 6): до T5c курса нет вовсе, и на фикстуре с тождественным поворотом мутант **неотличим**. ⛔ Мутация **гоняется в T6b**, а не здесь, и это сказано, чтобы её не объявили выжившей |
   | **M333** | приоритет зоны снят (`ZoneRank` возвращает константу) | тест 11-половина `TheHeadBeatsTheTorsoOnThePriorityLadder` |
   | **M334** | тай-брейк не детерминирован (`part.PartId < …` заменено на `>`) | тест 12 `AnExactTieGoesToTheSmallerPartId` |
+  | 🆕 **M392** | ⛔⛔ `ToWorld` НЕ ТРАНСПОНИРУЕТ: `return origin + new float3(plane.x, local.y, plane.y)` — раскладка тела уезжает в мир как есть, и тело ложится набок | тест **12а** `ATallBoneIsNotReadAsAWideOne` — ⚠ **и не он один:** предсказание жертв пишется ДО прогона по всем пяти фикстурам (заведена сессией 105 вместе с фикстурой; номер свободен — §4.3 кончается на M390, план 1 занял M391, план T4b — M393–M395) |
   | **M363** ⚠ **уехала в план 2** вместе с фикстурами 32а и 32б | сентинел `-1` игнорируется (правило 10 не проверяет архетип с `AttackRange == 0`) | ⚠ **ЖЕРТВА В T8** (фикстура 32б): в T2 удар ещё идёт прежним `CircleOverlap` (`MobAiSystem.cs:250`, проверено лично), и «ганнер не бьёт» истинно уже сегодня ⇒ RED-шага нет (находка круга 5 В-I5, принята) |
 
-- [ ] **Step 13:** R-TEST полный → `total` = **1960 + 4 = 1964** (ориентир), красных — ⛔ **ТРИ
+- [ ] **Step 13:** R-TEST полный → `total` = **1960 + 5 = 1965** (ориентир; ⚠ пятая — фикстура
+      12а, заведённая сессией 105 по `app-coou`), красных — ⛔ **ТРИ
       ЭТАЛОНА** (сверять **именами**: `ExtractionGoldenHash_ScriptedScenario`,
       `GoldenHash_ScriptedScenario`, `MultiPlayerGoldenHash_ScriptedScenario`) **ПЛЮС ВЫСОТНЫЕ
       ФИКСТУРЫ, ПЕРЕЧИСЛЕННЫЕ В СТРОКЕ T2 ТАБЛИЦЫ «ЧТО КРАСНОЕ»** — и это не поблажка, а замер:
@@ -1622,8 +1826,14 @@ static void AssertPoseTableAffectsHash(string sectionName)
 - Modify: `client/Assets/Tests/EditMode/AimLineTests.cs` (24 фикстуры — ожидания по геометрии)
 
 **Interfaces:**
-- Consumes: `HitVolumes.Resolve`, `HitVolumes.PoseTop`, `GatherRadius` (T2).
+- Consumes: `HitVolumes.Resolve`, `HitParts.PoseTop`, `GatherRadius` (T2).
 - Produces: ничего нового — контракт `AimLineSolution` не меняется.
+- ⛔ **Удаляет:** `ProjectileSystem.MobRadiusFor` и его договорный тест
+  `MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype` (`EliteAndDirectorTests.cs:388`) —
+  находка **C-C1**, решение сессии 105: `AimLine.cs:231` был его **последним** боевым
+  вызывающим, и после перевода на `GatherRadius` остаётся мёртвый четырёхветочный switch
+  с тестом, который больше ни от чего не охраняет (правила 2 и 3).
+  ⚠ **Files растёт на `EliteAndDirectorTests.cs`.**
 
 - [ ] **Step 1 (RED, фикстура 42):**
 
@@ -1680,7 +1890,16 @@ public void TheAimLineAndTheRoundChooseTheSamePart()   // тест 42
       ⚠ Часть из 24 обязана **сменить ожидаемые числа**: упор в тело теперь считается по капсуле,
       и дистанции сдвигаются. **Каждое изменённое число пересчитывается питоном и пишется в отчёт
       таска ДО прогона** (правило 179/394).
-- [ ] **Step 4:** R-TEST полный → красных ровно три эталона; свипы → R-COMMIT
+- [ ] **Step 3а (⛔ УДАЛЕНИЕ МЁРТВОГО SWITCH — находка C-C1):** после Step 2 у
+      `ProjectileSystem.MobRadiusFor` не остаётся ни одного боевого вызывающего ⇒ удаляются **и
+      он, и** `EliteAndDirectorTests.MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype`.
+      ⚠ **Свип обязателен:** имя поминается ещё в **четырёх** доках (`ProjectileSystem.cs:614`,
+      `:1013`, `AimLine.cs:319`, `SimConfig.cs:724`, `WaveZoneTests.cs:127`,
+      `EliteAndDirectorTests.cs:237/264/313/376`) — поминальные строки правятся, висячих ссылок
+      на удалённый член не остаётся.
+      ⛔ R-FILTER `EliteAndDirectorTests` → PASS, число на **единицу меньше** прежнего.
+- [ ] **Step 4:** R-TEST полный → `total` = **1965** (⚠ 1965 + 1 фикстура 42 − 1 снятый
+      договорный тест `MobRadiusFor`), красных ровно три эталона; свипы → R-COMMIT
       `feat(app-94sk): T3 — целеуказатель считает упор по объёмам, а не по поясам`.
 
 **Гейт фазы Ф-A:** `HitVolumes` зовётся обоими путями (снаряд и луч); объёмы стоят на костях
@@ -2311,6 +2530,12 @@ director.Poses = ConfigTests.FixtureTable(TestConfigs.ChaserRestPose());
 - [ ] **Step 7г (GREEN — правила 6, 9, 12, 13, 16 и снятие правила 5):**
       ⛔ **Снятие правила 5 идёт ЗДЕСЬ ЖЕ** вместе с полем `SlideProfileTop`: пять правил
       (`:751`, `:768`, `:774`, `:809`, `:827`) уходят, два из них заменяет правило 16.
+      ⛔⛔ **КРОНУ ПО ТАБЛИЦЕ ПРАВИЛО 16 БЕРЁТ У `HitParts.PoseTop`, А НЕ СЧИТАЕТ САМО** — находка
+      **C-C7**, закрытая в T2: член сделан **публичным** и живёт в `HitParts` именно затем, чтобы
+      `Ring.Data` его видел (`InternalsVisibleTo` у `Ring.Simulation` открыт только тестам).
+      Своя копия «максимума по концам костей плюс радиус» здесь была бы **третьей**.
+      ⚠ Тестовый `SlideCrownOf` остаётся отдельным намеренно (урок 427): свидетель, зовущий
+      проверяемый код, доказывает лишь самосогласованность.
       ⛔ **`PositionHistory.FlagSliding` ОСТАЁТСЯ** в записи (место в байте уже оплачено) и
       продолжает нести «тело в слайде» — но **высотный потолок из него больше не выводится**.
       ⚠ **И сказано, чего это стоит:** прочих читателей флага в проде нет вовсе, только ассерты
@@ -3958,8 +4183,8 @@ bd create "Ф-W: перепин, амендменты, сборки и веха 
 |---|---|---|
 | **T0** | — | — (гейт: три независимых замера базовой линии) |
 | **T1** | 1, 2, 3, 5, 9, 10, 13, 14, 15, 16, 16а (**11**) | M329, M330, M332, M335, M336, M337, M338, M339, M340 (**9**) |
-| **T2** | 4, 4а, **11** (первая половина), 12 (**4**) | M327, M328, M333-половина, M334 (**4**) — ⚠ M331 названа здесь, гоняется в **T6b** (до поворота тела мутант неотличим от оригинала, правило 696) |
-| **T3** | 42 (**1**) | — (убивается M327 с обеих сторон) |
+| **T2** | 4, 4а, **11** (первая половина), 12, 🆕 **12а** (**5**) | M327, M328, M333-половина, M334, 🆕 **M392** (**5**) — ⚠ M331 названа здесь, гоняется в **T6b** (до поворота тела мутант неотличим от оригинала, правило 696) |
+| **T3** | 42 (**1**), ⛔ **минус** снятый `MobRadiusFor_AgreesWith_MobConfigFor_ForEveryArchetype` (**±0**) | — (убивается M327 с обеих сторон) |
 | **T4** | 4б, 4в, 27, 28, 28а, 28б, 28в (**7**) | M355, M356, M357, M379, M383, M384 (**6**) |
 | **T4b** 🆕 | 44, 45, 46 (**3**) | M393, M394, M395 (**3**) |
 | **T5a** | 23б (**1**) | M391 (**1**) |
@@ -3971,7 +4196,7 @@ bd create "Ф-W: перепин, амендменты, сборки и веха 
 | **T7** | 22, 23, **23а**, 24, 25 (**5**) | M349, M350, M351, M352, M382 (**5**) |
 | **T-W1…W3** | — | — (перепин, документы и веха; их свидетель — плейтест) |
 
-**Итого плана 1: 47 фикстур, 41 мутация.** ⚠ Остальные уходят в план 2 вместе со своими тасками —
+**Итого плана 1: 48 фикстур (одна из них — 12а, заведена сессией 105), 42 мутации.** ⚠ Чистый прирост набора — **47**: договорный тест `MobRadiusFor` снимается в T3 вместе со своим предметом. ⚠ Остальные уходят в план 2 вместе со своими тасками —
 ⛔ **и ни одна мутация не остаётся названной в одном плане и гоняемой в другом**: правило 696
 работает внутри плана, между планами — нет.
 
@@ -3992,7 +4217,7 @@ bd create "Ф-W: перепин, амендменты, сборки и веха 
 
 ---
 
-## Отклонения от спеки (правило 22) — **девять** записей
+## Отклонения от спеки (правило 22) — **двенадцать** записей
 
 1. **Таблица поз — ПЯТЬ таблиц по секциям архетипов, а не одно поле `SimConfig`.** Спека §3.5а
    пишет «дом таблицы — поле `SimConfig`, одно на конфигурацию… **не** „у каждого архетипа свой
@@ -4030,6 +4255,30 @@ bd create "Ф-W: перепин, амендменты, сборки и веха 
 9. **Заход режется на два плана** (решение владельца 2026-09-12, вариант «А»). Спека одна; план 1
    исполняет §3.1–§3.8 и свою часть §3.13, план 2 — остальное. Карта — в
    `2026-09-12-hit-by-model-split.md`.
+10. 🆕 **`StackTop` УДАЛЯЕТСЯ, а не сохраняет сигнатуру** (решение сессии 105 по находкам
+   **B-C3/D-C7**, где план держал три несовместимых утверждения сразу). Спека §3.4 пишет
+   «`StackTop(HitPart[])` **сохраняет сигнатуру**, но его тело становится `max(RestTop)`… четыре
+   тестовые премиссы не переписываются». ⛔ **Довод — правило 2 владельца, и он же записан в самой
+   спеке двумя абзацами выше:** «верх столба» считают **четверо**, поиск по зоне — ещё дважды, и
+   после снятия правила валидации 2 неверны **все шесть**. Сохранив `StackTop` в `HitZones`, заход
+   получил бы пятую копию рядом с новым единственным домом `HitParts.RestCrown`, а имя «stack»
+   пережило бы отсортированный столб, которого больше нет. ⇒ тело переезжает в `RestCrown`
+   дословно, шесть читателей-тестов переводятся шагом 2д. **Цена — шесть правок в тестах против
+   четырёх живых копий арифметики.**
+11. 🆕 **Раскладка осей названа явно, и её граница — `HitVolumes.ToWorld`** (side-quest `app-coou`,
+   решение сессии 105; спека не называет раскладку **вовсе** — §3.4 даёт только сигнатуры).
+   Кости таблицы живут в системе **тела** (высота `.y`), как их меряет `SkeletonAudit`, из
+   которого пекарь и выделяется (Р527); всё остальное — в системе **мира** (план `.xy`, высота
+   `.z`), как строит вся `Ring.Simulation` (`ShotGeometry`, поле `VelZ`). Транспонирует **только**
+   `ToWorld`. ⛔ Альтернатива «пекарь транспонирует при запекании» отклонена по правилу 2: она
+   развела бы две системы координат **внутри одной родословной** аудитор → пекарь и сделала бы
+   числа таблицы несравнимыми с базовой линией аудитора, которая служит левой стороной гейта T4.
+12. 🆕 **Фикстура 12а и мутация M392 заведены сверх §4.4 и §4.3** — свидетель границы систем
+   координат. Основание: `Geometry.SegmentCapsule` меряет только расстояния и к системе координат
+   безразличен **по построению**, поэтому обмен `.y`/`.z` не ловят ни компилятор, ни эталоны
+   детерминизма, ни одна из прежних мутаций; спека же обязательства на свидетеля не несёт, потому
+   что расхождения производителей не заметила. Номера свободны: §4.3 кончается на M390, план 1
+   занял M391 (T5a) и M393–M395 (T4b).
 
 ---
 

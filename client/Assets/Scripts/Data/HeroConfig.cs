@@ -155,15 +155,32 @@ namespace Ring.Data
         /// ⚠ Parts[0].Top IS SlideProfileTop: validation rule 5 requires the
         /// slide profile to land exactly on a part boundary, which is what
         /// keeps the slide equivalent to what it was before parts existed.
+        /// ⚠ app-94sk T2: the heights kept their numbers and changed their
+        /// NAMES (Bottom/Top -> RestBottom/RestTop, the capsule's extent in the
+        /// rest pose), and the bone indices below are PLACEHOLDERS -- a column
+        /// of four bone ends, which is what a three-band body was. The baker
+        /// (T4) overwrites all three of BoneA/BoneB/RestBottom/RestTop from the
+        /// real skeleton; until it does, these are the numbers the game has
+        /// always used and the answers do not move. PartId is the index, which
+        /// is where an append-only local numbering starts.
         public HitPart[] Parts =
         {
-            new HitPart { Radius = 0.32f, Bottom = 0f, Top = 0.55f,
-                Zone = HitZone.Legs, DamageMult = 0.75f },
-            new HitPart { Radius = 0.45f, Bottom = 0.55f, Top = 1.35f,
-                Zone = HitZone.Body, DamageMult = 1.0f },
-            new HitPart { Radius = 0.16f, Bottom = 1.35f, Top = 1.75f,
-                Zone = HitZone.Head, DamageMult = 1.7f },
+            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = 0f, RestTop = 0.55f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.55f, RestTop = 1.35f,
+                Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.35f, RestTop = 1.75f,
+                Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
         }; // Was the sync-marker key until app-88jb Т22's PushRecoilFraction below.
+
+        /// app-94sk T2 (spec §3.3, Р507): the PROJECTILE BROAD PHASE's radius.
+        /// `Radius` above stays physical — shoving, walls, visibility — and does
+        /// not move; this one must cover the furthest bone in any phase of any
+        /// clip plus the radius of the volume sitting on it.
+        /// ⚠ THE DEFAULT IS THE BODY RADIUS ON PURPOSE: until the baker (T4)
+        /// writes the real number, the broad phase must keep answering exactly
+        /// what it answered before the split, so this task moves no outcome.
+        [Range(0.05f, 12f)] public float GatherRadius = 0.45f;
 
         // app-88jb Т22 (spec §3.5, owner decisions Н15/Р442): the two numbers a
         // body collision needs from the collector.

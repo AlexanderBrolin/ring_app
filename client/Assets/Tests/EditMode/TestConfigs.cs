@@ -5,9 +5,155 @@ namespace Ring.Simulation.Tests
 {
     public static class TestConfigs
     {
+        /// ⛔ FIXTURE BONES, NOT BAKED ONES (app-94sk T2): the baker arrives
+        /// in T4, and until then a pose table is a FIXTURE number, exactly like
+        /// ProjectileSpeed 35 against the game's 52.5.
+        ///
+        /// ⛔⛔ THE FRAME IS THE BODY'S: height in `.y`, plan in `.x`/`.z`. That
+        /// is how SkeletonAudit measures a skeleton and how the baker will
+        /// deliver one; HitVolumes.ToWorld is the single crossing into the world
+        /// frame, where the plan is `.xy` and the height is `.z`.
+        ///
+        /// ⛔⛔ ONE BUILDER, FIVE BODIES, AND THAT IS NOT TIDINESS. A table
+        /// carries ONE skeleton, and the five bodies are 1.75 to 4.80 m tall:
+        /// handing them all the same bones would put a gunner's head volume at a
+        /// chaser's chest, and validation rule 13 ("RestTop agrees with the
+        /// table") could never be satisfied by any of them. Each body gets a
+        /// column of ITS OWN heights, and the extents of its volumes are DERIVED
+        /// from those bones rather than written a second time — see
+        /// WithRestExtents below.
+        ///
+        /// ⭐ THE CHASER'S FOOT IS SWUNG 0.9 m ASIDE, AND THAT IS THE SUBJECT OF
+        /// FIXTURES 4/4a: his physical circle is 0.5 m, so the leg sticks out of
+        /// it — precisely the case GatherRadius was split from Radius for.
+        /// ⛔ THE SWING GOES ALONG `z`, NOT `x`, and that is not a style choice:
+        /// at identity facing (there is no heading before T5c) `local.x` points
+        /// AT the shooter standing at the origin, so a swing along `x` would lie
+        /// ALONG the line of fire and fixture 4 would be red on correct code
+        /// (recomputed: a 0.52 m lateral gap against a 0.35 m leg radius). A
+        /// swing along `z` lays the foot ACROSS — which is where the fixture
+        /// shoots. ⚠ In the world that lands on `+y`: ToWorld carries the body's
+        /// plan `(x, z)` into the world's plan `(x, y)`.
+        ///
+        /// ⚠ Checksum IS LEFT UNSET. It is a cache of the loaded bytes (Р514) and
+        /// the config build recomputes it; validation rule 27, which compares the
+        /// two, arrives with the baker in T4, and THAT task owes these factories a
+        /// sealing pass through the same StateHash64 fold the build uses.
+        public static PoseTable ColumnPose(float legTop, float torsoTop, float crown,
+            float footLateral = 0f, float footHeight = 0f) => new PoseTable
+        {
+            BoneCount = 4,
+            ClipFirstRow = new[] { 0, 1 },          // one clip, one row
+            Bones = new[]
+            {
+                new float3(0f, footHeight, footLateral),   // 0: the foot
+                new float3(0f, legTop, 0f),                // 1: the pelvis
+                new float3(0f, torsoTop, 0f),              // 2: the chest
+                new float3(0f, crown, 0f),                 // 3: the crown
+            },
+            BlendThresholds = new[] { 0f, 0.33f, 0.66f, 1f },
+        };
+
+        /// The chaser's own column, with the foot swung out of his circle.
+        public static PoseTable ChaserRestPose()
+            => ColumnPose(0.88f, 2.12f, 2.70f, footLateral: 0.9f);
+
+        /// Two MIRRORED legs of one zone, +/-0.3 along z: the only shape on which
+        /// the PartId tie-break is observable at all (on real bodies the zones
+        /// differ, so the zone ladder decides and the number never gets a say).
+        public static PoseTable TwinLegPose() => new PoseTable
+        {
+            BoneCount = 4,
+            ClipFirstRow = new[] { 0, 1 },
+            Bones = new[]
+            {
+                new float3(0f, 0f, 0.3f), new float3(0f, 0.9f, 0.3f),     // 0-1: right leg
+                new float3(0f, 0f, -0.3f), new float3(0f, 0.9f, -0.3f),   // 2-3: left
+            },
+            BlendThresholds = new[] { 0f },
+        };
+
+        /// The index of the collector's SLIDE clip in his own table. ⛔ A NAMED
+        /// CONSTANT, NOT THE LITERAL 1: on a one-clip table `ClipFirstRow[1]` is
+        /// the sentinel "number of rows", so the literal reads past the bones of
+        /// every body but this one.
+        public const int SlideClipIndex = 1;
+
+        /// TWO CLIPS: rest and slide. ⛔ The slide clip is mandatory — validation
+        /// rule 16 (T4) compares its crown against the gunner's muzzle and the
+        /// collector's SlideMuzzleHeight, and addresses its row through
+        /// ClipFirstRow[SlideClipIndex]. A one-row table would send that read
+        /// past the array.
+        /// ⚠ The rest row is HIS OWN column (0.55 / 1.35 / 1.75), the same three
+        /// numbers his volumes have been cut at since Task 1 — a table whose
+        /// bones disagreed with its own volumes is exactly what rule 13 refuses.
+        public static PoseTable HeroRestAndSlidePose() => new PoseTable
+        {
+            BoneCount = 4,
+            ClipFirstRow = new[] { 0, 1, 2 },        // clip 0 - rest, clip 1 - slide
+            Bones = new[]
+            {
+                new float3(0f, 0f,    0f), new float3(0f, 0.55f, 0f),
+                new float3(0f, 1.35f, 0f), new float3(0f, 1.75f, 0f),   // rest, crown 1.75
+                new float3(0f, 0f,    0f), new float3(0f, 0.22f, 0f),
+                new float3(0f, 0.34f, 0f), new float3(0f, 0.42f, 0f),   // slide, crown 0.42
+            },
+            BlendThresholds = new[] { 0f, 1f },
+        };
+
+        /// The world midpoint of a volume's capsule, for a body standing at
+        /// `bodyPlan` with no heading yet (identity facing, as everything does
+        /// before T5c). ⛔ IT EXISTS BECAUSE "AIM AT THE LEGS" STOPPED BEING A
+        /// HEIGHT (app-94sk T2): a volume is a segment in space now, and the
+        /// chaser's leg runs DIAGONALLY out to a foot swung 0.9 m aside, so a
+        /// shot down the body's own axis at leg height passes it by. Fixtures
+        /// that mean "hit this volume" have to say where it is, and they say it
+        /// through the bones rather than through a literal.
+        /// ⚠ The answer is in the WORLD frame: plan in `.xy`, height in `.z` —
+        /// the same transposition HitVolumes.ToWorld makes.
+        public static void PartMidWorld(in PoseTable table, in HitPart part, float2 bodyPlan,
+            out float2 plan, out float height)
+        {
+            float3 a = table.Bones[part.BoneA], b = table.Bones[part.BoneB];
+            plan = bodyPlan + 0.5f * new float2(a.x + b.x, a.z + b.z);
+            height = 0.5f * (a.y + b.y);
+        }
+
+        /// Validation rule 9's own question, asked as a FIXTURE number: how wide
+        /// must the broad phase be for this body? ⛔ PER PART, because that is
+        /// what the rule means — the furthest a part's own bones swing from the
+        /// body axis, grown by THAT part's radius. Taking the two maxima apart
+        /// (furthest bone anywhere, plus widest part anywhere) answers a looser
+        /// number and hides the very case this split exists for: a thin leg
+        /// swinging out past a fat torso that never moves.
+        /// ⚠ EVERY ROW OF THE TABLE, not just the rest pose: the gather has to
+        /// cover the furthest bone in ANY phase of ANY clip.
+        /// ⚠ THE PLAN VIEW IS `(x, z)` — these are bones, and bones live in the
+        /// BODY frame where `.y` is the height (see HitVolumes.ToWorld).
+        public static float GatherReachOf(in PoseTable table, HitPart[] parts)
+        {
+            if (parts == null || table.Bones == null || table.BoneCount <= 0) return 0f;
+            int rows = table.Bones.Length / table.BoneCount;
+            float widest = 0f;
+            for (int r = 0; r < rows; r++)
+            {
+                int rowBase = r * table.BoneCount;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    float a = PlanReach(table.Bones[rowBase + parts[i].BoneA]);
+                    float b = PlanReach(table.Bones[rowBase + parts[i].BoneB]);
+                    float reach = math.max(a, b) + parts[i].Radius;
+                    if (reach > widest) widest = reach;
+                }
+            }
+            return widest;
+
+            static float PlanReach(float3 bone) => math.length(new float2(bone.x, bone.z));
+        }
+
         public static SimConfig Default()
         {
-            return new SimConfig
+            var cfg = new SimConfig
             {
                 Hero = new HeroSimConfig { MaxSpeed = 7f, Accel = 40f, Friction = 30f,
                     Radius = 0.45f, MaxHp = 100f, DashSpeed = 22f, DashDuration = 0.15f,
@@ -49,17 +195,18 @@ namespace Ring.Simulation.Tests
                     // mirrors HeroConfig's C# default array (two-sources-of-
                     // numbers discipline — test/code-default side). His scale
                     // factor is 1.0, so his heights are the only ones that did
-                    // not move; Parts[0].Top is SlideProfileTop, which
+                    // not move; Parts[0].RestTop is SlideProfileTop, which
                     // validation rule 5 requires.
                     Parts = new[]
                     {
-                        new HitPart { Radius = 0.32f, Bottom = 0f, Top = 0.55f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f },
-                        new HitPart { Radius = 0.45f, Bottom = 0.55f, Top = 1.35f,
-                            Zone = HitZone.Body, DamageMult = 1.0f },
-                        new HitPart { Radius = 0.16f, Bottom = 1.35f, Top = 1.75f,
-                            Zone = HitZone.Head, DamageMult = 1.7f },
-                    } },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = 0f, RestTop = 0.55f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.55f, RestTop = 1.35f,
+                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.35f, RestTop = 1.75f,
+                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                    },
+                    Poses = HeroRestAndSlidePose() },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
                     SpreadRad = 0.026f, RecoilPerShotRad = 0.006f,
@@ -168,15 +315,31 @@ namespace Ring.Simulation.Tests
                     // mirrors MobConfig's C# default array (two-sources
                     // discipline). Heights are the old column x 1.46, the
                     // measured ratio of this model's crown (2.6996) to it.
+                    // ⛔ app-94sk T2: the chaser's volumes sit on REAL BONE PAIRS
+                    // of ChaserRestPose, not on the placeholder column the other
+                    // archetypes still carry until T4b lays them out. His leg is
+                    // the one that matters here: pelvis -> the foot swung 0.9 m
+                    // aside, which is what fixtures 4/4a shoot at.
+                    // ⚠ RestBottom/RestTop ARE THE CAPSULE'S EXTENT — bone plus
+                    // and minus the radius, per HitPart's own definition, NOT the
+                    // bone ends. That is why the leg now reaches BELOW the ground
+                    // (-0.30) and the head ABOVE the crown (2.87): a capsule has
+                    // caps, and the band it used to be did not.
                     Parts = new[]
                     {
-                        new HitPart { Radius = 0.35f, Bottom = 0f, Top = 0.88f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f },
-                        new HitPart { Radius = 0.50f, Bottom = 0.88f, Top = 2.12f,
-                            Zone = HitZone.Body, DamageMult = 1.0f },
-                        new HitPart { Radius = 0.17f, Bottom = 2.12f, Top = 2.70f,
-                            Zone = HitZone.Head, DamageMult = 1.7f },
-                    } },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.23f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.38f, RestTop = 2.62f,
+                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 1.95f, RestTop = 2.87f,
+                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                    },
+                    // app-94sk T2 (rule 10): he strikes, so he names the volume he
+                    // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
+                    // arms out — a striker must name SOME volume he owns, and the
+                    // arm he will really swing does not exist in the layout yet.
+                    SwingPartId = 1,
+                    Poses = ChaserRestPose() },
                 // Gunner's Parts already carry the taller ranged-mech tower
                 // (Т16 ships the same numbers into the real .asset via the marker
                 // mechanism; ahead of that this baseline is the source of truth,
@@ -224,13 +387,17 @@ namespace Ring.Simulation.Tests
                     // truth (same note as the tower above).
                     Parts = new[]
                     {
-                        new HitPart { Radius = 0.35f, Bottom = 0f, Top = 1.32f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f },
-                        new HitPart { Radius = 0.50f, Bottom = 1.32f, Top = 3.24f,
-                            Zone = HitZone.Body, DamageMult = 1.0f },
-                        new HitPart { Radius = 0.17f, Bottom = 3.24f, Top = 4.20f,
-                            Zone = HitZone.Head, DamageMult = 1.7f },
-                    } },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 1.32f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 1.32f, RestTop = 3.24f,
+                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.24f, RestTop = 4.2f,
+                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                    },
+                    // app-94sk T2 (rule 10): AttackRange is 0 — he never strikes,
+                    // and the sentinel is what says so.
+                    SwingPartId = -1,
+                    Poses = ColumnPose(1.32f, 3.24f, 4.20f) },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
                     // Task Т6 (app-ggvz, owner decision К5/spec Р325):
@@ -395,13 +562,19 @@ namespace Ring.Simulation.Tests
                     // a partial rerun of the very defect app-oxyo closed.
                     Parts = new[]
                     {
-                        new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f },
-                        new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
-                            Zone = HitZone.Body, DamageMult = 1.0f },
-                        new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
-                            Zone = HitZone.Head, DamageMult = 1.7f },
-                    } },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = 0f, RestTop = 1.12f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 1.12f, RestTop = 2.76f,
+                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.76f, RestTop = 3.58f,
+                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                    },
+                    // app-94sk T2 (rule 10): he strikes, so he names the volume he
+                    // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
+                    // arms out — a striker must name SOME volume he owns, and the
+                    // arm he will really swing does not exist in the layout yet.
+                    SwingPartId = 1,
+                    Poses = ColumnPose(1.12f, 2.76f, 3.58f) },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
                     TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
@@ -445,13 +618,19 @@ namespace Ring.Simulation.Tests
                     // number to round to something more convenient.
                     Parts = new[]
                     {
-                        new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f },
-                        new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
-                            Zone = HitZone.Body, DamageMult = 1.0f },
-                        new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
-                            Zone = HitZone.Head, DamageMult = 1.7f },
-                    } },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = 0f, RestTop = 1.51f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = 1.51f, RestTop = 3.7f,
+                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 3.7f, RestTop = 4.8f,
+                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                    },
+                    // app-94sk T2 (rule 10): he strikes, so he names the volume he
+                    // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
+                    // arms out — a striker must name SOME volume he owns, and the
+                    // arm he will really swing does not exist in the layout yet.
+                    SwingPartId = 1,
+                    Poses = ColumnPose(1.51f, 3.70f, 4.80f) },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section
                 // above. Inert in both golden scenarios — nothing reads Flow
@@ -523,6 +702,26 @@ namespace Ring.Simulation.Tests
                     ExitHysteresis = 3f, LingerTicks = 5, HearPositionGridMeters = 3f,
                     PickupRadiusForVisibility = 0.4f, ContainerRadiusForVisibility = 0.4f }
             };
+
+            // app-94sk T2 (spec §3.3, validation rule 9): the broad-phase radius
+            // is COMPUTED from this fixture's own pose table, never written as a
+            // literal — the rule is "cover the furthest bone plus the volume on
+            // it", and a literal is that rule's answer copied by hand, which is
+            // the second source of truth rule 2 forbids.
+            // ⛔⛔ AND IT DIVERGES FROM THE SHIPPED ASSET ON PURPOSE, PERMANENTLY.
+            // Spec §0 keeps the two number sources apart precisely so a
+            // divergence can be DELIBERATE: this side carries a fixture skeleton
+            // whose chaser swings a foot 0.9 m out, the asset side carries the
+            // real one the baker measures in T4. Same category as
+            // Weapon.ProjectileSpeed (35 here against the game's 52.5) and
+            // Arena.BarrierTop (0 here against 3), and pinned the same way — by
+            // a named exception in the two tests that compare the sources.
+            cfg.Hero.GatherRadius = GatherReachOf(in cfg.Hero.Poses, cfg.Hero.Parts);
+            cfg.Chaser.GatherRadius = GatherReachOf(in cfg.Chaser.Poses, cfg.Chaser.Parts);
+            cfg.Gunner.GatherRadius = GatherReachOf(in cfg.Gunner.Poses, cfg.Gunner.Parts);
+            cfg.Elite.GatherRadius = GatherReachOf(in cfg.Elite.Poses, cfg.Elite.Parts);
+            cfg.Director.GatherRadius = GatherReachOf(in cfg.Director.Poses, cfg.Director.Parts);
+            return cfg;
         }
 
         public static ArenaSimConfig DefaultArena()

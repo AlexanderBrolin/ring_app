@@ -69,7 +69,9 @@ namespace Ring.Simulation.Combat
         {
             float dt = SimulationWorld.TickDt;
             SimConfig config = w.Config;
-            float heroRadius = config.Hero.Radius;
+            // app-94sk T2 (spec §3.3): the gather radius, for the reason the
+            // mob branch of StepProjectile spells out.
+            float heroRadius = config.Hero.GatherRadius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
             for (int i = w.ProjectileCount - 1; i >= 0; i--)
@@ -279,7 +281,17 @@ namespace Ring.Simulation.Combat
             for (int m = 0; m < mobCount; m++)
             {
                 if (mobs[m].Id == proj.OwnerEntityId) continue;
-                float mobRadius = MobRadiusFor(mobs[m].Type, in config);
+                // app-94sk T2 (spec §3.3): THE BROAD PHASE ASKS THE GATHER
+                // RADIUS, NOT THE PHYSICAL ONE. A chaser's foot swings 0.9 m out
+                // of his 0.5 m circle, so the physical radius discarded the leg
+                // before the narrow phase could be asked about it at all.
+                // ⛔ AND NO SECOND MobRadiusFor IS BORN FOR IT: that would be a
+                // FIFTH four-way switch over the archetype, which SimConfig.cs
+                // forbids by name ("The integrator would have been the FOURTH,
+                // which is exactly what rule 2 forbids"). MobRadiusFor's own
+                // reason for existing -- that MobConfigFor would COPY the whole
+                // struct -- expired with Т31: it returns `ref readonly` now.
+                float mobRadius = SimConfig.MobConfigFor(in config, mobs[m].Type).GatherRadius;
                 if (RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
                         liveAlive: true, liveSliding: false, liveInvulnerable: false,
                         out float2 mobPos, out _, out _, out _)
@@ -977,7 +989,9 @@ namespace Ring.Simulation.Combat
         {
             float dt = SimulationWorld.TickDt;
             SimConfig config = w.Config;
-            float heroRadius = config.Hero.Radius;
+            // app-94sk T2 (spec §3.3): the gather radius, for the reason the
+            // mob branch of StepProjectile spells out.
+            float heroRadius = config.Hero.GatherRadius;
             (float t, int kind, int index)[] candidates = w.ProjCandidates;
 
             for (int s = 0; s < steps; s++)
@@ -1223,7 +1237,18 @@ namespace Ring.Simulation.Combat
             float contactHeight = proj.Height + proj.VelZ * SimulationWorld.TickDt * t;
 
             float2 targetPos;
-            float overlapTop;
+            // app-94sk T2: the body's baked poses travel with its parts now — a
+            // capsule is a pair of BONE INDICES, and without the table they name
+            // nothing. ⛔ `slideCeiling` is what is LEFT of the old `overlapTop`,
+            // and only that: the crown of the presented silhouette is the pose
+            // table's business (HitParts.PoseTop, inside HitVolumes.Resolve),
+            // while the mid-slide profile is a RULE ABOUT A STATE that no table
+            // can know. Validation rule 5 keeps it alive until T4 replaces it.
+            // NaN means "no ceiling of that kind", the same "stand down rather
+            // than invent a bound" convention SimConfigBuilder's own height rules
+            // already use.
+            PoseTable poses;
+            float slideCeiling = float.NaN;
             // app-88jb T14: the body arrives as its ORDERED STACK OF PARTS,
             // and since T15 that array is the only hit volume there is --
             // the three zone tops and three multipliers it replaced are gone
@@ -1254,7 +1279,7 @@ namespace Ring.Simulation.Combat
                 // the single move that closes the flying half of playtest debt
                 // app-hoe6: a round aimed into the chaser's head belt
                 // [2.12, 2.70] used to pass clean over the body.
-                overlapTop = HitZones.StackTop(parts);
+                poses = cfg.Poses;   // a mob never slides: no ceiling of that kind
             }
             else if (kind == HitPlayer)
             {
@@ -1300,9 +1325,8 @@ namespace Ring.Simulation.Combat
                 // too -- and that is measured, not assumed: only his RADII
                 // differed from the column (0.32 / 0.45 / 0.16 against one body
                 // radius of 0.45).
-                overlapTop = sliding
-                    ? cfg.SlideProfileTop
-                    : HitZones.StackTop(parts);
+                poses = cfg.Poses;
+                if (sliding) slideCeiling = cfg.SlideProfileTop;
             }
             else if (kind == HitRingWall)
             {
@@ -1402,8 +1426,34 @@ namespace Ring.Simulation.Combat
             // - part radius) -- 0.33 m on a chaser headshot. `contactT` is in
             // the caller's own [p0, p1] parameterization, the same one `bestT`
             // is in, so those two branches lerp it with no conversion.
-            return HitZones.Resolve(parts, p0, p1, proj.Radius, targetPos, hStart, hEnd,
-                overlapTop, out zone, out mult, out hitHeight, out contactT);
+            // ⛔ RULE 5 IS ASKED HERE AND NOWHERE ELSE (app-94sk T2): mid-slide
+            // the collector presents a lower profile, and that is a rule about a
+            // STATE, which the pose table cannot express. It stays a gate in
+            // front of the volumes until T4 replaces it with rule 16.
+            if (!float.IsNaN(slideCeiling)
+                && !HitZones.Overlaps(hStart, hEnd, proj.Radius, slideCeiling)) return false;
+
+            // app-94sk T2 (spec §3.4): THE BODY IS A SET OF CAPSULES ON BONES
+            // NOW, so the resolution moves to HitVolumes. What the pair before it
+            // could not express is the whole reason: one radius for the whole
+            // body made a shoulder-wide head the only shape there was, and a
+            // pose moved a bone three times further than the radius of the volume
+            // the body was described by.
+            // ⛔ THE STEP IS WOVEN THE ORDINARY WAY — `new float3(plane, height)`,
+            // the very form ShotGeometry builds its muzzle and aim points with.
+            // The bones arrive in the BODY frame and HitVolumes.ToWorld is what
+            // reconciles the two; nothing is transposed here (app-coou).
+            // ⛔ `poseRow: 0` AND `bodyTilt: zero` UNTIL T6/T6b: the pose key and
+            // the tilt vector do not exist yet, and the rest row is what every
+            // caller hands in meanwhile.
+            // ⚠ `partId` travels out of the resolver and is DROPPED here: the
+            // damage path learns it in plan 2 (spec §3.10), and a field nobody
+            // reads yet has no business in an event.
+            return HitVolumes.Resolve(parts, in poses, poseRow: 0, bodyTilt: float2.zero,
+                bodyOrigin: new float3(targetPos, 0f),
+                bodyFacingSin: 0f, bodyFacingCos: 1f,
+                p0: new float3(p0, hStart), p1: new float3(p1, hEnd), projRadius: proj.Radius,
+                out zone, out mult, out hitHeight, out _, out contactT);
         }
     }
 }

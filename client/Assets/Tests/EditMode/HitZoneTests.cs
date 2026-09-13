@@ -66,7 +66,7 @@ namespace Ring.Simulation.Tests
         /// applied to the crown; app-8dv gave the torso a second call site, and
         /// two copies of one expression is the shape rule 2 removes -- the same
         /// reason the head version was lifted here in the first place.
-        static float MidOf(HitPart part) => 0.5f * (part.Bottom + part.Top);
+        static float MidOf(HitPart part) => 0.5f * (part.RestBottom + part.RestTop);
 
         [Test]
         public void Overlaps_AcceptsInsideTheRadiusPaddedColumn_RejectsOutside()
@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
             // FIXTURE NUMBER rather than this test's subject — every assertion below is
             // expressed RELATIVE to the ceiling, so the crown moving from 1.85
             // to 2.70 moves nothing the test claims.
-            float top = HitZones.StackTop(c.Parts);
+            float top = HitParts.RestCrown(c.Parts);
             HitPart torso = c.Parts[c.Parts.Length - 2];
             float bodyHeight = MidOf(torso);
             // a flat pass at body height
@@ -96,7 +96,7 @@ namespace Ring.Simulation.Tests
 
         // ── app-88jb Т14 fix-round (Rulings 191/192): DIRECT tests of
         // HitZones.Resolve. The class is internal on purpose and this assembly
-        // already calls Overlaps/StackTop directly; until this round the
+        // already calls Overlaps and HitParts directly; until this round the
         // resolver itself was exercised only through world shots, which cannot
         // reach the axes below (lesson 620). ──
 
@@ -135,21 +135,21 @@ namespace Ring.Simulation.Tests
             float half = math.sqrt(torsoPad * torsoPad - lateral * lateral);
             float sIn = target.x - half;
             float hIn = hStart + (hEnd - hStart) * sIn / p1.x;
-            Assert.Less(hIn, torso.Bottom,
+            Assert.Less(hIn, torso.RestBottom,
                 "вход в круг корпуса лежит уже в его полосе — окно дефекта закрыто");
-            float sCross = p1.x * (torso.Bottom - hStart) / (hEnd - hStart);
+            float sCross = p1.x * (torso.RestBottom - hStart) / (hEnd - hStart);
             Assert.Less(sCross, target.x + half,
                 "полоса корпуса достигается уже вне его круга — контакта нет и тест не о высоте");
 
             bool resolved = HitZones.Resolve(parts, p0, p1, projR, target, hStart, hEnd,
-                HitZones.StackTop(parts), out HitZone zone, out float mult,
+                HitParts.RestCrown(parts), out HitZone zone, out float mult,
                 out float hitHeight, out float t);
 
             Assert.IsTrue(resolved, "единственный кандидат с пересечённой полосой не разрешён в попадание");
             Assert.AreEqual(torso.Zone, zone, "зона не корпусная, хотя пересечён только его круг");
-            Assert.That(hitHeight, Is.InRange(torso.Bottom, torso.Top),
+            Assert.That(hitHeight, Is.InRange(torso.RestBottom, torso.RestTop),
                 "высота контакта вне полосы победителя — контакт объявлен там, где части нет");
-            Assert.AreEqual((torso.Bottom - hStart) / (hEnd - hStart), t, 1e-5f,
+            Assert.AreEqual((torso.RestBottom - hStart) / (hEnd - hStart), t, 1e-5f,
                 "t контакта не совпадает с первым одновременным попаданием в круг и полосу");
             Assert.AreEqual(torso.DamageMult, mult, 1e-6f, "множитель не от победителя");
         }
@@ -177,7 +177,7 @@ namespace Ring.Simulation.Tests
             var target = float2.zero;
             var p0 = new float2(0.2f, 0f);
             var p1 = new float2(-0.3f, 0f);
-            float seam = legs.Top;                 // == torso.Bottom, builder rule 2
+            float seam = legs.RestTop;                 // == torso.RestBottom, builder rule 2
             float hStart = seam;
             float hEnd = seam - 0.1f;              // descending across the seam
 
@@ -187,11 +187,18 @@ namespace Ring.Simulation.Tests
                 "старт шага вне круга ног — тай нулевых входов не воспроизводится");
             Assert.Less(math.length(p1 - target), legs.Radius + projR,
                 "конец шага вне круга ног — шаг перестал целиком лежать внутри кругов");
-            Assert.AreEqual(torso.Bottom, legs.Top,
-                "полосы ног и корпуса не смежны — фикстура не о шве");
+            // ⛔ app-94sk T2: the bands are no longer adjacent — a capsule's
+            // extent includes its caps, so legs and torso OVERLAP by design. The
+            // premise that survives is the one this fixture actually needs: the
+            // seam height must lie inside BOTH volumes' extents, or there is no
+            // tie of equal entries to arbitrate.
+            Assert.That(seam, Is.InRange(torso.RestBottom, torso.RestTop),
+                "шов вне габарита корпуса — тай нулевых входов не воспроизводится");
+            Assert.That(seam, Is.InRange(legs.RestBottom, legs.RestTop),
+                "шов вне габарита ног — тай нулевых входов не воспроизводится");
 
             bool resolved = HitZones.Resolve(parts, p0, p1, projR, target, hStart, hEnd,
-                HitZones.StackTop(parts), out HitZone zone, out _, out _, out float t);
+                HitParts.RestCrown(parts), out HitZone zone, out _, out _, out float t);
 
             Assert.IsTrue(resolved, "шаг внутри обоих кругов не разрешён в попадание");
             Assert.AreEqual(legs.Zone, zone, "при тае равных входов победила не нижняя часть");
@@ -223,13 +230,15 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void StackTop_OfNullOrEmptyStack_IsZero()
+        public void RestCrown_OfNullOrEmptyStack_IsZero()
         {
             // Ruling 192: the crown of a body that has no parts is zero, not a
-            // NullReferenceException on the hot path -- StackTop's own
-            // contract, until now exercised by no test on either arm.
-            Assert.AreEqual(0f, HitZones.StackTop(null), "крона отсутствующего стека не ноль");
-            Assert.AreEqual(0f, HitZones.StackTop(System.Array.Empty<HitPart>()),
+            // NullReferenceException on the hot path -- the contract HitZones.
+            // StackTop carried and HitParts.RestCrown inherited verbatim when
+            // app-94sk T2 gave the crown one home (it is the same arm; only the
+            // address changed).
+            Assert.AreEqual(0f, HitParts.RestCrown(null), "крона отсутствующего стека не ноль");
+            Assert.AreEqual(0f, HitParts.RestCrown(System.Array.Empty<HitPart>()),
                 "крона пустого стека не ноль");
         }
 
@@ -294,9 +303,22 @@ namespace Ring.Simulation.Tests
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
             // app-88jb Т15: aim AND expectation both off the legs PART, the
             // same source the blow is resolved from since Т14.
+            // ⛔ app-94sk T2: `0.5f * legs.RestTop` was the middle of the legs
+            // BAND; RestTop is a CAPSULE's top now (bone plus radius), and the
+            // torso capsule's own bottom cap reaches down past that height, so
+            // the zone ladder rightly answers Body there. The legs are aimed at
+            // where they ARE — the chaser's leg runs out to a foot swung aside.
             HitPart chaserLegs = cfg.Chaser.Parts[0];
-            float legsBand = 0.5f * chaserLegs.Top;
-            TestWorlds.FireAimed3D(w, float2.zero, legsBand, new float2(TargetX, 0f), legsBand);
+            TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in chaserLegs,
+                new float2(TargetX, 0f), out float2 legPlan, out float legH);
+            // ⛔ THE SHOT RUNS PARALLEL TO THE BODY AXIS AT THE LEG'S OWN OFFSET.
+            // Fired from the origin it would approach along a diagonal and cross
+            // the torso capsule's bottom cap on the way in — met first, and the
+            // ladder gives the torso the blow. Offsetting the SHOOTER by the same
+            // lateral keeps the whole flight outside the torso (0.63 m from its
+            // segment against a 0.50 m radius) and inside the leg.
+            var shooter = new float2(0f, legPlan.y);
+            TestWorlds.FireAimed3D(w, shooter, legH, legPlan, legH);
 
             w.ClearEvents();
             w.Tick(default);
@@ -431,7 +453,19 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             SimEvent damaged = Blow(w, SimEventKind.PlayerDamaged);
-            Assert.AreEqual(HitZone.Legs, damaged.Zone);
+            // ⛔⛔ THE ZONE IS Body NOW, AND THAT IS THE MODEL RATHER THAN A
+            // RELAXED EXPECTATION (app-94sk T2). What this fixture is FOR — that
+            // a sliding collector IS hit below his profile, where a standing one
+            // would have been missed — is asserted and unchanged. WHICH volume
+            // answers moved because a capsule has caps: the torso's runs from the
+            // pelvis bone down by its own radius (0.55 - 0.45 = 0.10), so at 0.30
+            // both volumes are met and the ladder gives it to the torso.
+            // ⚠ The placeholder radii are the reason it reaches so low — the
+            // torso's is still the whole BODY circle — and T4b is the task that
+            // measures the real ones. This expectation is owed a second look
+            // there, and that is said here so it is not taken for settled.
+            Assert.AreEqual(HitZone.Body, damaged.Zone,
+                "попадание под профилем скольжения не прочитано по объёмам");
             Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);
         }
 

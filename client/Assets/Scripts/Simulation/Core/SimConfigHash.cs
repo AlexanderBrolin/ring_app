@@ -94,6 +94,12 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.SlideThrustRecovery);
             // app-88jb Т13 (spec §3.3): the collector's hit parts.
             h = HashHitPartArray(h, c.Parts);
+            // app-94sk T2 (spec §3.3, §3.5): the broad-phase radius and the
+            // baked poses, folded IN THE STEP THAT DECLARES THEM -- the same
+            // rule HashWeapon's own note above spells out, and the reflective
+            // sweep in SimConfigHashTests is what enforces it.
+            h = StateHash64.Add(h, c.GatherRadius);
+            h = HashPoseTable(h, in c.Poses);
             return h;
         }
 
@@ -166,6 +172,11 @@ namespace Ring.Simulation.Core
             h = StateHash64.Add(h, c.TiltFallAngle); h = StateHash64.Add(h, c.DownedSeconds);
             // app-88jb Т13 (spec §3.3): this archetype's hit parts.
             h = HashHitPartArray(h, c.Parts);
+            // app-94sk T2 (spec §3.3, §3.5, §3.9): broad-phase radius, baked
+            // poses and which volume this archetype strikes with.
+            h = StateHash64.Add(h, c.GatherRadius);
+            h = HashPoseTable(h, in c.Poses);
+            h = StateHash64.Add(h, c.SwingPartId);
             // app-88jb Т19 (spec §3.4): this archetype's ricochet numbers,
             // wired in the same step that declares them for the reason
             // HashWeapon's own note above gives (R-17 left no skip-set).
@@ -325,11 +336,51 @@ namespace Ring.Simulation.Core
             if (a == null) return h;
             for (int i = 0; i < a.Length; i++)
             {
+                // app-94sk T2: a part is a capsule on a pair of bones now, so
+                // the digest follows its fields. ⛔ THE BYTES GO IN AS `int`:
+                // StateHash64 has no `byte` overload, and widening at the fold
+                // is the precedent PositionHistory.FoldRecord already set.
+                h = StateHash64.Add(h, (int)a[i].BoneA);
+                h = StateHash64.Add(h, (int)a[i].BoneB);
                 h = StateHash64.Add(h, a[i].Radius);
-                h = StateHash64.Add(h, a[i].Bottom);
-                h = StateHash64.Add(h, a[i].Top);
                 h = StateHash64.Add(h, (int)a[i].Zone);
                 h = StateHash64.Add(h, a[i].DamageMult);
+                h = StateHash64.Add(h, (int)a[i].PartId);
+                h = StateHash64.Add(h, a[i].RestBottom);
+                h = StateHash64.Add(h, a[i].RestTop);
+            }
+            return h;
+        }
+
+        /// A pose table folds as its shape, its rows and the two float arrays
+        /// beside them. ⛔ `Checksum` IS NOT IN THE DIGEST: it is a cache of the
+        /// loaded bytes (Р514), not a balance number, and the config build is
+        /// what compares it (validation rule 27). Folding it here would make
+        /// the identity of a config depend on a field the config recomputes.
+        static ulong HashPoseTable(ulong h, in PoseTable t)
+        {
+            h = StateHash64.Add(h, t.BoneCount);
+            h = HashInt32Array(h, t.ClipFirstRow);
+            h = StateHash64.Add(h, t.Bones == null ? -1 : t.Bones.Length);
+            if (t.Bones != null)
+            {
+                for (int i = 0; i < t.Bones.Length; i++)
+                {
+                    h = StateHash64.Add(h, t.Bones[i].x);
+                    h = StateHash64.Add(h, t.Bones[i].y);
+                    h = StateHash64.Add(h, t.Bones[i].z);
+                }
+            }
+            h = HashFloatArray(h, t.BlendThresholds);
+            h = StateHash64.Add(h, t.UpperLayerMask == null ? -1 : t.UpperLayerMask.Length);
+            if (t.UpperLayerMask == null) return h;
+            for (int i = 0; i < t.UpperLayerMask.Length; i++)
+            {
+                // Same widening argument as the part ids above: the fold takes
+                // int, so a 64-bit mask goes in as its two halves rather than
+                // silently losing the high one.
+                h = StateHash64.Add(h, (int)(t.UpperLayerMask[i] & 0xFFFFFFFFUL));
+                h = StateHash64.Add(h, (int)(t.UpperLayerMask[i] >> 32));
             }
             return h;
         }

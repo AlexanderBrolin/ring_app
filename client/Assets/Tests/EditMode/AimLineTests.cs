@@ -200,9 +200,9 @@ namespace Ring.Simulation.Tests
                 cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
                 "премисса фикстуры: дуло внутри падированного круга тела");
             HitPart corpus = cfg.Chaser.Parts[1];
-            Assert.Greater(cfg.Hero.MuzzleHeight, corpus.Bottom,
+            Assert.Greater(cfg.Hero.MuzzleHeight, corpus.RestBottom,
                 "премисса фикстуры: высота дула выше низа корпуса цели");
-            Assert.Less(cfg.Hero.MuzzleHeight, corpus.Top,
+            Assert.Less(cfg.Hero.MuzzleHeight, corpus.RestTop,
                 "премисса фикстуры: высота дула ниже верха корпуса цели");
 
             AimLineSolution line = AimLine.Solve(hero, cursor, cfg.Hero.MuzzleHeight,
@@ -322,7 +322,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: ось мимо узкой части ближнего тела");
             Assert.Less(near.y, cfg.Gunner.Radius + cfg.Weapon.ProjectileRadius,
                 "премисса фикстуры: круг ближнего тела ось всё же задевает");
-            Assert.Less(cfg.Hero.MuzzleHeight, gunnerCorpus.Bottom,
+            Assert.Less(cfg.Hero.MuzzleHeight, gunnerCorpus.RestBottom,
                 "премисса фикстуры: корпус ближнего тела выше луча — на этой высоте у него только узкая часть");
             Assert.Less(near.x, far.x, "премисса фикстуры: отказавшее тело — ближнее");
 
@@ -384,9 +384,9 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: ось задевает и узкие ноги ганнера — иначе он откажет и тай-брейка не будет");
             Assert.AreNotEqual(chaserCorpus.Zone, gunnerLegs.Zone,
                 "премисса фикстуры: ответы двух кандидатов различимы зоной");
-            Assert.Greater(cfg.Hero.MuzzleHeight, chaserCorpus.Bottom,
+            Assert.Greater(cfg.Hero.MuzzleHeight, chaserCorpus.RestBottom,
                 "премисса фикстуры: высота дула приходится на корпус чейзера");
-            Assert.Less(cfg.Hero.MuzzleHeight, gunnerLegs.Top,
+            Assert.Less(cfg.Hero.MuzzleHeight, gunnerLegs.RestTop,
                 "премисса фикстуры: высота дула приходится на ноги ганнера");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
@@ -415,11 +415,11 @@ namespace Ring.Simulation.Tests
             // premises are stated against the raw band edges: written with the
             // pad added, the first one would read 1.0 > 1.0 and be false on
             // correct code.
-            Assert.Greater(cfg.Hero.MuzzleHeight, chaserLegs.Top,
+            Assert.Greater(cfg.Hero.MuzzleHeight, chaserLegs.RestTop,
                 "премисса фикстуры: стоячее дуло выше ног цели");
-            Assert.Less(cfg.Hero.MuzzleHeight, chaserCorpus.Top,
+            Assert.Less(cfg.Hero.MuzzleHeight, chaserCorpus.RestTop,
                 "премисса фикстуры: стоячее дуло не выше корпуса цели");
-            Assert.Less(cfg.Hero.SlideMuzzleHeight, chaserLegs.Top,
+            Assert.Less(cfg.Hero.SlideMuzzleHeight, chaserLegs.RestTop,
                 "премисса фикстуры: слайдовое дуло приходится на ноги цели");
             Assert.AreNotEqual(chaserLegs.Zone, chaserCorpus.Zone,
                 "премисса фикстуры: две высоты приходятся на разные зоны");
@@ -565,11 +565,11 @@ namespace Ring.Simulation.Tests
             HitPart heroCorpus = cfg.Hero.Parts[1];
             var at = new float2(5f, 0f);
 
-            Assert.Less(cfg.Hero.MuzzleHeight, gunnerLegs.Top,
+            Assert.Less(cfg.Hero.MuzzleHeight, gunnerLegs.RestTop,
                 "премисса фикстуры: на высоте дула у ганнера стоят ноги");
-            Assert.Greater(cfg.Hero.MuzzleHeight, heroCorpus.Bottom,
+            Assert.Greater(cfg.Hero.MuzzleHeight, heroCorpus.RestBottom,
                 "премисса фикстуры: на высоте дула у сборщика стоит корпус");
-            Assert.Less(cfg.Hero.MuzzleHeight, heroCorpus.Top,
+            Assert.Less(cfg.Hero.MuzzleHeight, heroCorpus.RestTop,
                 "премисса фикстуры: высота дула не выше корпуса сборщика");
             Assert.AreNotEqual(gunnerLegs.Zone, heroCorpus.Zone,
                 "премисса фикстуры: две цели отвечают разными зонами");

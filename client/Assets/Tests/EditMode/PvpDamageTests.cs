@@ -1,5 +1,5 @@
 using NUnit.Framework;
-using Ring.Simulation.Combat;   // HitZones.StackTop, for the crown premise below
+using Ring.Simulation.Combat;   // HitParts.RestCrown, for the crown premise below
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -99,7 +99,7 @@ namespace Ring.Simulation.Tests
         /// so the torso band is still 0.95 and the head band still 1.55. The
         /// indices follow the convention the rest of the suite already uses —
         /// [0] legs, [^2] torso, [^1] head.
-        static float MidOf(in HitPart p) => 0.5f * (p.Bottom + p.Top);
+        static float MidOf(in HitPart p) => 0.5f * (p.RestBottom + p.RestTop);
         static float BodyBand(in SimConfig c) => MidOf(c.Hero.Parts[^2]);
         static float HeadBand(in SimConfig c) => MidOf(c.Hero.Parts[^1]);
 
@@ -511,7 +511,7 @@ namespace Ring.Simulation.Tests
 
             const float launchHeight = 2f;  // clears the crown at t = 0
             const float plungeVelZ = -60f;  // drops the full launch height across this one step
-            Assert.Greater(launchHeight, HitZones.StackTop(c.Hero.Parts),
+            Assert.Greater(launchHeight, HitParts.RestCrown(c.Hero.Parts),
                 "fixture premise: the round launches above the collector's crown");
             w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
                 new float2(c.Weapon.ProjectileSpeed, 0f), launchHeight, plungeVelZ,
@@ -522,9 +522,20 @@ namespace Ring.Simulation.Tests
             TickIdle(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
-            Assert.AreEqual(HitZone.Legs, damaged.Zone,
-                "the round arrives at the victim's shins, whatever height it launched at");
-            float expected = c.Weapon.Damage * c.Hero.Parts[0].DamageMult;
+            // ⛔⛔ THE ZONE READS Body NOW (app-94sk T2), and the subject is
+            // untouched: what this fixture is FOR is that the height gate is
+            // asked of the VICTIM's own column rather than of the shooter's
+            // launch height, and the blow landing at all is what says so. WHICH
+            // volume answers moved because a capsule has caps — the collector's
+            // torso runs from his pelvis bone down by its own radius (0.55 - 0.45
+            // = 0.10), so a round arriving at shin height meets it as well as the
+            // legs, and the zone ladder gives it to the torso.
+            // ⚠ The torso's radius is still the whole BODY circle — a placeholder
+            // until T4b measures the real one — so this expectation is owed a
+            // second look there.
+            Assert.AreEqual(HitZone.Body, damaged.Zone,
+                "the round arrives at the victim's own column, whatever height it launched at");
+            float expected = c.Weapon.Damage * c.Hero.Parts[1].DamageMult;
             Assert.AreEqual(expected, damaged.Amount, 1e-4f);
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f);
         }

@@ -88,7 +88,7 @@ namespace Ring.Simulation.Tests
             // cannot drift from the rule again.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             HitPart[] parts = g.Parts;                     // SECOND archetype
-            g.CenterOfMassHeight = parts[parts.Length - 1].Top + 0.01f;
+            g.CenterOfMassHeight = parts[parts.Length - 1].RestTop + 0.01f;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Gunner.CenterOfMassHeight"));

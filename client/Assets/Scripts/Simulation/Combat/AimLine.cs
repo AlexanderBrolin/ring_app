@@ -337,7 +337,7 @@ namespace Ring.Simulation.Combat
                 MobState mob = snap.Mobs[index];
                 parts = SimConfig.MobConfigFor(in cfg, mob.Type).Parts;
                 targetPos = mob.Pos;
-                overlapTop = HitZones.StackTop(parts);
+                overlapTop = HitParts.RestCrown(parts);
             }
             else
             {
@@ -350,7 +350,7 @@ namespace Ring.Simulation.Combat
                 // makes at the same point.
                 overlapTop = other.SlideTimer > 0f
                     ? cfg.Hero.SlideProfileTop
-                    : HitZones.StackTop(parts);
+                    : HitParts.RestCrown(parts);
             }
 
             return HitZones.Resolve(parts, p0, p1, cfg.Weapon.ProjectileRadius, targetPos,

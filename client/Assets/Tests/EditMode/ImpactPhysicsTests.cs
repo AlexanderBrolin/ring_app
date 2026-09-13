@@ -548,7 +548,7 @@ namespace Ring.Simulation.Tests
                 m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
                 w.SetMobForTest(0, m);
                 w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
-                    hitHeight: 0.5f * (part.Bottom + part.Top),
+                    hitHeight: 0.5f * (part.RestBottom + part.RestTop),
                     projectileMass: cfg.Weapon.ProjectileMass,
                     projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
                 int budget = SimulationWorld.TicksFromSeconds(cfg.Chaser.TiltSettleSeconds);
@@ -605,7 +605,7 @@ namespace Ring.Simulation.Tests
                 m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
                 w.SetMobForTest(0, m);
                 w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
-                    hitHeight: 0.5f * (part.Bottom + part.Top),
+                    hitHeight: 0.5f * (part.RestBottom + part.RestTop),
                     projectileMass: cfg.Weapon.ProjectileMass,
                     projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
                 return math.abs(w.Mobs[0].TiltVel);
@@ -727,8 +727,8 @@ namespace Ring.Simulation.Tests
                 return w.Mobs[0].Ai == MobAiState.Downed;
             }
 
-            float headAim = head.Bottom + 0.8f * (head.Top - head.Bottom);
-            float bodyAim = 0.5f * (body.Bottom + body.Top);
+            float headAim = head.RestBottom + 0.8f * (head.RestTop - head.RestBottom);
+            float bodyAim = 0.5f * (body.RestBottom + body.RestTop);
 
             Assert.IsTrue(KnocksDown(headAim, HitZone.Head,
                     "фикстура: летящий снаряд не пришёл в ГОЛОВУ — мерить нечего"),

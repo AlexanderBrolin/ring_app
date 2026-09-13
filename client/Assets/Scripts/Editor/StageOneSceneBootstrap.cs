@@ -2628,6 +2628,9 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.MaxHp, 20f);
             changed |= SetIfDifferent(ref m.ContactDamage, 0f);
             changed |= SetIfDifferent(ref m.AttackRange, 0f);
+            // app-94sk T2 (rule 10): he never strikes, so the sentinel — see
+            // MobConfig.SwingPartId for why 0 could not have played its part.
+            changed |= SetIfDifferent(ref m.SwingPartId, -1);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 0f);
             changed |= SetIfDifferent(ref m.AttackCooldown, 0f);
             changed |= SetIfDifferent(ref m.PreferredRange, 9f);
@@ -3092,9 +3095,18 @@ namespace Ring.Editor
             changed |= SetIfDifferent(ref m.MaxSpeed, 4.2f);
             changed |= SetIfDifferent(ref m.Accel, 30f);
             changed |= SetIfDifferent(ref m.Radius, 0.8f);
+            // app-94sk T2 (spec §3.3): the broad-phase radius, seeded here
+            // for the same reason Radius is -- until the baker (T4) widens it
+            // it EQUALS the body radius, so the gather answers exactly what it
+            // answered before the split.
+            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);
             changed |= SetIfDifferent(ref m.MaxHp, 120f);
             changed |= SetIfDifferent(ref m.ContactDamage, 25f);
             changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
+            // app-94sk T2 (rule 10): the Elite strikes; the torso is the
+            // placeholder volume until T4b lays the arms out. The Director
+            // inherits it through ApplyEliteDefaults, as he does the rest.
+            changed |= SetIfDifferent(ref m.SwingPartId, 1);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 0.35f);
             changed |= SetIfDifferent(ref m.AttackCooldown, 0.9f);
             changed |= SetIfDifferent(ref m.PreferredRange, 2.5f);
@@ -3162,6 +3174,10 @@ namespace Ring.Editor
             bool changed = ApplyEliteDefaults(m);
             changed |= SetIfDifferent(ref m.MaxSpeed, 3.0f);
             changed |= SetIfDifferent(ref m.Radius, 2.2f);
+            // app-94sk T2: his own broad-phase radius overrides the Elite's,
+            // same "only the differences are written here" rule as the
+            // scalars around it.
+            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);
             changed |= SetIfDifferent(ref m.MaxHp, 2500f);
             changed |= SetIfDifferent(ref m.ContactDamage, 45f);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
@@ -3280,12 +3296,12 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { Radius = 0.35f, Bottom = 0f, Top = 1.32f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f },
-                new HitPart { Radius = 0.50f, Bottom = 1.32f, Top = 3.24f,
-                    Zone = HitZone.Body, DamageMult = 1.0f },
-                new HitPart { Radius = 0.17f, Bottom = 3.24f, Top = 4.20f,
-                    Zone = HitZone.Head, DamageMult = 1.7f },
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 1.32f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 1.32f, RestTop = 3.24f,
+                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.24f, RestTop = 4.20f,
+                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
 
@@ -3309,12 +3325,12 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { Radius = 0.56f, Bottom = 0f, Top = 1.12f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f },
-                new HitPart { Radius = 0.80f, Bottom = 1.12f, Top = 2.76f,
-                    Zone = HitZone.Body, DamageMult = 1.0f },
-                new HitPart { Radius = 0.28f, Bottom = 2.76f, Top = 3.58f,
-                    Zone = HitZone.Head, DamageMult = 1.7f },
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = 0f, RestTop = 1.12f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 1.12f, RestTop = 2.76f,
+                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.76f, RestTop = 3.58f,
+                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
 
@@ -3334,12 +3350,12 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { Radius = 1.54f, Bottom = 0f, Top = 1.51f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f },
-                new HitPart { Radius = 2.20f, Bottom = 1.51f, Top = 3.70f,
-                    Zone = HitZone.Body, DamageMult = 1.0f },
-                new HitPart { Radius = 0.77f, Bottom = 3.70f, Top = 4.80f,
-                    Zone = HitZone.Head, DamageMult = 1.7f },
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = 0f, RestTop = 1.51f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = 1.51f, RestTop = 3.70f,
+                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 3.70f, RestTop = 4.80f,
+                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
 
@@ -4168,7 +4184,7 @@ namespace Ring.Editor
             {
                 HitPart p = parts[i];
                 changed |= EnsureAimProxyCapsule(root, "AimProxy_" + p.Zone,
-                    p.Bottom, p.Top, p.Radius);
+                    p.RestBottom, p.RestTop, p.Radius);
             }
             return changed;
         }
