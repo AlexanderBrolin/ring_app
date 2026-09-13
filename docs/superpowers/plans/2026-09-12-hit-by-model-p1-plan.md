@@ -567,8 +567,8 @@ namespace Ring.Simulation.Tests
     //   тест 16 -> SegmentCapsule_ContactExactlyAtTOne_IsAMiss
     //   тест 9  -> SegmentCapsule_ZeroLengthBone_DegeneratesToASphere
     //   тест 13 -> SegmentCapsule_ZeroLengthStep_TakesTheAlreadyInsideBranch
-    //   тест 5  -> PointCapsule_NegativePadR_IsNotClampedInside
-    //   тест 2  -> SegmentCapsule_FlatTest_IsNotEquivalentToTheThreeDimensional
+    //   тест 16а -> PointCapsule_NegativePadR_IsNotClampedInside
+    //   тест 5  -> SegmentCapsule_FlatTest_IsNotEquivalentToTheThreeDimensional
     // ⛔ И ЭТО ЖЕ ПРАВКА КРУГА 3: все 56 живых имён файла начинаются с имени примитива
     // (SegmentCircle_*, SegmentCircleInterval_*, Rotate_*, RotateTowards_*,
     // ClosestPointOnSegment_*, PushOut_*), а v3 дала семи фикстурам имена без

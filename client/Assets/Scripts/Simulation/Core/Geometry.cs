@@ -2,7 +2,14 @@ using Unity.Mathematics;
 
 namespace Ring.Simulation.Core
 {
-    /// Analytic 2D geometry shared by movement, dash, projectiles and AI LoS.
+    /// Analytic geometry shared by movement, dash, projectiles and AI LoS:
+    /// PLANAR for everything that travels the floor, and VOLUMETRIC for the
+    /// capsules a body's hit volumes are laid on. The file stopped being
+    /// two-dimensional with the capsule members at its end, and the two
+    /// halves share one file rather than splitting because the second walks
+    /// through the first's clamp: point-to-segment projection has ONE home
+    /// PER DIMENSION here, and the spatial body is the planar one read in
+    /// float3 rather than a second derivation of the same arithmetic.
     public static class Geometry
     {
         public const float Skin = 1e-3f;
@@ -109,6 +116,26 @@ namespace Ring.Simulation.Core
         public static float2 ClosestPointOnSegment(float2 p, float2 a, float2 b, out float s)
         {
             float2 d = b - a;
+            float len2 = math.dot(d, d);
+            if (len2 < 1e-12f) { s = 0f; return a; } // degenerate segment = a point
+            s = math.clamp(math.dot(p - a, d) / len2, 0f, 1f);
+            return a + d * s;
+        }
+
+        /// The same single home, one dimension up — AND AN OVERLOAD, not a
+        /// name carrying a suffix: no name in this file wears a `3D` tail, and
+        /// the type of the argument is what tells the two apart (Р531). Spec
+        /// §3.4 writes `ClosestPointOnSegment3` and in the same breath demands
+        /// the distinguishing go BY ARGUMENT TYPE; an overload satisfies both,
+        /// and it keeps this projection standing next to the one it mirrors, so
+        /// that "exactly one place" is visible rather than merely claimed.
+        /// The body is the planar one character for character with float2 read
+        /// as float3, and that is a requirement, not copy-paste: the planar
+        /// clamp is pinned by the golden hashes, and an "improved" spatial
+        /// variant would part ways with it at the boundary.
+        public static float3 ClosestPointOnSegment(float3 p, float3 a, float3 b, out float s)
+        {
+            float3 d = b - a;
             float len2 = math.dot(d, d);
             if (len2 < 1e-12f) { s = 0f; return a; } // degenerate segment = a point
             s = math.clamp(math.dot(p - a, d) / len2, 0f, 1f);
@@ -1125,5 +1152,187 @@ namespace Ring.Simulation.Core
             float ringRadius = arena.Radius * arena.PlayerSpawnRingFrac;
             return new float2(math.cos(angle), math.sin(angle)) * ringRadius;
         }
+
+        // --- Stage 3 T1: capsule on a bone pair (spec §3.4) ---
+
+        /// ONE solver for a swept segment against a capsule laid on a pair of
+        /// bones, with no decomposition into candidates. ⚠ SegmentStadium
+        /// above splits into FOUR branches delegating to existing planar
+        /// primitives, and one dimension up only one of those four has a home
+        /// at all, so "repeat what the neighbor does" does not carry over
+        /// here (Р508).
+        ///
+        /// `t` IS THE FIRST ENTRY, NOT THE MINIMUM OF THE DISTANCE: the
+        /// smallest t in [0,1) at which the distance between the two segments
+        /// falls under padR + capsuleR. "Closest approach of two segments"
+        /// answers with the parameter of the DEEPEST point of the passage
+        /// instead, and the torso would then take the hit away from the head
+        /// every single time — Ruling 191 over in HitZones exists for exactly
+        /// this reason.
+        ///
+        /// THE OPEN RIGHT END IS A CHOICE BY PRECEDENT, NOT A CONVENTION OF
+        /// THIS FILE: SegmentStadium and SegmentArc read t == 1 as a miss,
+        /// whereas SegmentCircle alone would report `true, t = 1`. The broad
+        /// phase IS SegmentCircle, so the first stage hands over t in [0,1] and
+        /// this second one t in [0,1); on the boundary they part ways ON
+        /// PURPOSE, and it is written down because otherwise they would part
+        /// ways silently.
+        ///
+        /// padR IS NOT CLAMPED HERE when negative, and at capsuleR + padR less
+        /// than zero the behavior is UNDEFINED. Both halves are inherited word
+        /// for word from SegmentStadium, which states them of itself.
+        ///
+        /// DEGENERATE CASES ARE BRANCHES INSIDE, and no third primitive is
+        /// added: a zero-length bone becomes a sphere; a zero capsule radius is
+        /// still measured segment against segment through the same clamp and
+        /// then answers on `padR` alone — ⚠ with the padding zero as well the
+        /// sum is zero, and the strict test then answers MISS on every input,
+        /// exactly as an exact touch does everywhere else in this file;
+        /// parallel segments take the START of the non-empty interval, without
+        /// which `t` would become a function of the order of operations; NaN on
+        /// the input answers false without throwing.
+        ///
+        /// THE FRAME IS THE CALLER'S OBLIGATION, AND IT CANNOT BE CHECKED HERE.
+        /// This solver only ever measures distances, so it is frame-agnostic by
+        /// construction and a mismatch between its two sides is invisible to
+        /// it: a body handed in turned on its side answers as confidently as an
+        /// upright one. The two producers do NOT agree today -- the pose table
+        /// keeps a bone's height in `.y` (that is what RestBottom/RestTop are
+        /// derived from), while every float3 POSITION the simulation builds
+        /// today puts the plane in `.xy` and the height in `.z`
+        /// (ShotGeometry's muzzle and aim points, and the vertical speed field
+        /// is named VelZ for that reason). Whoever wires the two together owes
+        /// one transposition, and owes it a witness of its own; the fixtures
+        /// below are written in the bones' frame, because `a` and `b` are bones.
+        public static bool SegmentCapsule(float3 p0, float3 p1, float padR,
+            float3 a, float3 b, float capsuleR, out float t)
+        {
+            t = 0f;
+            float r = padR + capsuleR;
+            // NaN on the input answers false without throwing, and this check
+            // is what SAYS so rather than what makes it so. ⚠ MEASURED, NOT
+            // ASSUMED: the answer is false on NaN and on infinities with this
+            // check and without it alike, across NaN in either sweep end, in
+            // either bone end, in padR, in capsuleR, and a wholly NaN bone —
+            // every comparison below is strict, and NaN fails all of them.
+            // ⛔ IT STAYS FOR A NAMED REASON: the spec requires the behavior
+            // outright, and validation rule 12 is derived from it (NaN in the
+            // pose table must leave a body unhittable rather than throw).
+            // Leaving a required behavior to emergent IEEE semantics would put
+            // it one relaxed comparison away from becoming a hit on garbage.
+            // ⛔ AND IT IS WHY NO FIXTURE WITNESSES IT: the branch changes no
+            // answer, so a mutation deleting it is equivalent and a test could
+            // not tell the two apart. Named here so the gap is a decision.
+            if (!math.all(math.isfinite(p0)) || !math.all(math.isfinite(p1))
+                || !math.all(math.isfinite(a)) || !math.all(math.isfinite(b))
+                || !math.isfinite(r)) return false;
+
+            float3 step = p1 - p0;
+            // The zero-length step: the round stands still. That case IS
+            // PointCapsule, and the branch lives HERE rather than at the
+            // caller, so that a degenerate input cannot be routed around it.
+            if (math.lengthsq(step) < 1e-12f)
+                return PointCapsule(p0, padR, a, b, capsuleR);
+
+            // The first entry is found by scanning the step and refining by
+            // bisection: the pair "segment against segment with a radius" has
+            // no closed form for the first entry at all, and the closest
+            // approach answers a DIFFERENT question (Ruling 191).
+            // ⛔ THE PROBE COUNT IS NAMED WITH ITS PRICE, NOT LEFT AS A
+            // DEFAULT: the round's step is 1.75 at the shipped speed, so 16
+            // probes stand 0.109 apart, and a HEAD-ON passage through the
+            // narrowest capsule the spec names — the head, at 0.11 — cannot be
+            // missed (2 x 0.11 = 0.22 > 0.109).
+            // ⚠ A GRAZING one can: the chord of a glancing pass is arbitrarily
+            // short. That is the accepted price of the scan, named here rather
+            // than discovered at the milestone — a glancing pass should not be
+            // counted as a hit anyway, and a miss by tenths of a millimeter
+            // from a touch is not distinguishable from a hit in substance.
+            const int Probes = 16;
+            // The refinement starts from the PROBE's interval, not from the
+            // whole step: 1.75/16 = 0.109, and 0.109 / 2^12 = 0.027 mm. The
+            // number is computed rather than guessed, and it is what the
+            // fixtures' tolerance is derived from.
+            const int Refines = 12;
+            if (WithinCapsule(p0, a, b, r)) return true;   // already inside: t = 0
+            for (int i = 1; i <= Probes; i++)
+            {
+                float ti = (float)i / Probes;
+                if (WithinCapsule(p0 + step * ti, a, b, r))
+                {
+                    // The entry lies in (ti - 1/Probes, ti]; refine by halving.
+                    float lo = (float)(i - 1) / Probes, hi = ti;
+                    for (int k = 0; k < Refines; k++)
+                    {
+                        float mid = 0.5f * (lo + hi);
+                        if (WithinCapsule(p0 + step * mid, a, b, r)) hi = mid; else lo = mid;
+                    }
+                    // ⛔ THE OPEN RIGHT END, AND WHAT IT ACTUALLY GATES.
+                    // The convention is SegmentStadium's and SegmentArc's —
+                    // t == 1 is a miss — while SegmentCircle, which IS the
+                    // broad phase, would report it as a hit; the two stages
+                    // part ways there on purpose. ⚠ But a contact whose
+                    // distance equals the sum of the radii EXACTLY is refused
+                    // one level earlier by the strict test, so no probe fires
+                    // and this line is unreachable for it. What this line
+                    // really gates is a REAL entry inside the refinement's
+                    // last step off 1 — the final 1.5e-5 of the sweep, 0.027 mm
+                    // out of 1.75: `hi` cannot come down off 1, and answering
+                    // `t = 1` would break the half-open contract this second
+                    // stage promises. ⭐ NOTHING IS LOST BY IT, which is the
+                    // whole purpose of a half-open interval: the round ends
+                    // the step inside the capsule, so the next step's own
+                    // "already inside" branch answers true at t = 0. The
+                    // contact moves by one tick; it does not vanish.
+                    if (hi >= 1f) return false;
+                    t = hi;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// The one radial test both capsule members answer with, in this file's
+        /// canonical form: `lengthsq` against a squared radius, spelled the way
+        /// OverlapsStadium spells it, and STRICT — a touch exactly at the sum of
+        /// the radii is a miss, as it is for CircleOverlap, SegmentCircle,
+        /// SegmentCircleInterval, OverlapsStadium and PushOutOfCircle alike.
+        /// ⛔ ONE HOME RATHER THAN TWO COMPARISONS, AND THE REASON IS NOT
+        /// TIDINESS: the swept solver and PointCapsule must not be able to
+        /// answer differently on one input — a zero-length step goes to the
+        /// second, a moving one to the first, and a body touching the capsule
+        /// exactly at the sum of the radii would otherwise count as hit exactly
+        /// when the round happens to be moving. Sharing the predicate makes that
+        /// structural instead of a coincidence of two spellings.
+        /// ⭐ And it keeps the square root out of the scan's inner loop, where
+        /// it would cost one per call of this predicate: at most 29 per step and
+        /// capsule — one pre-check, up to 16 probes, 12 refinements — multiplied
+        /// by the 9-15 volumes of a body and by every body the broad phase
+        /// gathers.
+        /// The projection itself is not re-derived here — that is
+        /// ClosestPointOnSegment's job, called once — only the radial
+        /// comparison lives here.
+        static bool WithinCapsule(float3 p, float3 a, float3 b, float r)
+        {
+            float3 closest = ClosestPointOnSegment(p, a, b, out _);
+            return math.lengthsq(p - closest) < r * r;
+        }
+
+        /// The "already inside / zero-length sweep" BRANCH of the solver above,
+        /// and at the same time the standalone check melee needs (spec §3.9).
+        /// ⚠ A branch, not a second independent primitive, and the precedent is
+        /// word for word: OverlapsStadium serves SegmentStadium as its "already
+        /// inside at the start" branch, "which also makes a zero-length sweep
+        /// behave correctly for free".
+        /// ⚠ THE PADDING IS `padR` HERE, NOT `r`, AND THAT DEPARTS FROM THE
+        /// SPEC'S SPELLING ON PURPOSE: in this file `r` is reserved for the SUM
+        /// of two radii — CircleOverlap, SegmentCircle, SegmentCircleInterval,
+        /// OverlapsStadium, SegmentStadium and the solver above all name it that
+        /// — while the padding a caller supplies is `padR`. The solver passes
+        /// its own `padR` straight through to this parameter, so the two have to
+        /// agree: a caller reading the signature by the file's canon would hand
+        /// over an already-summed radius and silently double capsuleR.
+        public static bool PointCapsule(float3 p, float padR, float3 a, float3 b, float capsuleR)
+            => WithinCapsule(p, a, b, padR + capsuleR);
     }
 }

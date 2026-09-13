@@ -1486,5 +1486,329 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, math.length(dA), 1e-6f, "касание сдвинуло первое тело");
             Assert.AreEqual(0f, math.length(dB), 1e-6f, "касание сдвинуло второе тело");
         }
+
+        // --- Stage 3 T1: capsule on a bone pair (spec §3.4) ---
+
+        /// The capsule solver finds the FIRST ENTRY by scanning the sweep and
+        /// refining by bisection, so its `t` carries the granularity of that
+        /// refinement rather than of a closed form: 1e-4 is six times coarser
+        /// than the refinement's own 1.5e-5, and that is the whole derivation —
+        /// the worst residual across these fixtures is 1.5e-5, on the
+        /// first-entry one, and every residual is positive, since `t` is an
+        /// upper bound that always lands inside the capsule.
+        /// ⚠ THE SAME NUMBER IS SPENT ON THREE QUANTITIES THAT ARE NOT `t` —
+        /// the clamp's dimensionless `s`, a distance, the length of a cross
+        /// product — and it is derived for none of them: all three are asserted
+        /// against exactly representable values (1, 0 and 0), so any tolerance
+        /// would serve, and one named constant beats four spellings of "about
+        /// zero". ⛔ Nor is it the finest margin in this section: the right-end
+        /// fixture works at a deliberate 5e-6, sixteen times under it.
+        const float CapsuleEps = 1e-4f;
+
+        [Test]
+        public void ClosestPointOnSegment_Float3_ClampsPastTheEnd()   // fixture 14, witness of M337b
+        {
+            // What this pins is the DELEGATION, not the value: the capsule
+            // solver and this overload have to route through one clamp, and
+            // the witness is that `s` comes back clamped on an input where the
+            // clamp alone decides the outcome. The point lies PAST the far
+            // end, so `s` must arrive at exactly 1 and the returned point at b.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 2f);
+            float3 p = new float3(0f, 1f, 5f);
+
+            float3 closest = Geometry.ClosestPointOnSegment(p, a, b, out float s);
+
+            Assert.AreEqual(1f, s, CapsuleEps, "параметр не заклампился в [0,1]");
+            Assert.AreEqual(0f, math.distance(closest, b), CapsuleEps,
+                "ближайшая точка не конец отрезка");
+            // Premise as a property, not as a literal: the projection has to
+            // fall past the far end, otherwise the clamp never runs and the
+            // fixture would be green on any implementation at all.
+            Assert.Greater(math.dot(p - a, b - a), math.lengthsq(b - a),
+                "премисса фикстуры: проекция точки лежит за дальним концом");
+        }
+
+        [Test]
+        public void SegmentCapsule_CrossingHorizontalBone_HitsAtFirstEntry()   // fixture 1, witness of M329 and M332
+        {
+            // Bone along +x at height 1.0; the projectile sweeps along +z
+            // straight through it.
+            float3 a = new float3(-0.5f, 1f, 0f);
+            float3 b = new float3(0.5f, 1f, 0f);
+            float3 p0 = new float3(0f, 1f, -2f);
+            float3 p1 = new float3(0f, 1f, 2f);
+
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, p1, 0f, a, b, 0.2f, out float t),
+                "снаряд не задел капсулу, стоящую прямо на его пути");
+            // First entry in closed form: 2 m from the sweep start to the
+            // bone's axis, less the 0.2 radius, over the step length of 4.
+            Assert.AreEqual(0.45f, t, CapsuleEps, "t не равно первому входу в капсулу");
+        }
+
+        [Test]
+        public void SegmentCapsule_SlantedBone_HitsAlongItsAxis()   // fixture 2, witness of M329
+        {
+            // A SLANTED bone: the answer must not depend on the bone being
+            // axis aligned, because a leg is neither one piece nor upright.
+            // ⚠ Here `t` is pinned as an INTERVAL, not as a number: the
+            // closed form of the first entry against a slanted axis is not
+            // one, so an exact literal would pin the refinement's rounding
+            // instead of the geometry. Fixtures 1, 9, 10 and 15 pin exact
+            // values precisely because theirs ARE closed forms.
+            float3 a = new float3(0f, 0.2f, 0f);
+            float3 b = new float3(0.6f, 1.0f, 0.4f);
+            float3 p0 = new float3(0.3f, 0.6f, -2f);
+            float3 p1 = new float3(0.3f, 0.6f, 2f);
+
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, p1, 0f, a, b, 0.15f, out float t),
+                "наклонная кость не поражается — солвер считает в плане");
+            Assert.Greater(t, 0f, "контакт не может стоять в начале шага");
+            Assert.Less(t, 1f, "контакт не может стоять в конце шага");
+        }
+
+        [Test]
+        public void SegmentCapsule_RadiiAddUp_BothSidesOfTheEdge()   // fixture 3, witness of M329
+        {
+            // Both radii take part: a sweep passing at (capsuleR + padR - eps)
+            // hits, one at (capsuleR + padR + eps) misses. BOTH SIDES OF THE
+            // EDGE STAND IN ONE TEST, otherwise a mutant that merely narrows
+            // the threshold outlives its own witness — the negative half alone
+            // is green on a stub that answers false to everything.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.2f, padR = 0.05f;
+            float near = capsuleR + padR - 0.01f;
+            float past = capsuleR + padR + 0.01f;
+
+            Assert.IsTrue(Geometry.SegmentCapsule(new float3(near, 1f, -2f),
+                new float3(near, 1f, 2f), padR, a, b, capsuleR, out _),
+                "сумма радиусов не участвует — попадание вплотную не засчитано");
+            Assert.IsFalse(Geometry.SegmentCapsule(new float3(past, 1f, -2f),
+                new float3(past, 1f, 2f), padR, a, b, capsuleR, out _),
+                "промах за суммой радиусов засчитан попаданием");
+        }
+
+        [Test]
+        public void SegmentCapsule_FlatTest_IsNotEquivalentToTheThreeDimensional()   // fixture 5, witness of M330
+        {
+            // The bone stands a whole unit ABOVE the line of flight: in the
+            // plane the two paths cross, in space they never come near. Without
+            // the difference in height the fixture would be green on a planar
+            // solver too, and so would witness nothing at all.
+            float3 highA = new float3(-0.5f, 2f, 0f);
+            float3 highB = new float3(0.5f, 2f, 0f);
+            float3 p0 = new float3(0f, 1f, -2f);
+            float3 p1 = new float3(0f, 1f, 2f);
+            const float capsuleR = 0.2f;
+
+            Assert.IsFalse(Geometry.SegmentCapsule(p0, p1, 0f, highA, highB, capsuleR, out _),
+                "кость выше линии полёта засчитана попаданием");
+            // Premise stated with the planar clamp this file already owns —
+            // which is also the exact arithmetic a height-dropping mutant would
+            // perform: with the height thrown away the bone sits right on the
+            // sweep's own path, so a flat solver would answer `true` here.
+            float2 flatSweepA = new float2(p0.x, p0.z);
+            float2 flatSweepB = new float2(p1.x, p1.z);
+            float2 flatBoneMid = new float2((highA.x + highB.x) * 0.5f,
+                (highA.z + highB.z) * 0.5f);
+            float2 flatClosest = Geometry.ClosestPointOnSegment(flatBoneMid,
+                flatSweepA, flatSweepB, out _);
+            Assert.Less(math.distance(flatClosest, flatBoneMid), capsuleR,
+                "премисса фикстуры: в плане кость стоит на пути снаряда");
+            // The positive half: the same bone brought down onto the line of
+            // flight IS hit, and at the same first entry as the horizontal
+            // fixture above — so the miss above is the height's doing and
+            // nothing else's.
+            float3 lowA = new float3(-0.5f, 1f, 0f);
+            float3 lowB = new float3(0.5f, 1f, 0f);
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, p1, 0f, lowA, lowB, capsuleR, out float tLow),
+                "та же кость на линии полёта не поражается — промах выше не из-за высоты");
+            Assert.AreEqual(0.45f, tLow, CapsuleEps, "t не равно первому входу в капсулу");
+        }
+
+        [Test]
+        public void SegmentCapsule_ZeroLengthBone_DegeneratesToASphere()   // fixture 9, witness of M338
+        {
+            // A zero-length bone is a BRANCH INSIDE the solver, not a third
+            // primitive: the capsule becomes a sphere around the single point.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 degenerateB = a;
+            const float capsuleR = 0.25f;
+            const float within = 0.2f, beyond = 0.3f;
+            // Premise: the two offsets straddle the radius, so the pair
+            // measures the sphere's surface and not merely "something was hit".
+            Assert.Less(within, capsuleR, "премисса фикстуры: ближний пролёт внутри радиуса");
+            Assert.Greater(beyond, capsuleR, "премисса фикстуры: дальний пролёт снаружи радиуса");
+
+            Assert.IsTrue(Geometry.SegmentCapsule(new float3(within, 1f, -2f),
+                new float3(within, 1f, 2f), 0f, a, degenerateB, capsuleR, out float t),
+                "вырожденная кость не дала ветку сферы");
+            // First entry in closed form: half the chord is
+            // sqrt(capsuleR^2 - within^2), so the entry stands that much before
+            // the sphere's own center line, over a step of 4.
+            Assert.AreEqual((2f - math.sqrt(capsuleR * capsuleR - within * within)) / 4f,
+                t, CapsuleEps, "t не равно первому входу в сферу");
+            Assert.IsFalse(Geometry.SegmentCapsule(new float3(beyond, 1f, -2f),
+                new float3(beyond, 1f, 2f), 0f, a, degenerateB, capsuleR, out _),
+                "пролёт за радиусом сферы засчитан попаданием");
+        }
+
+        [Test]
+        public void SegmentCapsule_ZeroLengthStep_TakesTheAlreadyInsideBranch()   // fixture 13, witness of M339
+        {
+            // p0 == p1: a projectile that does not move. The branch lives
+            // INSIDE the solver rather than at the caller, so a degenerate
+            // input cannot be routed around it.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.2f;
+            const float within = 0.1f, beyond = 0.3f;
+            // Premise: the two standing points sit on opposite sides of the
+            // capsule's surface, so the pair measures the surface itself.
+            Assert.Less(within, capsuleR, "премисса фикстуры: первая точка внутри капсулы");
+            Assert.Greater(beyond, capsuleR, "премисса фикстуры: вторая точка снаружи капсулы");
+            float3 standingInside = new float3(within, 1f, 0.5f);
+            float3 standingOutside = new float3(beyond, 1f, 0.5f);
+
+            Assert.IsTrue(Geometry.SegmentCapsule(standingInside, standingInside, 0f,
+                a, b, capsuleR, out float t),
+                "нулевой шаг внутри капсулы не пошёл веткой «уже внутри»");
+            Assert.AreEqual(0f, t, CapsuleEps, "t не ноль — контакт встал не в начало шага");
+            Assert.IsFalse(Geometry.SegmentCapsule(standingOutside, standingOutside, 0f,
+                a, b, capsuleR, out _),
+                "нулевой шаг снаружи капсулы засчитан попаданием");
+        }
+
+        [Test]
+        public void SegmentCapsule_ParallelSegments_TakeTheStartOfTheInterval()   // fixture 15, witness of M335, M337a and M337b
+        {
+            // Strictly parallel: the set of parameters at which the distance
+            // stays under the sum of radii is an INTERVAL, and `t` has to be
+            // its START. Without that rule `t` turns into a function of the
+            // order of operations.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.2f, offset = 0.1f;
+            float3 p0 = new float3(offset, 1f, -2f);
+            float3 p1 = new float3(offset, 1f, 2f);
+            // Premise: the sweep runs strictly parallel to the bone — the cross
+            // product of the two directions vanishes — and passes within the
+            // radius, so the interval is non-empty rather than a single touch.
+            Assert.AreEqual(0f, math.length(math.cross(p1 - p0, b - a)), CapsuleEps,
+                "премисса фикстуры: шаг не параллелен кости");
+            Assert.Less(offset, capsuleR, "премисса фикстуры: пролёт вне радиуса, интервал пуст");
+
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, p1, 0f, a, b, capsuleR, out float t),
+                "параллельный пролёт внутри радиуса не засчитан вовсе");
+            // Start of the interval in closed form: half the chord is
+            // sqrt(capsuleR^2 - offset^2) beyond each end of the bone, over a
+            // step of 4 that begins 2 before the bone's near end.
+            float half = math.sqrt(capsuleR * capsuleR - offset * offset);
+            Assert.AreEqual((2f - half) / 4f, t, CapsuleEps,
+                "t не начало интервала — взят его конец, середина или что-то ещё");
+            // And the premise that makes "start" mean anything: the interval
+            // has a length of its own, far wider than the tolerance. Its end
+            // lies beyond the bone's far end by the same half chord.
+            float tEnd = (2f + 1f + half) / 4f;
+            Assert.Greater(tEnd - t, CapsuleEps * 100f,
+                "премисса фикстуры: интервал короче допуска, начало от конца не отличить");
+        }
+
+        [Test]
+        public void SegmentCapsule_ContactExactlyAtTOne_IsAMiss()   // fixture 16, witness of M336
+        {
+            // The right end of the half-open interval is closed off, and this
+            // fixture is what holds it shut. ⚠ THE NAME STATES THE CONVENTION,
+            // NOT THE INPUT, AND THE DIFFERENCE IS THE POINT. The convention is
+            // SegmentStadium's and SegmentArc's — t == 1 is a miss, while
+            // SegmentCircle, which is the broad phase, would call it a hit. But
+            // a contact whose distance equals the sum of the radii EXACTLY is
+            // refused one level earlier by the strict test: no probe fires, the
+            // gate is never reached, and the mutant that deletes the gate would
+            // walk away alive. So the sweep is aimed at the capsule and stopped
+            // just INSIDE it instead: the entry is real and sits at
+            // t = 0.99999375, the refinement cannot bring `hi` down off 1, and
+            // the gate is what answers. ⭐ The contact is not lost by that —
+            // the round ends this step inside the capsule, so the next step's
+            // own "already inside" branch takes it at t = 0.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.2f;
+            // The step is aimed straight at the capsule and stopped 5e-6 short
+            // of its surface, as an EXPRESSION off the radius rather than as a
+            // literal. That gap is 336 ulp of float32 at this magnitude, which
+            // is why it is neither 1e-7 (7 ulp — one rounding from vanishing)
+            // nor 2e-5 (the refinement reaches inside and the gate never fires).
+            float3 p0 = new float3(-1f, 1f, 0.5f);
+            float3 p1 = new float3(-(capsuleR - 5e-6f), 1f, 0.5f);
+
+            Assert.IsFalse(Geometry.SegmentCapsule(p0, p1, 0f, a, b, capsuleR, out _),
+                "контакт ровно в конце шага засчитан попаданием");
+            // Premise: the very same contact IS counted once the step reaches
+            // past it, so the miss above is the open right end and not the
+            // absence of any contact at all.
+            float3 longerEnd = new float3(p1.x + 0.15f, 1f, 0.5f);
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, longerEnd, 0f, a, b, capsuleR,
+                out float tLonger),
+                "тот же контакт при более длинном шаге не засчитан вовсе");
+            Assert.Less(tLonger, 1f, "контакт при более длинном шаге снова встал в конец");
+        }
+
+        [Test]
+        public void PointCapsule_NegativePadR_IsNotClampedInside()   // fixture 16a, witness of M340
+        {
+            // A negative padR is NOT clamped here — the convention
+            // SegmentStadium states of itself, and the contract holds only
+            // while the sum of the two radii stays above zero.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.2f, padR = -0.1f;
+            float3 pastTheSum = new float3(0.15f, 1f, 0.5f);
+            float3 withinTheSum = new float3(0.05f, 1f, 0.5f);
+            // Premise of the contract itself: below zero the behavior is
+            // undefined, so the fixture stays on its defined side.
+            Assert.Greater(capsuleR + padR, 0f, "премисса контракта: сумма радиусов положительна");
+
+            Assert.IsFalse(Geometry.PointCapsule(pastTheSum, padR, a, b, capsuleR),
+                "отрицательный padR заклампился — точка вне суммы радиусов засчитана внутри");
+            // And the half that makes this a witness rather than a guard: with
+            // padR clamped to zero the SAME point answers true, so this one
+            // input is what tells the two implementations apart.
+            Assert.IsTrue(Geometry.PointCapsule(pastTheSum, 0f, a, b, capsuleR),
+                "премисса фикстуры: при клампе padR к нулю та же точка обязана быть внутри");
+            Assert.IsTrue(Geometry.PointCapsule(withinTheSum, padR, a, b, capsuleR),
+                "точка внутри суммы радиусов не засчитана");
+        }
+
+        [Test]
+        public void SegmentCapsule_TIsTheFirstEntry_NotTheClosestApproach()   // fixture 10, witness of M332 and M335
+        {
+            // ⭐ The fixture of the whole task. The step runs ALONG the
+            // capsule's side, so the minimum of the distance lies at the middle
+            // of the step while the first entry lies distinctly earlier. A
+            // solver answering with the closest approach would hand the torso
+            // every hit the head is owed.
+            float3 a = new float3(0f, 1f, 0f);
+            float3 b = new float3(0f, 1f, 1f);
+            const float capsuleR = 0.5f;
+            float3 p0 = new float3(-2f, 1f, 0.4f);
+            float3 p1 = new float3(2f, 1f, 0.4f);
+
+            Assert.IsTrue(Geometry.SegmentCapsule(p0, p1, 0f, a, b, capsuleR, out float t),
+                "пролёт вдоль капсулы не засчитан вовсе");
+            // The step holds the bone's own height and crosses inside its span,
+            // so the distance to the bone is exactly |x| throughout. First
+            // entry: |x| falls to capsuleR after (2 - capsuleR) of the step's 4.
+            Assert.AreEqual((2f - capsuleR) / 4f, t, CapsuleEps,
+                "t не первый вход, а какая-то другая точка прохождения");
+            // Premise: the closest approach really does sit later — at the
+            // middle of the step the distance is zero, and nothing beats zero.
+            const float tClosest = 0.5f;
+            Assert.AreEqual(0f, math.abs(p0.x + (p1.x - p0.x) * tClosest), CapsuleEps,
+                "премисса фикстуры: минимум расстояния стоит не в середине шага");
+            Assert.Greater(tClosest - t, CapsuleEps * 100f,
+                "премисса фикстуры: минимум расстояния не отстоит от первого входа дальше допуска");
+        }
     }
 }
