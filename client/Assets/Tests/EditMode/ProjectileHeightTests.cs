@@ -181,8 +181,10 @@ namespace Ring.Simulation.Tests
             // reason (precedent: ProtocolVersion_Current_IsPinnedToThree ->
             // ...ToFour -> ...ToFive): the old name quoted a field that no
             // longer exists.
-            // The part's own Top is 2.70, so the
-            // grazing line is 2.82 and the clearing line just above it. What the
+            // ⚠ app-94sk T2: the head part's own RestTop is 2.87 now — the crown
+            // BONE is 2.70, and the capsule adds its 0.17 m radius as a cap — so
+            // the grazing line is taken AT 2.87 and the clearing line a round's
+            // radius above it. What the
             // test witnesses is unchanged and is the only witness of it in the
             // suite: the edge forgiveness HitZones.Resolve inherited from
             // Classify, which pulls a round grazing the crown back ONTO the
@@ -191,8 +193,9 @@ namespace Ring.Simulation.Tests
             // TANGENT (app-94sk T2). `RestTop + ProjectileRadius` is the tangent
             // point, and a tangent is what the capsule solver is ALLOWED to miss:
             // it finds the first entry by scanning 16 probes across the step, and
-            // at the exact tangent the contact window is 0.015 m against a probe
-            // spacing of 0.073 — the cost recorded as deviation 3 of this plan
+            // at the exact tangent the contact window is ZERO (the radial test is
+            // strict everywhere in Geometry), and a hair below it a window of
+            // 0.015 m against a probe spacing of 0.073 — the cost recorded as deviation 3 of this plan
             // ("a tangential pass can be missed by the scan — accepted and
             // written down"). Taken at the crown itself the window is 0.47 m
             // wide, i.e. six probes, and the fixture measures what it is for:

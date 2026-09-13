@@ -1249,6 +1249,11 @@ namespace Ring.Simulation.Combat
             // already use.
             PoseTable poses;
             float slideCeiling = float.NaN;
+            // ⚠ app-94sk T2: the array is no longer an ORDERED STACK and the
+            // reader is no longer HitZones.Resolve — the paragraph below is the
+            // record of what this variable used to mean. What travels now is the
+            // array PLUS the archetype's pose table, because a volume is a pair
+            // of bone indices and says nothing without one.
             // app-88jb T14: the body arrives as its ORDERED STACK OF PARTS,
             // and since T15 that array is the only hit volume there is --
             // the three zone tops and three multipliers it replaced are gone
@@ -1279,6 +1284,11 @@ namespace Ring.Simulation.Combat
                 // the single move that closes the flying half of playtest debt
                 // app-hoe6: a round aimed into the chaser's head belt
                 // [2.12, 2.70] used to pass clean over the body.
+                // ⚠ THE PARAGRAPH ABOVE IS HISTORY (app-94sk T2): the line it
+                // explains — `overlapTop = HitZones.StackTop(parts)` — is gone,
+                // and the crown of the presented silhouette is now computed
+                // inside HitVolumes.Resolve from the pose table. Kept because it
+                // records WHY the crown had to stop being the column's.
                 poses = cfg.Poses;   // a mob never slides: no ceiling of that kind
             }
             else if (kind == HitPlayer)
@@ -1426,7 +1436,9 @@ namespace Ring.Simulation.Combat
             // - part radius) -- 0.33 m on a chaser headshot. `contactT` is in
             // the caller's own [p0, p1] parameterization, the same one `bestT`
             // is in, so those two branches lerp it with no conversion.
-            // ⛔ RULE 5 IS ASKED HERE AND NOWHERE ELSE (app-94sk T2): mid-slide
+            // ⛔ RULE 5 IS ASKED HERE FOR THE ROUND (app-94sk T2) — the aim ray
+            // asks it for itself in AimLine, and the two meet in T3 when that
+            // path moves onto HitVolumes as well. Mid-slide
             // the collector presents a lower profile, and that is a rule about a
             // STATE, which the pose table cannot express. It stays a gate in
             // front of the volumes until T4 replaces it with rule 16.

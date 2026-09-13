@@ -152,14 +152,14 @@ namespace Ring.Data
         /// of Radius — one named humanoid proportion, applied to all five
         /// bodies alike (0.315 and 0.1575 rounded to the centimeter the
         /// Inspector shows).
-        /// ⚠ Parts[0].Top IS SlideProfileTop: validation rule 5 requires the
+        /// ⚠ Parts[0].RestTop IS SlideProfileTop: validation rule 5 requires the
         /// slide profile to land exactly on a part boundary, which is what
         /// keeps the slide equivalent to what it was before parts existed.
         /// ⚠ app-94sk T2: the heights kept their numbers and changed their
         /// NAMES (Bottom/Top -> RestBottom/RestTop, the capsule's extent in the
         /// rest pose), and the bone indices below are PLACEHOLDERS -- a column
         /// of four bone ends, which is what a three-band body was. The baker
-        /// (T4) overwrites all three of BoneA/BoneB/RestBottom/RestTop from the
+        /// (T4) overwrites all four of BoneA/BoneB/RestBottom/RestTop from the
         /// real skeleton; until it does, these are the numbers the game has
         /// always used and the answers do not move. PartId is the index, which
         /// is where an append-only local numbering starts.

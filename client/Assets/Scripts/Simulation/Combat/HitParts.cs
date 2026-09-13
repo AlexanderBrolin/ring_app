@@ -8,16 +8,21 @@ namespace Ring.Simulation.Combat
     ///
     /// ⛔ IT EXISTS BECAUSE VALIDATION RULE 2 IS BEING WITHDRAWN. While parts
     /// were a sorted column, "the crown" and "the bottom of the head" could be
-    /// read off an INDEX, and four copies of that index were all equally right:
-    /// HitZones.StackTop, SimConfigBuilder.PartsTop, MobFootprintAudit and
-    /// PersistentPropsDirector.PartHeight; the zone lookup was written twice
-    /// more (MidOfZone, HeadPartBottom). The volume layout of spec §3.2 puts
-    /// the head THIRD and a shin LAST, so after the rule goes, ZERO of the four
+    /// read off an INDEX, and THREE copies of that index were all equally
+    /// right: HitZones.StackTop, SimConfigBuilder.PartsTop and
+    /// PersistentPropsDirector.PartHeight. ⚠ A FOURTH place computed the same
+    /// crown as a MAXIMUM (MobFootprintAudit) and was therefore the only one the
+    /// change left correct -- it moved here anyway, because one home that leaves
+    /// a copy behind closes nothing. The zone lookup was written twice more
+    /// (MidOfZone; HeadPartBottom was a FOURTH index read until this task turned
+    /// it into one). The volume layout of spec §3.2 puts the head
+    /// THIRD and a shin LAST, so after the rule goes, ZERO of the three indices
     /// are right -- "the top of the last part" would return the top of a shin,
     /// and "the bottom of the head" would silently become the bottom of a shin.
     ///
     /// ⛔ PUBLIC, NOT internal, and that is not a style choice: Ring.Data calls
-    /// it (SimConfigBuilder, validation rules 13 and 16), Ring.Presentation
+    /// it (SimConfigBuilder — today through PartsTop and HeadPartBottom, and
+    /// from T4 through validation rules 13 and 16), Ring.Presentation
     /// calls it (PersistentPropsDirector) and Ring.Editor calls it
     /// (MobFootprintAudit), while this assembly's InternalsVisibleTo is open to
     /// the tests alone.
@@ -82,11 +87,12 @@ namespace Ring.Simulation.Combat
         /// by the table".
         ///
         /// ⚠ HEIGHT IS `.y` HERE because the bones are in the BODY frame; the
-        /// answer is a height, which is frame-free. The tilt is taken for the
-        /// same reason Resolve takes it: a leaning body presents a different
-        /// crown than an upright one, and re-signing seven call sites twice
-        /// costs more than carrying the parameter. Until T6b every caller
-        /// passes float2.zero.
+        /// answer is a height, which is frame-free.
+        /// ⛔ `bodyTilt` IS DECLARED AND NOT READ — SAID PLAINLY RATHER THAN
+        /// IMPLIED. It will matter in T6b, where a leaning body stops presenting
+        /// an upright crown; it is carried from here so the call sites of Resolve
+        /// and this method are not re-signed twice. Until then it changes
+        /// nothing, and every caller passes float2.zero.
         /// ⛔ ITS POSE PARAMETERS MIGRATE TOGETHER WITH HitVolumes.Resolve: in
         /// T6b `int poseRow` becomes the blended `float3[] pose` in BOTH.
         public static float PoseTop(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt)

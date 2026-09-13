@@ -648,8 +648,14 @@ namespace Ring.Simulation.Tests
         /// and that is exactly why every field taken out owes a dedicated
         /// witness -- the same argument HitPart[] carries since Т13.
         /// Checked PER PIECE rather than by one bump, because the fold walks
-        /// four different shapes (a scalar, an int array, a float3 array and a
-        /// float array) and dropping any one of them is its own mutation.
+        /// FIVE different shapes (a scalar, an int array, a float3 array, a float
+        /// array and a ulong array) and dropping any one of them is its own
+        /// mutation.
+        /// ⚠ THE FIFTH — UpperLayerMask — IS NOT BUMPED HERE, AND THE GAP IS
+        /// NAMED RATHER THAN LEFT: the fixture tables of T2 leave it null,
+        /// because the aim layer's mask is the baker's output and its readers
+        /// arrive in T6. A bump of a null array asserts nothing. It is owed a
+        /// piece here by the task that first fills it.
         static void AssertPoseTableAffectsHash(string sectionName)
         {
             var baselineCfg = TestConfigs.Default();

@@ -38,9 +38,11 @@ namespace Ring.Simulation.Combat
         /// ITS STEP THE ORDINARY WAY and weaves nothing; ToWorld, and only
         /// ToWorld, transposes. Witness: fixture 12a, mutant M392.
         ///
-        /// ⛔ `bodyTilt` IS TAKEN ALREADY, and every caller hands in float2.zero
-        /// until T6b: introducing it later would mean editing seven call sites a
-        /// second time.
+        /// ⛔ `bodyTilt` IS TAKEN ALREADY AND READ BY NOTHING YET — every caller
+        /// hands in float2.zero until T6b, where a leaning body stops presenting
+        /// an upright shape. It is carried from here so the call sites are not
+        /// re-signed twice; there are nine of them today (one on the combat path,
+        /// eight in the fixtures).
         public static bool Resolve(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt,
             float3 bodyOrigin, float bodyFacingSin, float bodyFacingCos,
             float3 p0, float3 p1, float projRadius,
@@ -62,6 +64,14 @@ namespace Ring.Simulation.Combat
             // motion. Witness: the instrument fixture 8 (T6c) — the gate must
             // SHORTEN the work without moving a single outcome.
             // ⛔ THE STEP'S HEIGHT IS `.z`: p0/p1 arrive in the WORLD frame.
+            // ⚠ AND THE GATE'S FLOOR IS NOT A GAP, THOUGH A CAPSULE NOW HANGS
+            // BELOW THE GROUND (the chaser's leg reaches -0.35 once its radius is
+            // counted). Overlaps refuses only a step lying wholly under
+            // `-radius`, and a live round never has one: ProjectileSystem removes
+            // it the moment its underside reaches the floor, so its center stays
+            // at or above its own radius while it exists. The gate therefore
+            // cannot refuse a step the honest capsule test would accept, which is
+            // what spec §3.4 requires of it.
             if (!HitZones.Overlaps(p0.z, p1.z, projRadius,
                     HitParts.PoseTop(parts, in table, poseRow, bodyTilt)))
                 return false;

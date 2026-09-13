@@ -770,9 +770,14 @@ namespace Ring.Data
             // and is not dropped: without it Т13's rule 5 would accept a profile
             // sitting on the CROWN, and a slide would stop hiding anything at all.
             //
-            // ITS FORMER LOWER TWIN (the profile had to reach at least the top
-            // of the collector's legs band) IS GONE, AND THAT IS A PROOF RATHER
-            // THAN A PREFERENCE: rule 5 requires the profile to coincide with a
+            // ⛔ ITS FORMER LOWER TWIN (the profile had to reach at least the
+            // top of the collector's legs band) IS GONE, AND THE PROOF BELOW NO
+            // LONGER HOLDS AS WRITTEN (app-94sk T2): it stands on validation
+            // rule 2, which this task withdrew, so the boundary set is neither
+            // ordered nor guaranteed to start at the legs. The twin stays gone
+            // because rule 16 (T4) replaces the whole family, not because the
+            // argument below still runs. Kept as the record of why it was
+            // dropped: rule 5 requires the profile to coincide with a
             // part boundary, rule 2 makes the boundary set {0, Parts[0].RestTop,
             // Parts[1].RestTop, ...}, and ReqPositive right above already refuses
             // the 0. Every value that survives those two is therefore at least
@@ -881,7 +886,7 @@ namespace Ring.Data
             }
             if (tallestName != null && cfg.Hero.MaxAimHeight < tallestTop)
             {
-                errors.Add("Hero.MaxAimHeight must be >= the top of every body's last part — " +
+                errors.Add("Hero.MaxAimHeight must be >= the crown of every body — " +
                     $"the tallest is {tallestName} at {tallestTop:F3} (got " +
                     $"MaxAimHeight={cfg.Hero.MaxAimHeight:F3}; crowns: {string.Join(", ", crownList)}).");
             }
@@ -2221,11 +2226,16 @@ namespace Ring.Data
         ///    rather than an absence: HitVolumes.Resolve ranks by zone, then by
         ///    first entry, then by the smaller PartId, and HitParts.TryFindByZone
         ///    answers the same way.
-        ///  - RULE 4 (a part is no wider than its body) is replaced by rule 9:
-        ///    the broad phase reads GatherRadius now, so a volume wider than the
-        ///    body circle is gathered rather than lost, and what has to be
-        ///    checked is that the gather covers it — which is the baker's number
-        ///    and the baker's rule (T4).
+        ///  - RULE 4 (a part is no wider than its body) goes because the reason
+        ///    it existed did: the projectile's broad phase reads GatherRadius
+        ///    now, so a volume wider than the body circle is GATHERED rather than
+        ///    lost. ⛔ ITS REPLACEMENT IS NOT HERE YET, AND THAT IS A NAMED GAP:
+        ///    rule 9 ("the gather covers the furthest bone plus the volume on
+        ///    it") is the baker's rule and arrives in T4, so between this task
+        ///    and that one NOTHING judges GatherRadius against the volumes —
+        ///    a zero would gather nobody at all, in silence.
+        ///    ⚠ And the aim ray is not on GatherRadius until T3: AimLine's own
+        ///    broad phase still asks ProjectileSystem.MobRadiusFor.
         ///
         /// ⚠ RULE 5 (SlideProfileTop coincides with a part boundary) SURVIVES
         /// THEM, and deliberately: rule 16 replaces it, and rule 16 stands on

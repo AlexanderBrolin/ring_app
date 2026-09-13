@@ -349,7 +349,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void AtTheSharedBone_TheWiderVolumeIsMetFirst_AndTheLadderIsPerStep()
+        public void HitExactlyOnTheSharedBone_BelongsToTheUpperPart()
         {
             // THE BOUNDARY TAKEN IS BODY/HEAD, NOT LEGS/BODY (review finding
             // D-C7). On the legs(R 0.35)/body(R 0.50) seam the "boundary closed
@@ -366,7 +366,12 @@ namespace Ring.Simulation.Tests
             // this chaser), which sits inside the torso and names no seam at all.
             // What the two volumes genuinely share is the CHEST BONE, and that is
             // what the shot is aimed at.
+            // ⛔ FROZEN BEFORE THE WORLD IS BUILT: the verdict here turns on
+            // WHICH tick-step the two entries fall in, and the window between
+            // them is 0.33 m against a step of 1.17 m. A chaser walking 0.173 m
+            // per tick would move that boundary under the fixture.
             SimConfig cfg = TestConfigs.Open();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(7, cfg);
             HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
             HitPart torso = cfg.Chaser.Parts[1];
@@ -382,20 +387,21 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e));
-            // ⛔⛔ THE ANSWER IS Body, AND THAT IS THE NEW TRUTH RATHER THAN A
-            // RELAXED EXPECTATION (app-94sk T2). Under bands the seam was awarded
-            // to the upper part by a strict comparison — the torso's own `lo <
-            // part.RestTop` excluded it at exactly this height. Under capsules
-            // there is nothing to exclude: the torso is 0.50 m wide against the
-            // head's 0.17, so the round ENTERS ITS FLANK 0.33 m earlier along the
-            // flight (x >= 5.38 against x >= 5.71, recomputed), and the two
-            // entries fall in different tick-steps. The zone ladder arbitrates
-            // between volumes met on ONE step; it does not reach across steps,
-            // and making it reach would mean judging a contact that has not
-            // happened yet.
-            Assert.AreEqual(HitZone.Body, e.Zone,
-                "лестница приоритета перепрыгнула через шаг — попадание отдано объёму, " +
-                "до которого снаряд на этом шаге ещё не дошёл");
+            // ⛔⛔ THE CLAIM SURVIVED THE MODEL; THE ROUTE TO IT DID NOT. Under
+            // bands the seam went to the upper part by a strict comparison — the
+            // torso's own `lo < part.RestTop` excluded it at exactly this height.
+            // Under capsules nothing is excluded: the torso is 0.50 m wide
+            // against the head's 0.17, so the round enters its flank 0.33 m
+            // earlier along the flight (x >= 5.38 against x >= 5.71, recomputed).
+            // Both entries fall in ONE tick-step of 1.17 m, the ladder arbitrates
+            // between them, and the head wins — the same verdict, reached by a
+            // rule instead of by a comparison.
+            // ⛔ WHICH IS WHY THE BODY IS FROZEN ABOVE: 0.33 m is a quarter of a
+            // step, and a chaser walking 0.173 m per tick would decide this
+            // fixture by WHERE THE TICK BOUNDARY FELL rather than by geometry.
+            // MEASURED, not argued: unfrozen it answers Body, frozen it answers
+            // Head.
+            Assert.AreEqual(HitZone.Head, e.Zone, "граница отдана НИЖНЕЙ части");
             // ⚠ AND THE HEAD IS GENUINELY REACHABLE AT THIS HEIGHT — asked of the
             // resolver directly, on a step that spans both windows. Without this
             // half the fixture would pass on a body whose head is simply missing.
@@ -524,11 +530,12 @@ namespace Ring.Simulation.Tests
             // old one "stopped passing". `0.5f * legs.RestTop` meant the middle
             // of the LEGS BAND while a part was a band; RestTop is the top of a
             // CAPSULE now — bone plus radius — so half of it (0.615) sits inside
-            // the torso capsule, whose bottom cap reaches 0.38. Worse, the
-            // chaser's leg runs out to a foot swung 0.9 m aside, so a shot down
-            // his own axis at any leg height misses the leg by 0.49 m
-            // (recomputed). "Under the knees" now has to be said where the knee
-            // IS, and PartMidWorld is what says it.
+            // the torso capsule, whose bottom cap reaches 0.38 — and the ladder
+            // then rightly answers Body. ⚠ THE LEG ITSELF IS STILL REACHABLE DOWN
+            // THE AXIS (recomputed: such a shot passes 0.189 m from the leg's
+            // segment against its 0.35 m radius, i.e. it HITS) — the zone is lost
+            // to the torso, not to a miss. "Under the knees" therefore has to be
+            // said where ONLY the knee is, and PartMidWorld is what says it.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
             HitPart legs = cfg.Chaser.Parts[0];
@@ -552,8 +559,13 @@ namespace Ring.Simulation.Tests
                 + Chaser3D(in cfg.Chaser.Poses, torsoPart.BoneB);
             float3 legMid = new float3(legPlan, legH);
             float3 closest = Geometry.ClosestPointOnSegment(legMid, tA, tB, out _);
-            Assert.Greater(math.distance(legMid, closest), torsoPart.Radius,
-                "премисса фикстуры: середина ноги обязана лежать ВНЕ капсулы корпуса");
+            // ⛔ THE THRESHOLD IS THE SUM OF THE RADII, NOT THE TORSO'S ALONE:
+            // the round has its own 0.12, and a premise stated against 0.50 would
+            // pass while the shot still met the torso. ⚠ MEASURED MARGIN: 0.629
+            // against 0.62, i.e. 9 mm — thin, and named so rather than left to be
+            // discovered when T4b changes a radius.
+            Assert.Greater(math.distance(legMid, closest), torsoPart.Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: середина ноги обязана лежать ВНЕ капсулы корпуса с учётом радиуса снаряда");
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: legH,
                 targetXY: legPlan, targetH: legH);
             TestWorlds.RunUntilProjectilesDie(w);

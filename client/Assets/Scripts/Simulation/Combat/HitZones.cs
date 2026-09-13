@@ -127,8 +127,14 @@ namespace Ring.Simulation.Combat
         /// (the early-out below): a chord's span is a subset of its step's, so
         /// a part the whole step cannot reach is reachable through no chord.
         ///
-        /// BANDS ARE HALF-OPEN [Bottom, Top) EXCEPT THE TOPMOST, whose Top is
-        /// inclusive -- HitPart's own contract, and the reason a hit landing
+        /// ⛔ THIS METHOD IS THE BAND ERA, AND IT IS ON ITS WAY OUT (app-94sk
+        /// T2): HitVolumes.Resolve answers the same question over capsules, and
+        /// the last caller left here -- AimLine -- moves in T3, which deletes
+        /// this method with it. Everything below describes the model it was
+        /// written for, and that model's rules (validation 2, 3 and 4) are gone
+        /// already, so read it as history rather than as contract.
+        /// BANDS ARE HALF-OPEN [Bottom, Top) EXCEPT THE TOPMOST, whose Top WAS
+        /// inclusive -- HitPart's contract BEFORE the capsule, and the reason a hit landing
         /// exactly on a boundary belongs to the UPPER part.
         ///
         /// NO PADDING BETWEEN PARTS. Growing each band by the round's radius the
@@ -206,7 +212,7 @@ namespace Ring.Simulation.Combat
                 // shape, not the arithmetic (Т14/Т23 fix-round, Ruling 193):
                 // at `i == last` the clamp one line up already capped `lo` at
                 // `ceiling <= parts[last].RestTop`, and at `i == 0` the same clamp
-                // floors `hi` at 0 while `Parts[0].RestBottom == 0` is
+                // floors `hi` at 0 while `Parts[0].RestBottom == 0` WAS
                 // SimConfigBuilder.ValidateParts' own rule ("Parts[0].Bottom
                 // must be 0 -- the stack starts at the ground"). What actually
                 // carries "a hit exactly on a boundary belongs to the UPPER

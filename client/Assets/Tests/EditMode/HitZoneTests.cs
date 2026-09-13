@@ -177,7 +177,10 @@ namespace Ring.Simulation.Tests
             var target = float2.zero;
             var p0 = new float2(0.2f, 0f);
             var p1 = new float2(-0.3f, 0f);
-            float seam = legs.RestTop;                 // == torso.RestBottom, builder rule 2
+            // ⚠ NOT a seam between adjacent bands any more (app-94sk T2): the
+            // extents overlap because a capsule has caps. It is simply a height
+            // inside both volumes, which is all the tie below needs.
+            float seam = legs.RestTop;
             float hStart = seam;
             float hEnd = seam - 0.1f;              // descending across the seam
 

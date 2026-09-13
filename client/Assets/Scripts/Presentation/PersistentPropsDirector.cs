@@ -836,8 +836,8 @@ namespace Ring.Presentation
         /// Parts[0].Bottom on the ground" — and both indices were right only
         /// while validation rule 2 enforced a sorted column. That rule goes with
         /// this task: the volume layout of spec §3.2 puts the head THIRD and a
-        /// shin LAST, and it puts a LEG at index 0 on some bodies and a TORSO on
-        /// others. So the head's gibs would have flown from a shin's height and
+        /// shin LAST, so "the crown belt is the LAST part" became false the
+        /// moment the layout stopped being a column. So the head's gibs would have flown from a shin's height and
         /// the legs' from half a torso's, and NOTHING would have failed: these
         /// are cosmetic spawn heights, read by no test and by nothing in the
         /// simulation.

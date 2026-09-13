@@ -707,8 +707,9 @@ namespace Ring.Simulation.Core
     /// ⛔ A PART IS A CAPSULE ON A PAIR OF BONES, NOT A COAXIAL SLICE
     /// (app-94sk T2, spec §3.2). The slice could only ever express one shape --
     /// a circle around the body's own axis -- and the measurement that opened
-    /// this task is what a circle costs: a mob's circle is HALF the width of
-    /// its drawn body, a collector's is THREE TIMES wider, and a pose moves a
+    /// this task is what a circle costs: a mob's circle is as little as HALF the
+    /// width of its drawn body (measured ratios 1.33 / 1.94 / 2.10 / 1.57 across
+    /// the four archetypes), a collector's is THREE TIMES wider, and a pose moves a
     /// bone three times further than the radius of the whole volume the body
     /// was described by. BoneA/BoneB index THIS archetype's pose table.
     ///
@@ -737,7 +738,13 @@ namespace Ring.Simulation.Core
         ///     RestTop    = max(bone[BoneA].y, bone[BoneB].y) + Radius
         /// Without a single definition validation rule 13 ("RestTop agrees with
         /// the table") is unprovable, and the fixtures and rule 16 measure
-        /// different things. ⚠ `.y` is the height because these are BONES, and
+        /// different things.
+        /// ⛔⛔ THE DEFINITION IS ONE; THE DATA REACHES IT BODY BY BODY. As of T2
+        /// only the CHASER's volumes sit on real bones and carry extents computed
+        /// this way; the other four still carry the band numbers they had before
+        /// the capsule, because their layout is T4b's subject and their extents
+        /// are the baker's (T4). Rule 13 is what turns this paragraph from a
+        /// convention into a checked fact, and it arrives with the baker. ⚠ `.y` is the height because these are BONES, and
         /// bones live in the BODY frame -- HitVolumes.ToWorld is the one place
         /// that carries them into the world frame, where height is `.z`.
         /// ⚠ DERIVED DATA: the baker computes both, and rule 13 checks them

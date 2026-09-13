@@ -19,20 +19,34 @@ namespace Ring.Simulation.Tests
         /// handing them all the same bones would put a gunner's head volume at a
         /// chaser's chest, and validation rule 13 ("RestTop agrees with the
         /// table") could never be satisfied by any of them. Each body gets a
-        /// column of ITS OWN heights, and the extents of its volumes are DERIVED
-        /// from those bones rather than written a second time — see
-        /// WithRestExtents below.
+        /// column of ITS OWN heights.
+        ///
+        /// ⛔⛔ BUT THE EXTENTS ARE STILL AUTHORED BY HAND, AND ONLY THE CHASER
+        /// FOLLOWS THE CANON OF HitPart TODAY. Deriving all five from their bones
+        /// was tried and REVERTED IN THIS TASK, with a number as the reason: the
+        /// Director's torso radius is 2.20 against bones at 1.51 and 3.70, so a
+        /// capsule's extent puts his crown at 5.90 m — above Hero.MaxAimHeight
+        /// (4.9), which validation rule 14 measures against it, and every
+        /// BuildShipped in the suite would be refused. That radius is a
+        /// PLACEHOLDER, the whole body circle standing in for a torso nobody has
+        /// measured yet; T4b is the task that lays the volumes out and T4 the one
+        /// whose baker computes the extents. ⇒ the chaser, whose volumes this
+        /// task DOES move onto real bones, carries capsule extents; the other
+        /// four keep their band numbers until then, and validation rule 13 — the
+        /// rule that makes the two agree — arrives with the baker, not here.
         ///
         /// ⭐ THE CHASER'S FOOT IS SWUNG 0.9 m ASIDE, AND THAT IS THE SUBJECT OF
         /// FIXTURES 4/4a: his physical circle is 0.5 m, so the leg sticks out of
         /// it — precisely the case GatherRadius was split from Radius for.
         /// ⛔ THE SWING GOES ALONG `z`, NOT `x`, and that is not a style choice:
-        /// at identity facing (there is no heading before T5c) `local.x` points
-        /// AT the shooter standing at the origin, so a swing along `x` would lie
-        /// ALONG the line of fire and fixture 4 would be red on correct code
-        /// (recomputed: a 0.52 m lateral gap against a 0.35 m leg radius). A
-        /// swing along `z` lays the foot ACROSS — which is where the fixture
-        /// shoots. ⚠ In the world that lands on `+y`: ToWorld carries the body's
+        /// at identity facing (there is no heading before T5c) the body's
+        /// `local.x` runs along the world's `+x`, i.e. ALONG the line from the
+        /// shooter at the origin to the body at (6, 0). A swing along `x` would
+        /// therefore lie down the line of fire, and fixture 4 would be red on
+        /// correct code — recomputed: the shot would then pass 0.482 m clear of
+        /// the leg's surface (0.952 m axis to axis, less the leg's 0.35 and the
+        /// round's 0.12). A swing along `z` lays the foot ACROSS the line — which
+        /// is where the fixture shoots. ⚠ In the world that lands on `+y`: ToWorld carries the body's
         /// plan `(x, z)` into the world's plan `(x, y)`.
         ///
         /// ⚠ Checksum IS LEFT UNSET. It is a cache of the loaded bytes (Р514) and
@@ -323,8 +337,9 @@ namespace Ring.Simulation.Tests
                     // ⚠ RestBottom/RestTop ARE THE CAPSULE'S EXTENT — bone plus
                     // and minus the radius, per HitPart's own definition, NOT the
                     // bone ends. That is why the leg now reaches BELOW the ground
-                    // (-0.30) and the head ABOVE the crown (2.87): a capsule has
-                    // caps, and the band it used to be did not.
+                    // (0 - 0.35 = -0.35) and the head ABOVE the crown
+                    // (2.70 + 0.17 = 2.87): a capsule has caps, and the band it
+                    // used to be did not.
                     Parts = new[]
                     {
                         new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.23f,
