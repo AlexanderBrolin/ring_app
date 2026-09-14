@@ -46,24 +46,36 @@ MonoBehaviour:
   TiltFallAngle: 0.9
   DownedSeconds: 1.2
   Parts:
-  - Radius: 1.54
-    Bottom: 0
-    Top: 1.51
+  - BoneA: 0
+    BoneB: 1
+    Radius: 1.54
     Zone: 1
     DamageMult: 0.75
-  - Radius: 2.2
-    Bottom: 1.51
-    Top: 3.7
+    PartId: 0
+    RestBottom: -1.54
+    RestTop: 3.8566394
+  - BoneA: 1
+    BoneB: 2
+    Radius: 2.2
     Zone: 2
     DamageMult: 1
-  - Radius: 0.77
-    Bottom: 3.7
-    Top: 4.8
+    PartId: 1
+    RestBottom: -0.16793871
+    RestTop: 4.5166397
+  - BoneA: 2
+    BoneB: 3
+    Radius: 0.77
     Zone: 3
     DamageMult: 1.7
+    PartId: 2
+    RestBottom: 1.2620614
+    RestTop: 3.0224013
+  GatherRadius: 3.7054062
+  SwingPartId: 1
   MaxRicochets: 2
   RicochetRetention: 0.8
   RicochetMinSpeed: 6
   PierceMassRatio: 0.06
   PierceDamageLoss: 0.5
   PushRecoilFraction: 1
+  Poses: {fileID: -4802529177845105490, guid: 0249c08e7c6cc2a19a6f581ffefbc9f8, type: 3}

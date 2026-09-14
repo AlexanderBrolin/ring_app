@@ -58,21 +58,32 @@ MonoBehaviour:
   TiltSettleSeconds: 0.9
   TiltGain: 10.5
   Parts:
-  - Radius: 0.32
-    Bottom: 0
-    Top: 0.55
+  - BoneA: 0
+    BoneB: 1
+    Radius: 0.32
     Zone: 1
     DamageMult: 0.75
-  - Radius: 0.45
-    Bottom: 0.55
-    Top: 1.35
+    PartId: 0
+    RestBottom: -0.32
+    RestTop: 1.1971726
+  - BoneA: 1
+    BoneB: 2
+    Radius: 0.45
     Zone: 2
     DamageMult: 1
-  - Radius: 0.16
-    Bottom: 1.35
-    Top: 1.75
+    PartId: 1
+    RestBottom: 0.4271726
+    RestTop: 1.4636033
+  - BoneA: 2
+    BoneB: 3
+    Radius: 0.16
     Zone: 3
     DamageMult: 1.7
+    PartId: 2
+    RestBottom: 0.85360324
+    RestTop: 1.2975836
+  GatherRadius: 0.65359354
   MaxDepenetrationPerTick: 0.5
   PushRecoilFraction: 0.25
   SlideThrustRecovery: 18
+  Poses: {fileID: -4802529177845105490, guid: 34179755b7549f83a91ac4e86c001667, type: 3}
