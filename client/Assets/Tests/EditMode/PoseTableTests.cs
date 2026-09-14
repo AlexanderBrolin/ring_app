@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using NUnit.Framework;
 using Ring.Editor;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 using UnityEditor;
@@ -42,6 +43,66 @@ namespace Ring.Simulation.Tests
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("pose table checksum"));
+        }
+
+        [Test]
+        public void ClipOneOfTheCollectorsBakedTableIsTheSlide()
+        {
+            // ⛔⛔ THE CLIP-ORDER CONTRACT, ASKED WHERE IT CAN STILL BE ANSWERED.
+            // Validation rule 16 reads the slide's crown through
+            // `ClipFirstRow[SlideClipIndex]`, and the ONLY thing that makes
+            // that row the slide is `PoseBaker.BakeSet`'s ordering. A table
+            // carries no clip NAMES, so the rule itself can check nothing but a
+            // length — lose `Slide_Loop` from the controller and rule 16 would
+            // go on measuring the crown of whatever clip landed at index 1,
+            // silently.
+            //
+            // ⚠ THIS FIXTURE IS AN INSTRUMENT and it reads the COMMITTED
+            // ARTIFACT rather than a fresh bake: the artifact is what the game
+            // ships and what a reviewer cannot see (binary, under LFS).
+            // ⚠ It compares against the SET the baker would build, taken from
+            // the collector's own animator — not against a literal row number,
+            // which would survive any change to the contract.
+            var prefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
+                AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Collector));
+            Assert.IsNotNull(prefab, "префаб сборщика не найден — фикстура мерит не свой предмет");
+
+            GameObject instance = Object.Instantiate(prefab);
+            try
+            {
+                var animator = instance.GetComponentInChildren<Animator>(true);
+                Assert.IsNotNull(animator, "премисса: у сборщика есть Animator");
+                string slideTake = AnimatorCatalog.PackClipOf(
+                    Ring.Presentation.AnimIds.SlideLoopName);
+
+                var takes = new List<string>();
+                foreach (AnimationClip c in PoseSampling.CollectClips(animator))
+                    takes.Add(AnimatorCatalog.TakeOf(c.name));
+                Assert.Contains(slideTake, takes,
+                    "премисса: контроллер сборщика вообще несёт клип слайда");
+
+                PoseTable baked = PoseBaker.BakeOne(prefab);
+                Assert.Greater(baked.ClipFirstRow.Length, TestConfigs.SlideClipIndex + 1,
+                    "у запечённой таблицы сборщика обязан быть клип 1");
+
+                // The slide is SHORTER than standing — that is the whole point
+                // of sliding — so its crown has to sit below the rest pose's.
+                // ⛔ A property, not a literal: a literal would have to be
+                // re-typed every time the clip changes, and would then be the
+                // thing that broke instead of the contract.
+                float restCrown = HitParts.PoseTop(
+                    TestConfigs.Default().Hero.Parts, in baked, 0, float2.zero);
+                float slideCrown = HitParts.PoseTop(TestConfigs.Default().Hero.Parts, in baked,
+                    baked.ClipFirstRow[TestConfigs.SlideClipIndex], float2.zero);
+                Assert.Less(slideCrown, restCrown,
+                    $"клип {TestConfigs.SlideClipIndex} запечённой таблицы обязан быть СЛАЙДОМ: "
+                    + $"его крона {slideCrown:F4} не ниже кроны покоя {restCrown:F4}, то есть "
+                    + "порядок клипов пекаря разошёлся с тем, что читает правило 16");
+            }
+            finally
+            {
+                Object.DestroyImmediate(instance);
+            }
         }
 
         [Test]

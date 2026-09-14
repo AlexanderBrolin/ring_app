@@ -846,10 +846,17 @@ namespace Ring.Data
             // ⚠ UPRIGHT (`float2.zero` tilt): validation judges the authored
             // configuration, and a tilt is a runtime state of one body.
             //
-            // ⚠ IT STANDS DOWN ON A BODY WITH NO SLIDE CLIP, the same
-            // convention `HeadPartBottom`'s NaN sets: `SlideClipIndex` is the
-            // baker's contract (clip 0 rest, clip 1 the slide loop), and a
-            // table that never reached clip 1 cannot express this question.
+            // ⚠ IT STANDS DOWN ON A TABLE THAT NEVER REACHED CLIP 1, the same
+            // convention `HeadPartBottom`'s NaN sets. ⛔ AND THAT IS A WEAKER
+            // GUARD THAN IT LOOKS, WHICH IS SAID HERE RATHER THAN LEFT: the
+            // only thing that makes row `ClipFirstRow[1]` the SLIDE is
+            // `PoseBaker.BakeSet`'s ordering contract, and a length check
+            // cannot see a broken one. The witness lives on the other side, in
+            // `PoseTableTests.ClipOneOfTheCollectorsBakedTableIsTheSlide`,
+            // which reads the COMMITTED artifact — a table has no clip names,
+            // so the only place the question can be asked is where the names
+            // still exist. ⚠ This rule is asked of the collector alone; every
+            // mob has clips at index 1 too, and none of them is a slide.
             if (cfg.Hero.Poses.ClipFirstRow != null
                 && cfg.Hero.Poses.ClipFirstRow.Length > SlideClipIndex + 1
                 && cfg.Hero.Parts != null && cfg.Hero.Parts.Length > 0)
@@ -2281,11 +2288,13 @@ namespace Ring.Data
         ///    switch that used to answer its broad phase — ProjectileSystem.
         ///    MobRadiusFor — was deleted with that move.
         ///
-        /// ⚠ RULE 5 (SlideProfileTop coincides with a part boundary) SURVIVES
-        /// THEM, and deliberately: rule 16 replaces it, and rule 16 stands on
-        /// the crown of the slide clip BY THE TABLE, i.e. on numbers the baker
-        /// produces in T4. Dropping rule 5 here would leave the slide with no
-        /// rule for two whole tasks.
+        /// ⚠ RULE 5 (SlideProfileTop coincides with a part boundary) IS GONE AS
+        /// OF app-94sk T4, AND RULE 16 CARRIES ITS SUBJECT: the slide is judged
+        /// on the crown of the SLIDE CLIP BY THE TABLE — numbers the baker
+        /// produces — rather than on a scalar that was only meaningful while
+        /// parts were a contiguous column. ⚠ The FIELD outlives the rule: two
+        /// combat readers still derive the slide's height ceiling from it until
+        /// the pose reaches them in T6a/T6b (decision Р-C of that task).
         ///
         /// RULE 7 IS HALF-CHECKABLE AND THIS IS THE CHECKABLE HALF. "Append-only"
         /// cannot be seen at runtime — a configuration does not remember its own

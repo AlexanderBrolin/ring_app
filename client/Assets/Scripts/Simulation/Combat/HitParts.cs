@@ -157,6 +157,16 @@ namespace Ring.Simulation.Combat
             for (int i = 0; i < parts.Length; i++)
             {
                 HitPart part = parts[i];
+                // ⛔ THE BONE INDICES ARE GUARDED HERE TOO, AND NOT BECAUSE
+                // VALIDATION RULE 6 IS ABSENT — BECAUSE IT RUNS LATER. Rule 16
+                // calls this member from `SimConfigBuilder.Validate` BEFORE
+                // `ValidateParts` reaches rule 6, so an out-of-range `BoneB`
+                // would arrive here first and either read a row it does not
+                // belong to (silently) or throw an IndexOutOfRangeException —
+                // which is not a named refusal and, by this project's own rule
+                // 332/498, not a RED either. Same guard, same reason, as
+                // `GatherReach` right above.
+                if (part.BoneA >= table.BoneCount || part.BoneB >= table.BoneCount) continue;
                 float a = table.Bones[rowBase + part.BoneA].y;
                 float b = table.Bones[rowBase + part.BoneB].y;
                 top = math.max(top, math.max(a, b) + part.Radius);

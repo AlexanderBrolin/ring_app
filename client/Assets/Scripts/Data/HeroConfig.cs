@@ -166,9 +166,12 @@ namespace Ring.Data
         /// of Radius — one named humanoid proportion, applied to all five
         /// bodies alike (0.315 and 0.1575 rounded to the centimeter the
         /// Inspector shows).
-        /// ⚠ Parts[0].RestTop IS SlideProfileTop: validation rule 5 requires the
-        /// slide profile to land exactly on a part boundary, which is what
-        /// keeps the slide equivalent to what it was before parts existed.
+        /// ⚠ app-94sk T4: `Parts[0].RestTop` IS NO LONGER `SlideProfileTop`, and
+        /// the rule that made them one number — validation rule 5 — is
+        /// withdrawn. The slide is judged by rule 16 now, against the crown of
+        /// the SLIDE CLIP BY THE TABLE; the scalar survives only as the height
+        /// ceiling two combat readers still derive from it, until the pose
+        /// reaches them in T6a/T6b.
         /// ⚠ app-94sk T2: the heights kept their numbers and changed their
         /// NAMES (Bottom/Top -> RestBottom/RestTop, the capsule's extent in the
         /// rest pose), and the bone indices below are PLACEHOLDERS -- a column

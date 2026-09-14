@@ -132,48 +132,14 @@ namespace Ring.Simulation.Tests
             BlendThresholds = new[] { 0f, 1f },
         });
 
-        /// The pose table of a NAMED section of a built configuration, BY
-        /// REFERENCE — a change made through it is a change the config build
-        /// sees, which is what the fixtures need.
-        /// ⛔ NEEDED BY TWO SETS (`SimConfigHashTests` and `PoseTableTests`), so
-        /// its home is here rather than inside either of them.
-        /// ⛔ A CLASSIC `switch`, NOT A SWITCH EXPRESSION: C# has no `ref`
-        /// return from a switch expression at all, and Unity 6000.3.21f1 is
-        /// C# 9.
-        public static ref PoseTable PoseTableOfSection(ref SimConfig cfg, string body)
-        {
-            switch (body)
-            {
-                case "Hero": return ref cfg.Hero.Poses;
-                case "Chaser": return ref cfg.Chaser.Poses;
-                case "Gunner": return ref cfg.Gunner.Poses;
-                case "Elite": return ref cfg.Elite.Poses;
-                case "Director": return ref cfg.Director.Poses;
-                default: throw new System.ArgumentException($"unknown body {body}");
-            }
-        }
-
-        /// A copy of a table with ONE MORE ROW — "a different table" for the
-        /// fixtures that pin a hot swap as a refusal.
-        /// ⛔ THE ARRAYS ARE COPIED, not aliased: substituting in place would
-        /// change the very table the fixture compares against.
-        /// ⛔ ALL SIX FIELDS TRAVEL, `UpperLayerMask` INCLUDED: a forgotten
-        /// field would blank the collector's aim mask, and the fixtures run
-        /// this over all five bodies.
-        public static PoseTable WithOneMoreRow(in PoseTable t)
-        {
-            var bones = new float3[t.Bones.Length + t.BoneCount];
-            System.Array.Copy(t.Bones, bones, t.Bones.Length);
-            var firstRow = new int[t.ClipFirstRow.Length];
-            System.Array.Copy(t.ClipFirstRow, firstRow, firstRow.Length);
-            firstRow[^1] += 1;                       // the row-count sentinel grew
-            return new PoseTable
-            {
-                BoneCount = t.BoneCount, ClipFirstRow = firstRow, Bones = bones,
-                BlendThresholds = t.BlendThresholds, UpperLayerMask = t.UpperLayerMask,
-                Checksum = t.Checksum + 1UL,
-            };
-        }
+        // ⛔ `PoseTableOfSection` AND `WithOneMoreRow` ARE NOT WRITTEN HERE,
+        // AND THAT IS A DECISION RATHER THAN AN OMISSION (app-94sk T4). The
+        // plan's helper-home table names both as this file's, but their only
+        // consumers are fixtures 18в/18г, which live in T6c. Written now they
+        // would be dead code whose doc has to claim readers it does not have —
+        // and the first draft of `WithOneMoreRow` did exactly that ("the
+        // fixtures run this over all five bodies", run by nobody). T6c adds
+        // them together with the fixtures that call them.
 
         /// The world midpoint of a volume's capsule, for a body standing at
         /// `bodyPlan` with no heading yet (identity facing, as everything does
@@ -269,8 +235,11 @@ namespace Ring.Simulation.Tests
                     // mirrors HeroConfig's C# default array (two-sources-of-
                     // numbers discipline — test/code-default side). His scale
                     // factor is 1.0, so his heights are the only ones that did
-                    // not move; Parts[0].RestTop is SlideProfileTop, which
-                    // validation rule 5 requires.
+                    // not move. ⚠ app-94sk T4: Parts[0].RestTop is NO LONGER
+                    // SlideProfileTop — rule 5 is withdrawn and the two numbers
+                    // parted (0.87 against 0.55). What rule 5 used to require is
+                    // now rule 16's, and it is asked of the slide clip's crown
+                    // by the table rather than of a scalar.
                     Parts = new[]
                     {
                         new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = -0.32f, RestTop = 0.87f,

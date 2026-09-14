@@ -30,11 +30,10 @@ namespace Ring.Data
         /// hand out copies and the fixtures would pin nothing.
         public PoseTable Table;
 
-        /// ⚠ THE CHECKSUM LIVES INSIDE `Table`, NOT BESIDE IT. One field, one
-        /// home: `PoseTable.Checksum` is a CACHE of the fold over the table's
-        /// own numbers, and the config build recomputes and compares it
-        /// (validation rule 27). A second copy on this wrapper would be a
-        /// cache of a cache.
-        public ulong Checksum => Table.Checksum;
+        // ⚠ THERE IS NO `Checksum` PROPERTY HERE, AND THAT IS THE POINT: the
+        // seal lives inside `Table` (`PoseTable.Checksum`), the config build
+        // recomputes it over the loaded numbers and compares (validation rule
+        // 27), and a forwarding property on this wrapper would be a cache of a
+        // cache with nobody reading it.
     }
 }

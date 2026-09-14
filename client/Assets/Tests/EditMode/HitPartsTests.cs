@@ -853,6 +853,46 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void Validate_RestBottomDisagreeingWithTheTable_Throws()   // rule 13, lower half
+        {
+            // ⛔ THE OTHER HALF OF RULE 13, AND IT NEEDS ITS OWN FIXTURE. The
+            // rule checks `RestBottom` and `RestTop` separately, so a mutant
+            // that dropped the `RestBottom` comparison would survive the
+            // `RestTop` witness next door untouched — the same argument that
+            // put rule 6's violation on `BoneB` rather than `BoneA`.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.Parts[2].RestBottom -= 0.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Chaser.Parts[2].RestBottom"));
+            Assert.That(ex.Message, Does.Contain("rest pose"));
+        }
+
+        [Test]
+        public void Validate_GatherRadiusBelowTheBodyCircle_Throws()   // rule 9, lower half
+        {
+            // ⛔ THE FIRST HALF OF RULE 9 — the one the table half cannot cover.
+            // Rule 9 REPLACES the withdrawn rule 4 (`Parts[i].Radius <= Radius`,
+            // spec §3.13), so the replacement owes a witness of its own; without
+            // it a mutant keeping only the table comparison is green everywhere.
+            //
+            // ⛔⛔ AND IT CANNOT BE ISOLATED BY CONSTRUCTION, WHICH IS SAID HERE
+            // RATHER THAN WORKED AROUND: isolating it would need a body whose
+            // volumes stay INSIDE its physical circle, and no fixture body has
+            // one — the collector's widest capsule IS his radius (0.45 = 0.45)
+            // and every other table is wider still. So BOTH halves refuse this
+            // configuration, and what this fixture pins is the FIRST half's own
+            // MESSAGE, which the second half does not produce. A mutant that
+            // drops `gatherRadius < radius` still throws — on the table half —
+            // and still fails here, because the words it names are different.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.GatherRadius = g.Radius * 0.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.GatherRadius must be >= Gunner.Radius"));
+        }
+
+        [Test]
         public void Validate_SlideCrownAboveTheGunnersMuzzle_Throws()   // rule 16, test 4в
         {
             // ⛔⛔ TWO HALVES, AND BOTH ARE BROKEN HERE — separately, because a

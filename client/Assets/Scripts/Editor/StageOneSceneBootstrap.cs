@@ -693,6 +693,25 @@ namespace Ring.Editor
                 !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Poses:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Poses:");
 
+            // ⛔⛔ app-94sk T4, FOUND BY THE CODE-REVIEW ROUND: THE GUNNER'S
+            // `SwingPartId` IS 1 ON DISK AND HIS `AttackRange` IS 0, which
+            // validation rule 10 refuses — "this archetype does not strike, and
+            // a volume it never swings is a claim nothing can honour".
+            //
+            // The defect is OLDER than this task and this task is what made it
+            // material: the key was never IN the file, so Unity supplied
+            // `MobConfig`'s chaser-mirrored class default of 1, and nothing
+            // read it. Widening `EnsureAssetHasKey` to a LIST of markers made
+            // the asset rewrite in full and put that 1 on disk. The only code
+            // that writes -1 (`ApplyGunnerDefaults`) sits behind `gunnerCreated`
+            // and never runs for a committed asset.
+            // ⚠ KEYED ON THE VALUE BEING REPLACED (rule 14), not on a key's
+            // arrival: the key is there now, so only the departure of the wrong
+            // number can date this delivery.
+            bool gunnerSwingPending = System.IO.File
+                .ReadAllText($"{DataDir}/MobGunnerConfig.asset")
+                .Contains("\n  SwingPartId: 1\n");
+
             // maxAimHeightPending is keyed on the value being REPLACED, not on
             // a key's arrival: MaxAimHeight has been on disk since Stage 1, so
             // no key can date this delivery -- only the departure of the old
@@ -744,6 +763,11 @@ namespace Ring.Editor
                 EditorUtility.SetDirty(elite);
                 EditorUtility.SetDirty(director);
             }
+
+            // app-94sk T4: the gunner's strike sentinel, under its own gate for
+            // the reason above.
+            if (gunnerSwingPending && SetIfDifferent(ref gunner.SwingPartId, -1))
+                EditorUtility.SetDirty(gunner);
 
             // app-88jb Т16: the aim-ceiling half, under its own gate for the
             // reason above. On THIS run both halves land in this one Apply(),
@@ -3145,7 +3169,11 @@ namespace Ring.Editor
             // for the same reason Radius is -- until the baker (T4) widens it
             // it EQUALS the body radius, so the gather answers exactly what it
             // answered before the split.
-            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);    // app-94sk T4: rule 9 — his bones sit on his axis, so his widest capsule IS his reach
+            // app-94sk T4: rule 9 on his FIXTURE table, whose bones sit on the
+            // body axis, so his widest capsule is the whole of his reach. ⚠ The
+            // shipped number is not this one: `ApplyPoseNumbers` recomputes it
+            // off the BAKED table, where the bones move.
+            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);
             changed |= SetIfDifferent(ref m.MaxHp, 120f);
             changed |= SetIfDifferent(ref m.ContactDamage, 25f);
             changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
@@ -3223,7 +3251,10 @@ namespace Ring.Editor
             // app-94sk T2: his own broad-phase radius overrides the Elite's,
             // same "only the differences are written here" rule as the
             // scalars around it.
-            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);    // app-94sk T4: rule 9 — his torso capsule is his body circle, so the two coincide
+            // app-94sk T4: rule 9 on his FIXTURE table — his torso capsule is his
+            // body circle, so the two coincide there. ⚠ The shipped number is
+            // recomputed off the BAKED table by `ApplyPoseNumbers`.
+            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);
             changed |= SetIfDifferent(ref m.MaxHp, 2500f);
             changed |= SetIfDifferent(ref m.ContactDamage, 45f);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
@@ -3501,9 +3532,15 @@ namespace Ring.Editor
         /// the five shipped assets. Three things travel, and each has exactly
         /// one source:
         ///   `Poses`              — the imported `.posetable` for this body;
-        ///   `GatherRadius`       — `PoseBaker.GatherRadiusOf(table)`, i.e. the
-        ///                          furthest any bone reaches from the body
-        ///                          axis over every clip EXCEPT the death take;
+        ///   `GatherRadius`       — `HitParts.GatherReach(parts, table)`: the
+        ///                          furthest any VOLUME reaches from the body
+        ///                          axis, ITS OWN RADIUS INCLUDED, over every
+        ///                          clip except the death take. ⚠ NOT the
+        ///                          baker's `BoneAxisReachOf`, which is the
+        ///                          same figure BEFORE the radius is added —
+        ///                          that one exists to be held beside the
+        ///                          auditor's COMBAT REACH, not to be written
+        ///                          into an asset;
         ///   `RestBottom/RestTop` — each capsule's extent in the REST POSE,
         ///                          by the one definition `HitPart`'s own doc
         ///                          carries: bone ends grown by the radius.

@@ -270,6 +270,23 @@ namespace Ring.Editor
             death.Sort((a, b) => string.CompareOrdinal(
                 AnimatorCatalog.TakeOf(a.name), AnimatorCatalog.TakeOf(b.name)));
 
+            // ⛔⛔ THE ORDER CONTRACT IS CHECKED, NOT MERELY BUILT (found by the
+            // code-review round of this task). Three validation rules stand on
+            // it, and every way it can fail fails SILENTLY:
+            //   * NO death take at all ⇒ the last clip is an ordinary combat
+            //     one, and `GatherReach` would drop a LIVE animation from the
+            //     gather circle — the exact silent miss rule 9 exists to stop;
+            //   * TWO death takes ⇒ only the last is excluded, and the other
+            //     INFLATES the circle by the very sweep the exclusion is for;
+            //   * no slide loop on a body rule 16 judges ⇒ clip 1 is some other
+            //     clip, and rule 16 measures a crown that is not the slide's.
+            if (death.Count != 1)
+                throw new System.ArgumentException(
+                    $"{animator.gameObject.name}: expected exactly one death take, found "
+                    + $"{death.Count} — the clip-order contract puts the death take LAST so that "
+                    + "the gather radius can exclude it, and neither zero nor two can be ordered "
+                    + $"that way (takes recognised as death: {string.Join(", ", DeathTakes)})");
+
             set.Add(rest);
             if (slide != null) set.Add(slide);
             set.AddRange(middle);

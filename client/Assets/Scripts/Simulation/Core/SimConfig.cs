@@ -800,6 +800,19 @@ namespace Ring.Simulation.Core
         /// Checksum OF THE LOADED BYTES (Р514). ⛔ The asset's field is a cache,
         /// not the source of truth: the config build recomputes and compares.
         public ulong Checksum;
+
+        // ⛔⛔ WHAT THIS TABLE DOES NOT CARRY, NAMED SO THE NEXT READER DOES NOT
+        // LOOK FOR IT: THE BAKING RATE. Spec §3.5 maps a phase to a row as
+        // `row = phase_in_ticks * (bake_fps / 30)`, and `bake_fps` is 30 for
+        // locomotion and rest and 60 for the fast takes — a per-CLIP number
+        // that lives in `PoseBaker.FastTakes`, inside `Ring.Editor`, which
+        // `Ring.Simulation` cannot see. Neither `ClipFirstRow` nor the clip
+        // lengths restore it.
+        // ⇒ THE FIRST READER OF THAT MAPPING IS T6a (the pose key), and it is
+        // the task that has to decide: a seventh field here, or a rate the
+        // simulation is told some other way. Deciding it now would be guessing
+        // at a consumer that does not exist yet; leaving it UNSAID would cost
+        // a re-bake of five committed artifacts nobody predicted.
     }
 
     /// Stage 3 Task 13 (spec §3.7): what one catalog entry IS — the ONLY

@@ -651,11 +651,12 @@ namespace Ring.Simulation.Tests
         /// FIVE different shapes (a scalar, an int array, a float3 array, a float
         /// array and a ulong array) and dropping any one of them is its own
         /// mutation.
-        /// ⚠ THE FIFTH — UpperLayerMask — IS NOT BUMPED HERE, AND THE GAP IS
-        /// NAMED RATHER THAN LEFT: the fixture tables of T2 leave it null,
-        /// because the aim layer's mask is the baker's output and its readers
-        /// arrive in T6. A bump of a null array asserts nothing. It is owed a
-        /// piece here by the task that first fills it.
+        /// ⭐ THE FIFTH — UpperLayerMask — IS BUMPED AS OF app-94sk T4, WHICH IS
+        /// THE TASK THIS GAP NAMED. T2 left it out with its reason recorded:
+        /// the fixture tables carried a null there, and a bump of a null array
+        /// asserts nothing. T4's baker is what first fills the mask (fourteen
+        /// bits on the collector, measured), and `TestConfigs.Sealed` is what
+        /// first fills it on the fixture side — so the debt came due here.
         static void AssertPoseTableAffectsHash(string sectionName)
         {
             var baselineCfg = TestConfigs.Default();
@@ -669,11 +670,28 @@ namespace Ring.Simulation.Tests
             var probe = (PoseTable)tableField.GetValue(sectionField.GetValue(TestConfigs.Default()));
             Assert.IsNotNull(probe.Bones, $"premise: {sectionName}.Poses.Bones must not be null");
             Assert.Greater(probe.Bones.Length, 0, $"premise: {sectionName}.Poses carries no bones");
+            // app-94sk T4: and the mask must be a real array, or its bump below
+            // throws instead of asserting.
+            Assert.IsNotNull(probe.UpperLayerMask,
+                $"premise: {sectionName}.Poses.UpperLayerMask must not be null");
+            Assert.Greater(probe.UpperLayerMask.Length, 0,
+                $"premise: {sectionName}.Poses.UpperLayerMask carries no words");
 
             AssertTableBump("Bones", t => { t.Bones[0] += new float3(1f, 0f, 0f); return t; });
             AssertTableBump("BoneCount", t => { t.BoneCount += 1; return t; });
             AssertTableBump("ClipFirstRow", t => { t.ClipFirstRow[0] += 1; return t; });
             AssertTableBump("BlendThresholds", t => { t.BlendThresholds[0] += 1f; return t; });
+            // ⛔⛔ THE MASK IS A `ulong[]`, THE ONLY SHAPE OF ITS KIND IN THE
+            // FOLD, AND IT GOES IN AS TWO HALVES PER WORD (the fold takes int).
+            // ⛔ THAT IS TWO BUMPS, NOT ONE, AND A MUTATION PROVED IT: a single
+            // bump on bit 32 leaves the mutant "fold the low half as zero"
+            // ALIVE — measured, M400 survived the whole 1973-test set on it.
+            // Each half is its own way to lose the mask, so each owes its own
+            // witness.
+            AssertTableBump("UpperLayerMask low half",
+                t => { t.UpperLayerMask[0] ^= 1UL; return t; });
+            AssertTableBump("UpperLayerMask high half",
+                t => { t.UpperLayerMask[0] ^= 1UL << 32; return t; });
 
             void AssertTableBump(string label, Func<PoseTable, PoseTable> bump)
             {
@@ -686,6 +704,7 @@ namespace Ring.Simulation.Tests
                 table.Bones = (float3[])table.Bones.Clone();
                 table.ClipFirstRow = (int[])table.ClipFirstRow.Clone();
                 table.BlendThresholds = (float[])table.BlendThresholds.Clone();
+                table.UpperLayerMask = (ulong[])table.UpperLayerMask.Clone();
                 tableField.SetValue(section, bump(table));
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
