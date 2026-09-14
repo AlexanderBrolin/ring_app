@@ -90,20 +90,27 @@ namespace Ring.Data
         /// ⚠ app-94sk T2: same migration as HeroConfig.Parts -- the heights kept
         /// their numbers and changed their names, and BoneA/BoneB are the
         /// placeholder column the baker (T4) overwrites from the real skeleton.
+        /// ⛔ app-94sk T4: THE EXTENTS NOW OBEY VALIDATION RULE 13 — the
+        /// capsule's reach in the REST POSE off `TestConfigs.ChaserRestPose()`
+        /// (bones 0 / 0.88 / 2.12 / 2.70). Same numbers `TestConfigs` has
+        /// carried since T2; the class defaults were the half that still read
+        /// as bands.
         public HitPart[] Parts =
         {
-            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 0.88f,
+            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.23f,
                 Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.88f, RestTop = 2.12f,
+            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.38f, RestTop = 2.62f,
                 Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 2.12f, RestTop = 2.70f,
+            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 1.95f, RestTop = 2.87f,
                 Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
         }; // Was the sync-marker key until app-88jb Т19.
 
         /// app-94sk T2 (spec §3.3, Р507): the projectile broad phase's radius —
         /// see HeroConfig.GatherRadius for the whole argument. Default is the
         /// body radius until the baker writes the real one.
-        [Range(0.05f, 12f)] public float GatherRadius = 0.5f;
+        // app-94sk T4: the chaser's own reach off ChaserRestPose — his foot is
+        // swung 0.9 m out of his circle, so rule 9's table half bites here.
+        [Range(0.05f, 12f)] public float GatherRadius = 1.25f;
 
         /// app-94sk T2 (spec §3.9): WHICH volume this archetype strikes with.
         /// ⛔ -1 IS THE SENTINEL "this archetype does not strike at all", and it
@@ -143,6 +150,16 @@ namespace Ring.Data
         /// It is also the ready handle for a future anchor-like archetype that
         /// should be harder to shove than its mass alone would say.
         [Range(0f, 1f)] public float PushRecoilFraction = 1f; // sync-marker key — keep LAST (was PierceDamageLoss, app-88jb Т20)
+
+        /// app-w4ca T4 (spec §3.5а): the BAKED POSE TABLE this body's volumes
+        /// stand in. ⛔ NOT A HOT KNOB — the owner turns capsule radii and
+        /// reaction thresholds; clips and phases are generated, and this field
+        /// only says WHICH artifact a body reads. Without it
+        /// `SimConfigBuilder.Build` would have nowhere to take the table from.
+        /// ⚠ THE SYNC MARKER DOES NOT MOVE for this field: `EnsureAssetHasKey`
+        /// now takes a LIST of marker names, so a new field is one more name in
+        /// that list rather than a marker relocation (Runbook R-ASSET).
+        public PoseTableAsset Poses;
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

@@ -124,20 +124,17 @@ namespace Ring.Simulation.Tests
             Assert.That(ex.Message, Does.Contain("EXACTLY ONE"));
         }
 
-        [Test]
-        public void Validate_SlideProfileOffAnyPartBoundary_Throws()
-        {
-            // Rule 5: the slide profile is obliged to COINCIDE with a part
-            // boundary, otherwise equivalence with today's behavior is held
-            // together by the data happening to agree rather than by a rule
-            // (finding C-M3).
-            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            h.SlideProfileTop = 0.61f;                     // past every boundary
-            var ex = Assert.Throws<System.ArgumentException>(
-                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
-            Assert.That(ex.Message, Does.Contain("Hero.SlideProfileTop"));
-            Assert.That(ex.Message, Does.Contain("part boundary"));
-        }
+        // ⛔ THE WITNESS OF VALIDATION RULE 5 IS GONE WITH ITS RULE (app-94sk
+        // T4, owner decision Н60). It pinned "Hero.SlideProfileTop coincides
+        // with a part boundary", which was a meaningful claim only while parts
+        // were a contiguous COLUMN of bands — validation rule 2, withdrawn in
+        // T2. Capsules on bone pairs overlap and are not sorted, so there is no
+        // boundary set left to land on. ⚠ THE SUBJECT DID NOT VANISH, IT MOVED:
+        // `Validate_SlideCrownAboveTheGunnersMuzzle_Throws` below is rule 16,
+        // and it asks the two questions this family actually carried — that the
+        // gunner's round passes over a sliding collector, and that the
+        // collector does not fire from above his own silhouette — of the CROWN
+        // OF THE SLIDE BY THE TABLE rather than of a scalar.
 
         [Test]
         public void Validate_MaxAimHeightBelowTheDirectorsCrown_Throws()
@@ -744,6 +741,137 @@ namespace Ring.Simulation.Tests
                 "высота контакта равна середине части — контакт взят у объёма, а не у шага");
             Assert.AreEqual(cfg.Weapon.Damage * torso.DamageMult, e.Amount, 1e-3f,
                 "урон не умножен на множитель части-победителя");
+        }
+
+        // ---- app-94sk T4: the five validation rules the baker makes possible ----
+
+        /// The crown of the SLIDE by the table, repeated here ON PURPOSE
+        /// (lesson 427): a witness that calls the code it checks proves only
+        /// that the code agrees with itself. The slide is clip
+        /// `TestConfigs.SlideClipIndex`; the crown is the highest bone end of
+        /// any volume, grown by that volume's own radius.
+        /// ⛔ THE CLIP INDEX IS A NAMED CONSTANT, NOT THE LITERAL 1: on a
+        /// one-clip table `ClipFirstRow[1]` is the row-count sentinel, and the
+        /// read would run past the bones instead of going red.
+        static float SlideCrownOf(Ring.Data.HeroConfig hero)
+        {
+            ref PoseTable t = ref ConfigTests.PoseTableFor(hero);
+            int row = t.ClipFirstRow[TestConfigs.SlideClipIndex];
+            if (row >= t.Bones.Length / t.BoneCount)
+                throw new System.ArgumentException("pose table has no slide clip");
+            float top = float.NegativeInfinity;
+            foreach (HitPart part in hero.Parts)
+            {
+                float a = t.Bones[row * t.BoneCount + part.BoneA].y + part.Radius;
+                float b = t.Bones[row * t.BoneCount + part.BoneB].y + part.Radius;
+                top = math.max(top, math.max(a, b));
+            }
+            return top;
+        }
+
+        [Test]
+        public void Validate_BoneIndexPastTheTable_Throws()   // rule 6, test 28в, M384
+        {
+            // ⛔ THE VIOLATION GOES ON `BoneB` DELIBERATELY: `BoneA` is read
+            // first by every other rule, so a mutant that checked only the
+            // first half of the pair would survive a fixture that broke it.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.Parts[1].BoneB = (byte)(ConfigTests.PoseTableFor(c).BoneCount + 1);
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Chaser.Parts[1].BoneB"));
+            Assert.That(ex.Message, Does.Contain("outside the pose table"));
+        }
+
+        [Test]
+        public void Validate_GatherRadiusBelowTheTableMaximum_Throws()   // rule 9, test 4б, M379
+        {
+            // ⛔ TWO HALVES, AND THE VIOLATION GOES ON THE SECOND. `>= Radius`
+            // holds on all five bodies without any rule at all, so a mutant
+            // that kept only that half would never be caught by breaking it.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.GatherRadius = c.Radius;            // >= Radius satisfied, the table maximum is not
+            Assert.Greater(HitParts.GatherReach(c.Parts, in ConfigTests.PoseTableFor(c)), c.Radius,
+                "премисса: объёмы чейзера выходят за его физический круг — иначе нарушать нечего");
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Chaser.GatherRadius"));
+            Assert.That(ex.Message, Does.Contain("pose table"));
+        }
+
+        [Test]
+        public void Validate_ABodyWithNoPoseTable_Throws()   // rule 12, the empty half
+        {
+            // ⛔⛔ THE MOST DANGEROUS REFUSAL THERE IS, AND THE ONE NOTHING ELSE
+            // REPORTS. A body whose table never arrived resolves every volume
+            // against a table with no rows, refuses every shot, and is SILENTLY
+            // UNHITTABLE — no gate goes red for it: the bootstrap is idempotent,
+            // the EditMode set reads `TestConfigs`, and the golden hashes are
+            // pinned to fixtures.
+            // ⛔ AN EMPTY TABLE IN A LIVE CARRIER, NOT A NULL CARRIER, AND THE
+            // DIFFERENCE IS THE WHOLE FIXTURE: `BuildShipped` fills a null one
+            // in with a fixture table on purpose (so that ~45 tests varying one
+            // field do not go red on this rule), so a null here would be
+            // quietly repaired and the witness would prove nothing. An empty
+            // table is the state the rule is actually about — the carrier
+            // arrived, the numbers did not.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.Poses = ConfigTests.FixtureTable(default);
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Chaser.Poses"));
+            Assert.That(ex.Message, Does.Contain("empty"));
+        }
+
+        [Test]
+        public void Validate_NaNInThePoseTable_Throws()   // rule 12, test 28б, M383
+        {
+            // ⛔⛔ THE MOST DANGEROUS REFUSAL THERE IS: a NaN in a bone makes a
+            // body UNHITTABLE SILENTLY — `Geometry.SegmentCapsule` answers
+            // false on NaN by contract, and the checksum does not catch it
+            // (NaN is an ordinary bit pattern to fold).
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            ConfigTests.PoseTableFor(c).Bones[3] = new float3(float.NaN, 0f, 0f);
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Poses"));
+            Assert.That(ex.Message, Does.Contain("finite"));
+        }
+
+        [Test]
+        public void Validate_RestTopDisagreeingWithTheTable_Throws()   // rule 13, test 28а, M357
+        {
+            // `RestBottom`/`RestTop` are DERIVED data. Without this rule they
+            // would be a third source of truth about a body's geometry, beside
+            // the table and the volumes themselves.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.Parts[2].RestTop += 0.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Chaser.Parts[2].RestTop"));
+            Assert.That(ex.Message, Does.Contain("rest pose"));
+        }
+
+        [Test]
+        public void Validate_SlideCrownAboveTheGunnersMuzzle_Throws()   // rule 16, test 4в
+        {
+            // ⛔⛔ TWO HALVES, AND BOTH ARE BROKEN HERE — separately, because a
+            // mutant that dropped one would survive a fixture that only broke
+            // the other.
+            //   (1) the gunner's round must pass OVER a sliding collector;
+            //   (2) the collector must not fire from above his own silhouette.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            g.MuzzleHeight = SlideCrownOf(h) * 0.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
+            Assert.That(ex.Message, Does.Contain("Gunner.MuzzleHeight"));
+            Assert.That(ex.Message, Does.Contain("slide crown"));
+
+            var (h2, w2, c2, g2, wv2, a2, vis2) = ConfigTests.MakeDefaults();
+            h2.SlideMuzzleHeight = SlideCrownOf(h2) + 0.1f;
+            var ex2 = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h2, w2, c2, g2, wv2, a2, vis2));
+            Assert.That(ex2.Message, Does.Contain("Hero.SlideMuzzleHeight"));
         }
     }
 }

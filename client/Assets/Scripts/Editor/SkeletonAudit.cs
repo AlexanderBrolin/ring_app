@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Mathematics;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -50,8 +51,6 @@ namespace Ring.Editor
     /// carries. Nothing here writes an asset, a config or a prefab.
     public static class SkeletonAudit
     {
-        const string PrefabsDir = "Assets/Prefabs";
-
         /// Sampling rates the bake budget is quoted at. 15 Hz is half the
         /// simulation tick, 30 Hz is the tick itself, 60 Hz is one sample per
         /// half-tick — the range any real answer must lie inside, printed so
@@ -69,37 +68,12 @@ namespace Ring.Editor
         /// between samples and coarse enough to stay quick on five bodies.
         const int TravelSamples = 32;
 
-        /// Bones that skin a mesh but are NOT the body, excluded from the reach
-        /// figure. Two families, and both were found by reading the first run's
-        /// own output rather than assumed:
-        ///
-        ///   * RIG CONTROLS — IK targets and pole vectors. They drive the
-        ///     solver, not the silhouette, and they travel absurdly: the
-        ///     gunner's `PoleTarget.L` reaches 6.42 m from his own axis in the
-        ///     death clip, against a drawn body under a meter wide. A reach
-        ///     taken over those would size the gather circle to a control point
-        ///     nobody can shoot.
-        ///   * FINGERS — real geometry, but no hit volume will ever hang on one
-        ///     (eleven volumes for the collector, and not a knuckle among
-        ///     them), while a fingertip is the furthest-travelling bone of the
-        ///     whole skeleton in a death animation.
-        ///
-        /// BOTH FIGURES ARE PRINTED, raw over every bone and body over this
-        /// filter, because their difference is what says whether the filter
-        /// caught what it was meant to catch (lesson 680).
-        static readonly string[] NonBodyBoneMarks =
-        {
-            "PoleTarget", "_PT", "_IK", "IK_",
-            "Index", "Middle", "Pinky", "Ring", "Thumb", "Palm",
-            "index_", "middle_", "pinky_", "ring_", "thumb_",
-        };
-
-        static bool IsBodyBone(string boneName)
-        {
-            for (int i = 0; i < NonBodyBoneMarks.Length; i++)
-                if (boneName.Contains(NonBodyBoneMarks[i])) return false;
-            return true;
-        }
+        // ⚠ THE NON-BODY BONE FILTER MOVED TO `PoseSampling` (app-w4ca T4):
+        // the baker excludes the same two families for the same reason, and two
+        // copies of one filter are two chances to drift apart. BOTH FIGURES ARE
+        // STILL PRINTED here, raw over every bone and body over the filter,
+        // because their difference is what says whether the filter caught what
+        // it was meant to catch (lesson 680).
 
         /// The clips a body actually plays WHILE IT CAN STILL BE SHOT, which is
         /// the only set the reach figure may be taken over.
@@ -119,7 +93,19 @@ namespace Ring.Editor
         /// ⚠ THE RAW FIGURE IS STILL PRINTED beside it. The difference between
         /// them is what says whether this filter removed what it was meant to,
         /// and a filter whose two numbers coincide has caught nothing.
-        static readonly string[] CombatClipNames =
+        ///
+        /// ⛔⛔ `internal` RATHER THAN `private` (app-w4ca T4): `PoseBaker` and
+        /// `PoseBakeVerify` take the reach figure over exactly this filter, and
+        /// a second copy of it in the baker would mean `GatherRadius` was
+        /// computed over clips this instrument never measured.
+        ///
+        /// ⛔ THE MOB HALF GREW BY THREE NAMES, AND WITHOUT THEM SPEC §3.18
+        /// CONTRADICTED §3.5: a body playing a HIT REACTION can still be shot
+        /// at, so its reaction clips belong in the bake set AND in the maximum
+        /// `GatherRadius`. ⚠ The pack's own typo is carried over verbatim —
+        /// `HitRecieve_1`, not `HitReceive_1`; the Sci-Fi kit calls the same
+        /// thing `Hit`.
+        internal static readonly string[] CombatClipNames =
         {
             // Collector (`AnimIds`, PlayerAnimator): locomotion, slide, roll,
             // hit reactions and the pistol layer. `Death01` is excluded above.
@@ -131,14 +117,18 @@ namespace Ring.Editor
             // Mechs (`AnimIds.MechClips`) and Sci-Fi enemies
             // (`AnimIds.SciFiEnemyClips`, where melee and ranged are one take).
             "Idle", "Walk", "Run", "Punch", "Shoot", "Attack", "AttackAuto",
+            // Hit reactions: mech pack (the misspelling is the pack's) and the
+            // Sci-Fi kit's single equivalent.
+            "HitRecieve_1", "HitRecieve_2", "Hit",
         };
 
         /// A clip name arrives as `Armature|Walk_Loop` or `Rig|Attack`; the take
         /// is what follows the bar, and that is what the list above names.
-        static bool IsCombatClip(string clipName)
+        /// ⚠ The split itself lives in `AnimatorCatalog` — the baker needs the
+        /// same one, and two copies of "what is a take name" would drift.
+        internal static bool IsCombatClip(string clipName)
         {
-            int bar = clipName.LastIndexOf('|');
-            string take = bar >= 0 ? clipName.Substring(bar + 1) : clipName;
+            string take = AnimatorCatalog.TakeOf(clipName);
             for (int i = 0; i < CombatClipNames.Length; i++)
                 if (take == CombatClipNames[i]) return true;
             return false;
@@ -150,11 +140,10 @@ namespace Ring.Editor
             var report = new System.Text.StringBuilder();
             report.AppendLine("=== SKELETON AND CLIP AUDIT (bd app-ryxg, for app-94sk) ===");
 
-            AuditOne(report, "Collector", PrefabsDir + "/PlayerDollView.prefab");
-            AuditOne(report, "Chaser", PrefabsDir + "/MobChaserView.prefab");
-            AuditOne(report, "Gunner", PrefabsDir + "/MobGunnerView.prefab");
-            AuditOne(report, "Elite", PrefabsDir + "/MobEliteView.prefab");
-            AuditOne(report, "Director", PrefabsDir + "/MobDirectorView.prefab");
+            // ⛔ THE LIST OF BODIES IS `AnimatorCatalog`'s (app-w4ca T4): this
+            // file used to carry the third of three copies of it.
+            foreach (AnimatorCatalog.BodyEntry body in AnimatorCatalog.Bodies)
+                AuditOne(report, body.Kind.ToString(), body.PrefabPath);
 
             Debug.Log(report.ToString());
         }
@@ -187,10 +176,16 @@ namespace Ring.Editor
                     instance.GetComponentsInChildren<SkinnedMeshRenderer>(true));
                 Animator animator = instance.GetComponentInChildren<Animator>(true);
 
-                ReportSkeleton(report, name, instance, skins);
+                // ⛔ COLLECTED ONCE PER BODY AND HANDED DOWN (app-w4ca T4). The
+                // three blocks below used to walk the renderers for themselves,
+                // which is both a fourth traversal and three chances for the
+                // bone SET to disagree between blocks of one report.
+                List<Transform> bones = PoseSampling.CollectBones(instance);
+
+                ReportSkeleton(report, name, instance, skins, bones);
                 List<AnimationClip> clips = ReportClips(report, name, animator);
-                ReportPoseTravel(report, name, instance, animator, skins, clips);
-                ReportBakeBudget(report, name, skins, clips);
+                ReportPoseTravel(report, name, instance, animator, bones, clips);
+                ReportBakeBudget(report, name, bones, clips);
             }
             finally
             {
@@ -205,15 +200,12 @@ namespace Ring.Editor
         /// volume hangs on geometry, and a bone no vertex is weighted to
         /// carries none.
         static void ReportSkeleton(System.Text.StringBuilder report, string name,
-            GameObject instance, List<SkinnedMeshRenderer> skins)
+            GameObject instance, List<SkinnedMeshRenderer> skins, List<Transform> boneList)
         {
-            var bones = new HashSet<Transform>();
-            foreach (SkinnedMeshRenderer smr in skins)
-            {
-                if (smr == null || smr.bones == null) continue;
-                foreach (Transform b in smr.bones)
-                    if (b != null) bones.Add(b);
-            }
+            // The recursion below asks "is this transform a bone" many times,
+            // so it still wants a set — but the set is now BUILT FROM the one
+            // ordered collection rather than from a second walk of its own.
+            var bones = new HashSet<Transform>(boneList);
 
             int allTransforms = instance.GetComponentsInChildren<Transform>(true).Length;
             report.AppendLine(
@@ -228,8 +220,11 @@ namespace Ring.Editor
             }
 
             // The skinning root: the bone with no skinning parent above it.
+            // ⚠ WALKED IN THE ORDERED COLLECTION, NOT IN THE SET: root order is
+            // then the renderers' own order and the same on every run, where a
+            // hash set gave whatever order the hashes happened to produce.
             var roots = new List<Transform>();
-            foreach (Transform b in bones)
+            foreach (Transform b in boneList)
             {
                 Transform p = b.parent;
                 bool hasBoneParent = false;
@@ -289,12 +284,16 @@ namespace Ring.Editor
         static List<AnimationClip> ReportClips(System.Text.StringBuilder report, string name,
             Animator animator)
         {
-            var clips = new List<AnimationClip>();
             if (animator == null)
             {
                 report.AppendLine("[2] CLIPS: no Animator on this prefab");
-                return clips;
+                return new List<AnimationClip>();
             }
+
+            // ⛔ THE SET ITSELF COMES FROM `PoseSampling` (app-w4ca T4) — the
+            // baker bakes exactly what this block reports, and a second copy of
+            // "which clips does this controller reach" would let the two drift.
+            List<AnimationClip> clips = PoseSampling.CollectClips(animator);
 
             RuntimeAnimatorController rac = animator.runtimeAnimatorController;
             report.AppendLine(
@@ -304,10 +303,6 @@ namespace Ring.Editor
                 + $"applyRootMotion={animator.applyRootMotion}");
 
             if (rac == null) return clips;
-
-            var seen = new HashSet<AnimationClip>();
-            foreach (AnimationClip c in rac.animationClips)
-                if (c != null && seen.Add(c)) clips.Add(c);
 
             var asController = rac as AnimatorController;
             if (asController != null)
@@ -351,7 +346,7 @@ namespace Ring.Editor
         /// reported as a measurement. Legs move in a run; if the column says
         /// they do not, the sampler did not sample.
         static void ReportPoseTravel(System.Text.StringBuilder report, string name,
-            GameObject instance, Animator animator, List<SkinnedMeshRenderer> skins,
+            GameObject instance, Animator animator, List<Transform> bones,
             List<AnimationClip> clips)
         {
             if (clips.Count == 0)
@@ -360,14 +355,6 @@ namespace Ring.Editor
                 return;
             }
 
-            var bones = new List<Transform>();
-            var seen = new HashSet<Transform>();
-            foreach (SkinnedMeshRenderer smr in skins)
-            {
-                if (smr == null || smr.bones == null) continue;
-                foreach (Transform b in smr.bones)
-                    if (b != null && seen.Add(b)) bones.Add(b);
-            }
             if (bones.Count == 0)
             {
                 report.AppendLine("[3] POSE TRAVEL: no skinning bones to follow");
@@ -408,17 +395,20 @@ namespace Ring.Editor
 
                     float clipReach = 0f, clipCrown = 0f, clipRawReach = 0f;
                     string reachName = "-";
+                    var pose = new float3[bones.Count];
 
                     for (int s = 0; s < TravelSamples; s++)
                     {
                         float t = clip.length * s / TravelSamples;
-                        AnimationMode.BeginSampling();
-                        AnimationMode.SampleAnimationClip(sampleTarget, clip, t);
-                        AnimationMode.EndSampling();
+                        // ⛔ SAMPLED THROUGH `PoseSampling` (app-w4ca T4) — the
+                        // baker takes its poses through the same member, so the
+                        // target/origin pair cannot differ between the two.
+                        PoseSampling.SamplePose(sampleTarget, instance.transform,
+                            bones, clip, t, pose);
 
                         for (int i = 0; i < bones.Count; i++)
                         {
-                            Vector3 p = instance.transform.InverseTransformPoint(bones[i].position);
+                            var p = new Vector3(pose[i].x, pose[i].y, pose[i].z);
                             min[i] = Vector3.Min(min[i], p);
                             max[i] = Vector3.Max(max[i], p);
 
@@ -427,7 +417,7 @@ namespace Ring.Editor
                             // — and the height, which is the crown in this pose.
                             float reach = Mathf.Sqrt(p.x * p.x + p.z * p.z);
                             if (reach > clipRawReach) clipRawReach = reach;
-                            if (IsBodyBone(bones[i].name))
+                            if (PoseSampling.IsBodyBone(bones[i].name))
                             {
                                 if (reach > clipReach) { clipReach = reach; reachName = bones[i].name; }
                                 if (p.y > clipCrown) clipCrown = p.y;
@@ -494,15 +484,8 @@ namespace Ring.Editor
         /// open question is exactly how many bones a hit volume needs — the
         /// two columns bracket the answer instead of guessing it.
         static void ReportBakeBudget(System.Text.StringBuilder report, string name,
-            List<SkinnedMeshRenderer> skins, List<AnimationClip> clips)
+            List<Transform> bones, List<AnimationClip> clips)
         {
-            var bones = new HashSet<Transform>();
-            foreach (SkinnedMeshRenderer smr in skins)
-            {
-                if (smr == null || smr.bones == null) continue;
-                foreach (Transform b in smr.bones)
-                    if (b != null) bones.Add(b);
-            }
             if (bones.Count == 0 || clips.Count == 0)
             {
                 report.AppendLine("[4] BAKE BUDGET: nothing to bake");

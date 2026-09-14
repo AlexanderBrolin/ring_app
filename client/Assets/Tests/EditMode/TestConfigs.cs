@@ -21,19 +21,19 @@ namespace Ring.Simulation.Tests
         /// table") could never be satisfied by any of them. Each body gets a
         /// column of ITS OWN heights.
         ///
-        /// ⛔⛔ BUT THE EXTENTS ARE STILL AUTHORED BY HAND, AND ONLY THE CHASER
-        /// FOLLOWS THE CANON OF HitPart TODAY. Deriving all five from their bones
-        /// was tried and REVERTED IN THIS TASK, with a number as the reason: the
-        /// Director's torso radius is 2.20 against bones at 1.51 and 3.70, so a
-        /// capsule's extent puts his crown at 5.90 m — above Hero.MaxAimHeight
-        /// (4.9), which validation rule 14 measures against it, and every
-        /// BuildShipped in the suite would be refused. That radius is a
-        /// PLACEHOLDER, the whole body circle standing in for a torso nobody has
-        /// measured yet; T4b is the task that lays the volumes out and T4 the one
-        /// whose baker computes the extents. ⇒ the chaser, whose volumes this
-        /// task DOES move onto real bones, carries capsule extents; the other
-        /// four keep their band numbers until then, and validation rule 13 — the
-        /// rule that makes the two agree — arrives with the baker, not here.
+        /// ⛔⛔ ALL FIVE NOW FOLLOW THE CANON OF HitPart (app-94sk T4), and the
+        /// number T2 balked at was met head-on rather than deferred again. T2
+        /// tried deriving the extents from the bones and reverted, because the
+        /// Director's torso radius is 2.20 against bones at 1.51 and 3.70 — a
+        /// capsule's extent puts his crown at 5.90 m, above the Hero.MaxAimHeight
+        /// of 4.9 that validation rule 14 measures against it, and every
+        /// BuildShipped in the suite would have been refused. THE ANSWER IS TO
+        /// RAISE THE CEILING, not to keep two definitions of an extent: rule 13
+        /// arrives with the baker and makes the table the single source of truth
+        /// about a body's geometry, so band numbers would simply be refused.
+        /// ⚠ That radius is still a PLACEHOLDER — the whole body circle standing
+        /// in for a torso nobody has measured — and T4b is the task that lays the
+        /// real volumes out; the ceiling is expected to come back down with it.
         ///
         /// ⭐ THE CHASER'S FOOT IS SWUNG 0.9 m ASIDE, AND THAT IS THE SUBJECT OF
         /// FIXTURES 4/4a: his physical circle is 0.5 m, so the leg sticks out of
@@ -49,12 +49,13 @@ namespace Ring.Simulation.Tests
         /// is where the fixture shoots. ⚠ In the world that lands on `+y`: ToWorld carries the body's
         /// plan `(x, z)` into the world's plan `(x, y)`.
         ///
-        /// ⚠ Checksum IS LEFT UNSET. It is a cache of the loaded bytes (Р514) and
-        /// the config build recomputes it; validation rule 27, which compares the
-        /// two, arrives with the baker in T4, and THAT task owes these factories a
-        /// sealing pass through the same StateHash64 fold the build uses.
+        /// ⚠ Checksum IS SEALED BY `Sealed` BELOW (app-94sk T4, finding A-C15):
+        /// it is a cache of the loaded bytes (Р514), the config build recomputes
+        /// it, and validation rule 27 compares the two. Left at zero, as these
+        /// factories carried it until this task, rule 27 would refuse EVERY
+        /// `BuildShipped` in the whole set.
         public static PoseTable ColumnPose(float legTop, float torsoTop, float crown,
-            float footLateral = 0f, float footHeight = 0f) => new PoseTable
+            float footLateral = 0f, float footHeight = 0f) => Sealed(new PoseTable
         {
             BoneCount = 4,
             ClipFirstRow = new[] { 0, 1 },          // one clip, one row
@@ -66,7 +67,23 @@ namespace Ring.Simulation.Tests
                 new float3(0f, crown, 0f),                 // 3: the crown
             },
             BlendThresholds = new[] { 0f, 0.33f, 0.66f, 1f },
-        };
+        });
+
+        /// ⛔ THE ONE SEALING PASS (app-94sk T4, finding A-C15). Every factory
+        /// here goes through it, and it folds THE SAME `StateHash64` the config
+        /// build recomputes with (`SimConfigHash.PoseTableChecksum`) — a second
+        /// spelling of that arithmetic would turn validation rule 27 into a
+        /// test of two implementations rather than of the numbers.
+        /// ⚠ `UpperLayerMask` is filled in here too, empty rather than null:
+        /// the fold hashes a null array as the marker -1 and a real one as its
+        /// length, so a fixture left null and a baked table with no aim layer
+        /// would seal to DIFFERENT sums for the same body.
+        static PoseTable Sealed(PoseTable t)
+        {
+            t.UpperLayerMask ??= new ulong[(t.BoneCount + 63) / 64];
+            t.Checksum = SimConfigHash.PoseTableChecksum(in t);
+            return t;
+        }
 
         /// The chaser's own column, with the foot swung out of his circle.
         public static PoseTable ChaserRestPose()
@@ -75,7 +92,7 @@ namespace Ring.Simulation.Tests
         /// Two MIRRORED legs of one zone, +/-0.3 along z: the only shape on which
         /// the PartId tie-break is observable at all (on real bodies the zones
         /// differ, so the zone ladder decides and the number never gets a say).
-        public static PoseTable TwinLegPose() => new PoseTable
+        public static PoseTable TwinLegPose() => Sealed(new PoseTable
         {
             BoneCount = 4,
             ClipFirstRow = new[] { 0, 1 },
@@ -85,7 +102,7 @@ namespace Ring.Simulation.Tests
                 new float3(0f, 0f, -0.3f), new float3(0f, 0.9f, -0.3f),   // 2-3: left
             },
             BlendThresholds = new[] { 0f },
-        };
+        });
 
         /// The index of the collector's SLIDE clip in his own table. ⛔ A NAMED
         /// CONSTANT, NOT THE LITERAL 1: on a one-clip table `ClipFirstRow[1]` is
@@ -101,7 +118,7 @@ namespace Ring.Simulation.Tests
         /// ⚠ The rest row is HIS OWN column (0.55 / 1.35 / 1.75), the same three
         /// numbers his volumes have been cut at since Task 1 — a table whose
         /// bones disagreed with its own volumes is exactly what rule 13 refuses.
-        public static PoseTable HeroRestAndSlidePose() => new PoseTable
+        public static PoseTable HeroRestAndSlidePose() => Sealed(new PoseTable
         {
             BoneCount = 4,
             ClipFirstRow = new[] { 0, 1, 2 },        // clip 0 - rest, clip 1 - slide
@@ -113,7 +130,50 @@ namespace Ring.Simulation.Tests
                 new float3(0f, 0.34f, 0f), new float3(0f, 0.42f, 0f),   // slide, crown 0.42
             },
             BlendThresholds = new[] { 0f, 1f },
-        };
+        });
+
+        /// The pose table of a NAMED section of a built configuration, BY
+        /// REFERENCE — a change made through it is a change the config build
+        /// sees, which is what the fixtures need.
+        /// ⛔ NEEDED BY TWO SETS (`SimConfigHashTests` and `PoseTableTests`), so
+        /// its home is here rather than inside either of them.
+        /// ⛔ A CLASSIC `switch`, NOT A SWITCH EXPRESSION: C# has no `ref`
+        /// return from a switch expression at all, and Unity 6000.3.21f1 is
+        /// C# 9.
+        public static ref PoseTable PoseTableOfSection(ref SimConfig cfg, string body)
+        {
+            switch (body)
+            {
+                case "Hero": return ref cfg.Hero.Poses;
+                case "Chaser": return ref cfg.Chaser.Poses;
+                case "Gunner": return ref cfg.Gunner.Poses;
+                case "Elite": return ref cfg.Elite.Poses;
+                case "Director": return ref cfg.Director.Poses;
+                default: throw new System.ArgumentException($"unknown body {body}");
+            }
+        }
+
+        /// A copy of a table with ONE MORE ROW — "a different table" for the
+        /// fixtures that pin a hot swap as a refusal.
+        /// ⛔ THE ARRAYS ARE COPIED, not aliased: substituting in place would
+        /// change the very table the fixture compares against.
+        /// ⛔ ALL SIX FIELDS TRAVEL, `UpperLayerMask` INCLUDED: a forgotten
+        /// field would blank the collector's aim mask, and the fixtures run
+        /// this over all five bodies.
+        public static PoseTable WithOneMoreRow(in PoseTable t)
+        {
+            var bones = new float3[t.Bones.Length + t.BoneCount];
+            System.Array.Copy(t.Bones, bones, t.Bones.Length);
+            var firstRow = new int[t.ClipFirstRow.Length];
+            System.Array.Copy(t.ClipFirstRow, firstRow, firstRow.Length);
+            firstRow[^1] += 1;                       // the row-count sentinel grew
+            return new PoseTable
+            {
+                BoneCount = t.BoneCount, ClipFirstRow = firstRow, Bones = bones,
+                BlendThresholds = t.BlendThresholds, UpperLayerMask = t.UpperLayerMask,
+                Checksum = t.Checksum + 1UL,
+            };
+        }
 
         /// The world midpoint of a volume's capsule, for a body standing at
         /// `bodyPlan` with no heading yet (identity facing, as everything does
@@ -177,7 +237,7 @@ namespace Ring.Simulation.Tests
                     // moved 3.8 -> 4.9 in this task so validation rule 14 can
                     // reach the Director's crown (HeroConfig.MaxAimHeight's own
                     // comment carries the ordering argument).
-                    MaxAimHeight = 4.9f,
+                    MaxAimHeight = 5.9f,
                     StaminaMax = 100f, DashStaminaCost = 40f, SlideStaminaCost = 30f,
                     StaminaRegenPerSec = 20f, StaminaRegenDelay = 0.8f, LinkRefund = 10f,
                     SlideSpeed = 13.5f, SlideDuration = 0.52f, SlideSteerRadPerSec = 1.2f,
@@ -213,11 +273,11 @@ namespace Ring.Simulation.Tests
                     // validation rule 5 requires.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = 0f, RestTop = 0.55f,
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = -0.32f, RestTop = 0.87f,
                             Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.55f, RestTop = 1.35f,
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.1f, RestTop = 1.8f,
                             Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.35f, RestTop = 1.75f,
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.19f, RestTop = 1.91f,
                             Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
                     },
                     Poses = HeroRestAndSlidePose() },
@@ -402,11 +462,11 @@ namespace Ring.Simulation.Tests
                     // truth (same note as the tower above).
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 1.32f,
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.67f,
                             Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 1.32f, RestTop = 3.24f,
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.82f, RestTop = 3.74f,
                             Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.24f, RestTop = 4.2f,
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.07f, RestTop = 4.37f,
                             Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
                     },
                     // app-94sk T2 (rule 10): AttackRange is 0 — he never strikes,
@@ -577,11 +637,11 @@ namespace Ring.Simulation.Tests
                     // a partial rerun of the very defect app-oxyo closed.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = 0f, RestTop = 1.12f,
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = -0.56f, RestTop = 1.68f,
                             Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 1.12f, RestTop = 2.76f,
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 0.32f, RestTop = 3.56f,
                             Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.76f, RestTop = 3.58f,
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.48f, RestTop = 3.86f,
                             Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
                     },
                     // app-94sk T2 (rule 10): he strikes, so he names the volume he
@@ -633,11 +693,11 @@ namespace Ring.Simulation.Tests
                     // number to round to something more convenient.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = 0f, RestTop = 1.51f,
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = -1.54f, RestTop = 3.05f,
                             Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = 1.51f, RestTop = 3.7f,
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = -0.69f, RestTop = 5.9f,
                             Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 3.7f, RestTop = 4.8f,
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 2.93f, RestTop = 5.57f,
                             Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
                     },
                     // app-94sk T2 (rule 10): he strikes, so he names the volume he

@@ -3078,15 +3078,31 @@ namespace Ring.Simulation.Tests
             // `EvtCfg`, whose `MaxAimHeight` is 6.5 — which is exactly the
             // number a writer that hard-wired the scale would carry, so there
             // the mutation writes the very code the assertion expects. Here the
-            // config says 4.9, the same height rides a DIFFERENT code, and a
-            // hard-wired 6.5 writes 69 where 91 belongs. Without this line that
-            // mutation survives EVERY witness in the tree: the round trip is
-            // symmetric, so writer and reader agree with each other, and all
-            // three decoded-value tolerances are wider than the error it leaves
-            // (0.0088 against 0.0106 here — measured, not estimated).
-            Assert.AreEqual((byte)91, buf[3],
-                "byte 3: 1.75/4.9 -> code 91; высота обязана ехать против cfg.Hero.MaxAimHeight, "
-                + "а не против числа, зашитого в код");
+            // config says something else, the same height rides a DIFFERENT
+            // code, and the hard-wired 6.5 writes the wrong one. Without this
+            // line that mutation survives EVERY witness in the tree: the round
+            // trip is symmetric, so writer and reader agree with each other,
+            // and all three decoded-value tolerances are wider than the error
+            // it leaves (0.0088 against 0.0106 here — measured, not estimated).
+            //
+            // ⛔ app-94sk T4: THE EXPECTED CODE IS COMPUTED FROM THE CONFIG,
+            // NOT WRITTEN AS A LITERAL — which is the very discipline this test
+            // preaches. It used to read `91`, the code for a ceiling of 4.9,
+            // and T4 raised that ceiling (the Director's torso capsule reaches
+            // 5.90). A fixture that preaches "take the scale from the config"
+            // while pinning a number derived from one particular ceiling breaks
+            // on the first retune of a balance knob — and it broke on this one.
+            // ⚠ The arithmetic is repeated here on purpose (lesson 427): a
+            // witness that calls the writer's own quantizer proves only that
+            // the writer agrees with itself.
+            const float hardWiredCeiling = 6.5f;   // what the mutation carries
+            var expectedCode = (byte)math.round(height / cfg.Hero.MaxAimHeight * 255f);
+            Assert.AreNotEqual((byte)math.round(height / hardWiredCeiling * 255f), expectedCode,
+                "премисса фикстуры: потолок конфигурации обязан отличаться от зашитого 6.5, "
+                + "иначе мутант пишет ровно тот код, которого ждёт ассерт");
+            Assert.AreEqual(expectedCode, buf[3],
+                $"byte 3: {height}/{cfg.Hero.MaxAimHeight} -> код {expectedCode}; высота обязана "
+                + "ехать против cfg.Hero.MaxAimHeight, а не против числа, зашитого в код");
 
             Assert.IsTrue(SnapshotEvents.TryReadPayload(SnapshotEventKind.ProjectileRicocheted,
                 buf.Slice(0, n), in cfg, out SnapshotEventPayload v, out _));

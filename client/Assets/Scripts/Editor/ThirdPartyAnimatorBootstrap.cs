@@ -65,6 +65,15 @@ namespace Ring.Editor
             EditorBootstrapUtils.EnsureFolder(MaterialsRoot); // used by AssetPreviewSceneBootstrap (T14)
         }
 
+        /// SEED thresholds of the locomotion blend tree, in catalog order.
+        /// ⛔ A SEED, NOT A HOME (Р564): the guard at the top of
+        /// `CreatePlayerController` returns early for an existing controller and
+        /// never reconciles thresholds, so the numbers the game plays by are the
+        /// ones in the committed `PlayerAnimator.controller`. These four are
+        /// what a controller is BORN with; the baker reads the live ones off
+        /// the asset.
+        static readonly float[] LocomotionSeedThresholds = { 0f, 0.33f, 0.66f, 1f };
+
         static AvatarMask GetOrCreateUpperBodyMask()
         {
             var existing = AssetDatabase.LoadAssetAtPath<AvatarMask>(UpperBodyMaskPath);
@@ -128,16 +137,28 @@ namespace Ring.Editor
             tree.blendType = BlendTreeType.Simple1D;
             tree.blendParameter = AnimIds.SpeedName;
             tree.useAutomaticThresholds = false;
-            tree.AddChild(Require(clips, "Idle_Loop"), 0f);
-            tree.AddChild(Require(clips, "Walk_Loop"), 0.33f);
-            tree.AddChild(Require(clips, "Jog_Fwd_Loop"), 0.66f);
-            tree.AddChild(Require(clips, "Sprint_Loop"), 1f);
+            // ⛔ THE CLIP NAMES COME FROM `AnimatorCatalog` (app-w4ca T4).
+            // They used to be inline literals inside this PRIVATE method, which
+            // is to say the baker could not read them at all and would have had
+            // to type them a second time. ⚠ THE THRESHOLDS STAY HERE AND ONLY
+            // HERE, as a SEED: the live home of those four numbers is the
+            // committed controller asset, which the guard at the top of this
+            // method never reconciles (Р564). A catalog column for them would
+            // be a dead copy of a live number.
+            int child = 0;
+            foreach (AnimatorCatalog.Entry e in AnimatorCatalog.LocomotionChildren())
+                tree.AddChild(Require(clips, e.PackClip), LocomotionSeedThresholds[child++]);
             controller.layers[0].stateMachine.defaultState = locomotion;
 
-            AddOptionalState(controller, clips, "Hit_Chest", AnimIds.HitReactName);
-            AddOptionalState(controller, clips, "Hit_Head", AnimIds.HitReactHeadName);
-            controller.AddMotion(Require(clips, "Death01"), 0).name = AnimIds.DeathName;
-            AddOptionalState(controller, clips, "Roll", AnimIds.DashName);
+            AddOptionalState(controller, clips,
+                AnimatorCatalog.PackClipOf(AnimIds.HitReactName), AnimIds.HitReactName);
+            AddOptionalState(controller, clips,
+                AnimatorCatalog.PackClipOf(AnimIds.HitReactHeadName), AnimIds.HitReactHeadName);
+            controller.AddMotion(
+                Require(clips, AnimatorCatalog.PackClipOf(AnimIds.DeathName)), 0).name =
+                AnimIds.DeathName;
+            AddOptionalState(controller, clips,
+                AnimatorCatalog.PackClipOf(AnimIds.DashName), AnimIds.DashName);
             EnsureSlideStates(controller);
 
             controller.AddLayer(AnimIds.AimLayerName);
@@ -191,11 +212,17 @@ namespace Ring.Editor
             if (!needStart && !needLoop && !needExit) return;
             Dictionary<string, AnimationClip> ual2Clips = ClipsOf(TP.Ual2StandardPath);
             if (needStart)
-                controller.AddMotion(Require(ual2Clips, "Slide_Start"), 0).name = AnimIds.SlideStartName;
+                controller.AddMotion(Require(ual2Clips,
+                    AnimatorCatalog.PackClipOf(AnimIds.SlideStartName)), 0).name =
+                    AnimIds.SlideStartName;
             if (needLoop)
-                controller.AddMotion(Require(ual2Clips, "Slide_Loop"), 0).name = AnimIds.SlideLoopName;
+                controller.AddMotion(Require(ual2Clips,
+                    AnimatorCatalog.PackClipOf(AnimIds.SlideLoopName)), 0).name =
+                    AnimIds.SlideLoopName;
             if (needExit)
-                controller.AddMotion(Require(ual2Clips, "Slide_Exit"), 0).name = AnimIds.SlideExitName;
+                controller.AddMotion(Require(ual2Clips,
+                    AnimatorCatalog.PackClipOf(AnimIds.SlideExitName)), 0).name =
+                    AnimIds.SlideExitName;
             Debug.Log("[ThirdPartyAnimators] slide states ensured on " + PlayerControllerPath);
         }
 

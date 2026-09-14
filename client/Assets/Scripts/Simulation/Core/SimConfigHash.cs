@@ -352,6 +352,25 @@ namespace Ring.Simulation.Core
             return h;
         }
 
+        /// THE CHECKSUM OF ONE POSE TABLE, standing alone — the same fold the
+        /// config digest uses below, started from a fresh basis.
+        ///
+        /// ⛔⛔ PUBLIC, AND FOR ONE REASON: THREE PARTIES HAVE TO AGREE ON IT
+        /// (app-w4ca T4). The baker WRITES it into the `.posetable`, the config
+        /// build RECOMPUTES it over the loaded arrays and refuses a mismatch
+        /// (validation rule 27), and the test fixtures SEAL their own tables
+        /// with it. A second implementation of "fold a pose table" in any one
+        /// of the three would make rule 27 a test of two spellings of the same
+        /// arithmetic instead of a test of the bytes. Same argument, and the
+        /// same remedy, as `HitParts.PoseTop` in T2.
+        ///
+        /// ⚠ WHAT IT IS NOT: a checksum of the FILE. It folds the table as
+        /// LOADED, so a change in how the bytes are laid out on disk does not
+        /// move it while a change in any number does — which is exactly the
+        /// quantity rule 27 wants.
+        public static ulong PoseTableChecksum(in PoseTable t) =>
+            HashPoseTable(StateHash64.Begin(), t);
+
         /// A pose table folds as its shape, its rows and the two float arrays
         /// beside them. ⛔ `Checksum` IS NOT IN THE DIGEST: it is a cache of the
         /// loaded bytes (Р514), not a balance number, and the config build is

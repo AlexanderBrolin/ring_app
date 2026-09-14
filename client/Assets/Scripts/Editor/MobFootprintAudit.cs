@@ -53,7 +53,6 @@ namespace Ring.Editor
     /// It prints, and the reading is a decision.
     public static class MobFootprintAudit
     {
-        const string PrefabsDir = "Assets/Prefabs";
 
         /// Ratio at which a footprint wider than the body circle stops being a
         /// rounding difference and starts being visible overlap. 1.15 is one
@@ -77,10 +76,16 @@ namespace Ring.Editor
             report.AppendLine(
                 "archetype | drawn W x D x H | footprint r | sim Radius | ratio | crown vs top part");
 
-            AuditOne(report, "Chaser", PrefabsDir + "/MobChaserView.prefab", "MobChaserConfig");
-            AuditOne(report, "Gunner", PrefabsDir + "/MobGunnerView.prefab", "MobGunnerConfig");
-            AuditOne(report, "Elite", PrefabsDir + "/MobEliteView.prefab", "MobEliteConfig");
-            AuditOne(report, "Director", PrefabsDir + "/MobDirectorView.prefab", "MobDirectorConfig");
+            // ⛔ ONE HOME FOR THE BODY LIST (app-w4ca T4): this file used to
+            // spell the four mobs here and the collector again below, which was
+            // two of the three copies the catalog replaced. The hero keeps his
+            // own call because he is measured by a different rule, not because
+            // his path is different.
+            foreach (AnimatorCatalog.BodyEntry body in AnimatorCatalog.Bodies)
+            {
+                if (body.Kind == AnimatorCatalog.BodyKind.Collector) continue;
+                AuditOne(report, body.Kind.ToString(), body.PrefabPath, body.ConfigAsset);
+            }
             AuditHero(report);
 
             Debug.Log(report.ToString());
@@ -183,7 +188,7 @@ namespace Ring.Editor
         {
             var hero = AssetDatabase.LoadAssetAtPath<HeroConfig>("Assets/Data/HeroConfig.asset");
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(
-                PrefabsDir + "/PlayerDollView.prefab");
+                AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Collector));
             if (hero == null || prefab == null)
             {
                 report.AppendLine("Hero: prefab or config missing — skipped");

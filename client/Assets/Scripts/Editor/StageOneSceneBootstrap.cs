@@ -1,7 +1,9 @@
 using System.Linq;
 using Ring.Data;
 using Ring.Presentation;
+using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
+using Unity.Mathematics;
 using TMPro;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -291,6 +293,9 @@ namespace Ring.Editor
     public static class StageOneSceneBootstrap
     {
         const string DataDir = "Assets/Data";
+        /// app-94sk T4: where the baker's five artifacts live. ⚠ One home —
+        /// `PoseBaker` writes here and this file reads here.
+        const string PosesDir = DataDir + "/Poses";
         const string MaterialsDir = "Assets/Art/Materials";
         const string ScenePath = "Assets/Scenes/Main.unity";
         const string ActionsAssetPath = "Assets/InputSystem_Actions.inputactions";
@@ -463,11 +468,21 @@ namespace Ring.Editor
         // Stage 2 Task 45a (spec §3.12): the collector doll is a pooled prefab
         // now, one instance per player slot, rented by `ViewRegistry` — the
         // scene's own `Player` object is retired in `Apply`.
-        const string PlayerDollPrefabPath = PrefabsDir + "/PlayerDollView.prefab";
-        const string MobChaserPrefabPath = PrefabsDir + "/MobChaserView.prefab";
-        const string MobGunnerPrefabPath = PrefabsDir + "/MobGunnerView.prefab";
-        const string MobElitePrefabPath = PrefabsDir + "/MobEliteView.prefab";
-        const string MobDirectorPrefabPath = PrefabsDir + "/MobDirectorView.prefab";
+        // ⛔ THE FIVE BODY PREFABS COME FROM `AnimatorCatalog` (app-w4ca T4):
+        // this block was the third written-out copy of that list, and the baker
+        // and its verifier would have made it five. `static readonly` rather
+        // than `const` because the catalog is a table, not a literal — each of
+        // these has exactly one use site below, so nothing needed a constant.
+        static readonly string PlayerDollPrefabPath =
+            AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Collector);
+        static readonly string MobChaserPrefabPath =
+            AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Chaser);
+        static readonly string MobGunnerPrefabPath =
+            AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Gunner);
+        static readonly string MobElitePrefabPath =
+            AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Elite);
+        static readonly string MobDirectorPrefabPath =
+            AnimatorCatalog.PrefabPathOf(AnimatorCatalog.BodyKind.Director);
         const string CorpseMechPrefabPath = PrefabsDir + "/CorpseMechView.prefab";
         // Stage 3 Task 31 (spec §3.11): the raid's furniture. Four container
         // prefabs rather than five — the two corpse kinds share the marker,
@@ -664,6 +679,20 @@ namespace Ring.Editor
                 !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Parts:");
 
+            // app-94sk T4 (deviation 11a): the baked pose table, the gather
+            // radius taken off it, and the rest-pose extents recomputed from
+            // it. ⛔ KEYED ON `Poses:` BEING ABSENT, which can be true exactly
+            // once: the field is introduced by this very task, so no committed
+            // asset can carry it, and once written the gate can never re-fire
+            // and stomp a later retune (rule 14's intent, same shape as
+            // partsPending above).
+            bool posesPending =
+                !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Poses:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Poses:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Poses:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Poses:") ||
+                !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Poses:");
+
             // maxAimHeightPending is keyed on the value being REPLACED, not on
             // a key's arrival: MaxAimHeight has been on disk since Stage 1, so
             // no key can date this delivery -- only the departure of the old
@@ -697,6 +726,20 @@ namespace Ring.Editor
             // through the marker key instead (ApplyPartsNumbers' own doc).
             if (partsPending && ApplyPartsNumbers(gunner, elite, director))
             {
+                EditorUtility.SetDirty(gunner);
+                EditorUtility.SetDirty(elite);
+                EditorUtility.SetDirty(director);
+            }
+
+            // app-94sk T4: the pose half. ⛔ ALL FIVE BODIES ARE WRITTEN, and
+            // this is the step deviation 11a names: without it the numbers stay
+            // in the C# defaults and NO GATE GOES RED — R-IDEM is green because
+            // a no-op is idempotent, and the EditMode set is green because the
+            // tests read `TestConfigs`, never the `.asset`.
+            if (posesPending && ApplyPoseNumbers(hero, chaser, gunner, elite, director))
+            {
+                EditorUtility.SetDirty(hero);
+                EditorUtility.SetDirty(chaser);
                 EditorUtility.SetDirty(gunner);
                 EditorUtility.SetDirty(elite);
                 EditorUtility.SetDirty(director);
@@ -1120,10 +1163,13 @@ namespace Ring.Editor
             // mechanism itself exists to prevent one file over — a comment
             // that lies about the code is the same class of defect as an
             // asset that lags its class).
-            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset", "SlideThrustRecovery"); // app-88jb Т22 (was Parts, app-88jb Т16)
+            EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset",
+                "SlideThrustRecovery", "Poses"); // app-94sk T4 appends Poses; marker no longer has to move
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "SprayVariance"); // app-8dv (was PierceDamageLoss, app-88jb Т20)
-            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
-            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset", "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
+            EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset",
+                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
+            EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset",
+                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayScreenReachFrac"); // app-461s Н47 (was AimRayNotchMinLength, app-461s T4; was WaveAnnounceFlashColor, app-ggvz Т7)
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RewindPictureTicks"); // app-88jb Т24 (was RelaxIterations, app-88jb Т22)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
@@ -1197,9 +1243,9 @@ namespace Ring.Editor
             // `WeaponConfig` alone, and the spec's own starting-numbers table
             // names the pair's home as "WeaponConfig + the mobs".
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
+                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "PushRecoilFraction"); // app-88jb Т22 (was PierceDamageLoss, app-88jb Т20)
+                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
@@ -3099,7 +3145,7 @@ namespace Ring.Editor
             // for the same reason Radius is -- until the baker (T4) widens it
             // it EQUALS the body radius, so the gather answers exactly what it
             // answered before the split.
-            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);
+            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);    // app-94sk T4: rule 9 — his bones sit on his axis, so his widest capsule IS his reach
             changed |= SetIfDifferent(ref m.MaxHp, 120f);
             changed |= SetIfDifferent(ref m.ContactDamage, 25f);
             changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
@@ -3177,7 +3223,7 @@ namespace Ring.Editor
             // app-94sk T2: his own broad-phase radius overrides the Elite's,
             // same "only the differences are written here" rule as the
             // scalars around it.
-            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);
+            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);    // app-94sk T4: rule 9 — his torso capsule is his body circle, so the two coincide
             changed |= SetIfDifferent(ref m.MaxHp, 2500f);
             changed |= SetIfDifferent(ref m.ContactDamage, 45f);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
@@ -3296,11 +3342,11 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = 0f, RestTop = 1.32f,
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.67f,
                     Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 1.32f, RestTop = 3.24f,
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.82f, RestTop = 3.74f,
                     Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.24f, RestTop = 4.20f,
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.07f, RestTop = 4.37f,
                     Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
@@ -3325,11 +3371,11 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = 0f, RestTop = 1.12f,
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = -0.56f, RestTop = 1.68f,
                     Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 1.12f, RestTop = 2.76f,
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 0.32f, RestTop = 3.56f,
                     Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.76f, RestTop = 3.58f,
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.48f, RestTop = 3.86f,
                     Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
@@ -3350,11 +3396,11 @@ namespace Ring.Editor
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = 0f, RestTop = 1.51f,
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = -1.54f, RestTop = 3.05f,
                     Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = 1.51f, RestTop = 3.70f,
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = -0.69f, RestTop = 5.9f,
                     Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 3.70f, RestTop = 4.80f,
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 2.93f, RestTop = 5.57f,
                     Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
             });
         }
@@ -3448,6 +3494,122 @@ namespace Ring.Editor
             changed |= ApplyGunnerPartsDefaults(gunner);
             changed |= ApplyElitePartsDefaults(elite);
             changed |= ApplyDirectorPartsDefaults(director);
+            return changed;
+        }
+
+        /// app-94sk T4 (spec §3.5а, deviation 11a): the BAKED numbers reaching
+        /// the five shipped assets. Three things travel, and each has exactly
+        /// one source:
+        ///   `Poses`              — the imported `.posetable` for this body;
+        ///   `GatherRadius`       — `PoseBaker.GatherRadiusOf(table)`, i.e. the
+        ///                          furthest any bone reaches from the body
+        ///                          axis over every clip EXCEPT the death take;
+        ///   `RestBottom/RestTop` — each capsule's extent in the REST POSE,
+        ///                          by the one definition `HitPart`'s own doc
+        ///                          carries: bone ends grown by the radius.
+        ///
+        /// ⛔⛔ THE BONE INDICES ARE STILL THE PLACEHOLDER COLUMN FOR FOUR OF
+        /// THE FIVE BODIES, AND THAT IS SAID HERE RATHER THAN LEFT TO BE
+        /// DISCOVERED. Until T4b lays the real 11/13/9/13/15 volumes out, a
+        /// body's `BoneA`/`BoneB` are 0..3 — a column of four bone ends, which
+        /// is what a three-band body was — so the extents computed here are
+        /// derived from placeholder ends. They are written ANYWAY, and not
+        /// writing them is not an option: validation rule 13 refuses any
+        /// configuration whose `RestTop` disagrees with its table, so the
+        /// alternative is a game that will not build a config at all. ⚠ The
+        /// golden hashes do not move for this (RULING 318: they are pinned to
+        /// `TestConfigs`, not to the assets). The real geometry arrives in T4b.
+        ///
+        /// Returns whether anything changed — the caller owns SetDirty/
+        /// SaveAssets, like every other Apply* in this file.
+        static bool ApplyPoseNumbers(HeroConfig hero, MobConfig chaser, MobConfig gunner,
+            MobConfig elite, MobConfig director)
+        {
+            bool changed = false;
+            foreach (AnimatorCatalog.BodyEntry body in AnimatorCatalog.Bodies)
+            {
+                var table = AssetDatabase.LoadAssetAtPath<PoseTableAsset>(
+                    $"{PosesDir}/{body.Kind}.posetable");
+                if (table == null)
+                    throw new System.ArgumentException(
+                        $"{body.Kind}: no baked pose table at {PosesDir}/{body.Kind}.posetable "
+                        + "— run Ring/Bootstrap/Pose Table first; an unbaked body is an "
+                        + "unhittable one (validation rule 12)");
+
+                if (body.Kind == AnimatorCatalog.BodyKind.Collector)
+                {
+                    changed |= SetPoseFields(hero.Parts, ref hero.Poses, ref hero.GatherRadius,
+                        table, hero.Radius);
+                    continue;
+                }
+                MobConfig cfg = body.Kind switch
+                {
+                    AnimatorCatalog.BodyKind.Chaser => chaser,
+                    AnimatorCatalog.BodyKind.Gunner => gunner,
+                    AnimatorCatalog.BodyKind.Elite => elite,
+                    AnimatorCatalog.BodyKind.Director => director,
+                    _ => throw new System.ArgumentOutOfRangeException(nameof(body)),
+                };
+                changed |= SetPoseFields(cfg.Parts, ref cfg.Poses, ref cfg.GatherRadius,
+                    table, cfg.Radius);
+            }
+
+            // ⛔⛔ THE AIM CEILING TRAVELS WITH THE EXTENTS, AND IT HAS TO. Rule
+            // 14 is "Hero.MaxAimHeight >= the crown of every body", and the
+            // crowns just moved: a capsule has CAPS, so every body's last part
+            // now reaches its top bone PLUS that part's radius. Leaving the
+            // ceiling behind would refuse the shipped configuration outright.
+            // ⚠ DERIVED, NOT A LITERAL: the number written is the tallest crown
+            // this very delivery produced, so it cannot disagree with it. ⚠ And
+            // it only ever RISES — a ceiling the owner tuned above the crown is
+            // his number, and this must not walk it back down.
+            float crown = math.max(HitParts.RestCrown(hero.Parts),
+                math.max(math.max(HitParts.RestCrown(chaser.Parts),
+                                  HitParts.RestCrown(gunner.Parts)),
+                         math.max(HitParts.RestCrown(elite.Parts),
+                                  HitParts.RestCrown(director.Parts))));
+            if (hero.MaxAimHeight < crown)
+            {
+                hero.MaxAimHeight = crown;
+                changed = true;
+            }
+            return changed;
+        }
+
+        /// One body's three deliveries. ⛔ SHARED BY HERO AND MOB ON PURPOSE:
+        /// the arithmetic is identical and `HeroConfig`/`MobConfig` are
+        /// unrelated types, so the alternative is the same eight lines twice.
+        static bool SetPoseFields(HitPart[] parts, ref PoseTableAsset poses,
+            ref float gatherRadius, PoseTableAsset table, float bodyRadius)
+        {
+            bool changed = false;
+            if (!ReferenceEquals(poses, table)) { poses = table; changed = true; }
+
+            // ⛔ RULE 9 IS `>= Radius` AND `>=` THE VOLUMES' OWN REACH IN THE
+            // TABLE, so the number written is the larger of the two. ⚠ THE
+            // SECOND HALF IS `HitParts.GatherReach`, NOT the baker's bone-axis
+            // figure: the gather circle has to cover the CAPSULES, and on the
+            // chaser's torso the radius alone is half a meter.
+            float target = Mathf.Max(HitParts.GatherReach(parts, in table.Table), bodyRadius);
+            if (!Mathf.Approximately(gatherRadius, target)) { gatherRadius = target; changed = true; }
+
+            PoseTable t = table.Table;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                // Row 0 IS the rest pose — the baker's clip-order contract.
+                float a = t.Bones[parts[i].BoneA].y;
+                float b = t.Bones[parts[i].BoneB].y;
+                float bottom = Mathf.Min(a, b) - parts[i].Radius;
+                float top = Mathf.Max(a, b) + parts[i].Radius;
+                if (!Mathf.Approximately(parts[i].RestBottom, bottom))
+                {
+                    parts[i].RestBottom = bottom; changed = true;
+                }
+                if (!Mathf.Approximately(parts[i].RestTop, top))
+                {
+                    parts[i].RestTop = top; changed = true;
+                }
+            }
             return changed;
         }
 

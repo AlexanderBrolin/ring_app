@@ -32,7 +32,21 @@ namespace Ring.Data
         // shipped .asset deliberately stays at its old value until Т16 delivers
         // it through the bootstrap, which is what Т16's gate-on-the-old-value
         // exists for.
-        [Range(1f, 6f)] public float MaxAimHeight = 4.9f;
+        //
+        // ⛔⛔ app-94sk T4: 4.9 -> 5.9, AND THE REASON IS A PLACEHOLDER FOLLOWED
+        // TO ITS CONCLUSION. Validation rule 13 now makes every body's extents
+        // agree with its pose table, so the Director's torso capsule reaches
+        // 3.70 + 2.20 = 5.90 — his bone at 3.70 grown by a radius that IS HIS
+        // WHOLE BODY CIRCLE, standing in for a torso nobody has measured yet.
+        // Rule 14 measures the aim ceiling against that, so the ceiling has to
+        // clear it or no configuration builds at all. T2 met this exact number,
+        // reverted the derivation and named T4 as the task that would face it
+        // (`TestConfigs`' own doc says so in as many words); this is that task.
+        // ⚠ THE NUMBER IS EXPECTED TO COME BACK DOWN IN T4b, which lays the
+        // Director's fifteen real volumes out — a 2.20 m torso capsule is not
+        // one of them. The `[Range]` ceiling goes to 7 so the rule has headroom
+        // rather than sitting on its own bound.
+        [Range(1f, 7f)] public float MaxAimHeight = 5.9f;
 
         // Task 2 (spec stamina/slide/aim): stamina pool, per-action costs and regen —
         // stamina drains on Dash/Slide and regenerates after a delay once no action
@@ -163,13 +177,20 @@ namespace Ring.Data
         /// real skeleton; until it does, these are the numbers the game has
         /// always used and the answers do not move. PartId is the index, which
         /// is where an append-only local numbering starts.
+        /// ⛔ app-94sk T4: THE EXTENTS NOW OBEY VALIDATION RULE 13 — each is the
+        /// capsule's reach in the REST POSE, i.e. the bone end grown by the
+        /// radius, computed off `TestConfigs.HeroRestAndSlidePose()`'s rest row
+        /// (bones 0 / 0.55 / 1.35 / 1.75, which are his column since Task 1).
+        /// They read differently from the band numbers they replace ONLY
+        /// because a capsule has CAPS and a band did not: the legs reach 0.32
+        /// below the ground and the head 0.16 above the crown.
         public HitPart[] Parts =
         {
-            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = 0f, RestTop = 0.55f,
+            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = -0.32f, RestTop = 0.87f,
                 Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.55f, RestTop = 1.35f,
+            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.1f, RestTop = 1.8f,
                 Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.35f, RestTop = 1.75f,
+            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.19f, RestTop = 1.91f,
                 Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
         }; // Was the sync-marker key until app-88jb Т22's PushRecoilFraction below.
 
@@ -226,6 +247,16 @@ namespace Ring.Data
         // legal and means an unpowered slide: the loss stands for the rest of
         // the move.
         [Range(0f, 60f)] public float SlideThrustRecovery = 18f; // sync-marker key — keep LAST (was PushRecoilFraction, app-88jb Т22)
+
+        /// app-w4ca T4 (spec §3.5а): the BAKED POSE TABLE this body's volumes
+        /// stand in. ⛔ NOT A HOT KNOB — the owner turns capsule radii and
+        /// reaction thresholds; clips and phases are generated, and this field
+        /// only says WHICH artifact a body reads. Without it
+        /// `SimConfigBuilder.Build` would have nowhere to take the table from.
+        /// ⚠ THE SYNC MARKER DOES NOT MOVE for this field: `EnsureAssetHasKey`
+        /// now takes a LIST of marker names, so a new field is one more name in
+        /// that list rather than a marker relocation (Runbook R-ASSET).
+        public PoseTableAsset Poses;
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

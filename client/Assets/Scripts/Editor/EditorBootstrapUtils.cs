@@ -357,10 +357,27 @@ namespace Ring.Editor
         /// — cheap, no reimport needed; `AssetDatabase.SaveAssets()` (called
         /// once by the caller, after every `EnsureAssetHasKey`) is what
         /// actually flushes the dirtied SO's full current field set to disk.
-        public static void EnsureAssetHasKey(Object so, string assetPath, string markerField)
+        /// ⛔⛔ A LIST OF MARKER NAMES, NOT ONE (app-w4ca T4). With a single
+        /// marker the check only worked while that field was the LAST one in
+        /// its class, and nothing in the signature said so: a field added AFTER
+        /// the marker never dirtied the asset, and no gate went red for it —
+        /// R-IDEM stays green because a no-op is idempotent, and the EditMode
+        /// set stays green because the tests read C# defaults. The numbers
+        /// simply never reached the `.asset`, which is deviation 11a. Taking
+        /// every name a task adds removes the "keep LAST" requirement entirely:
+        /// each task APPENDS its new field here instead of relocating a marker.
+        ///
+        /// ⚠ AND THE HALF THIS DOES NOT FIX IS SAID OUT LOUD: the check sees a
+        /// MISSING name and never sees a SURPLUS one, so a field REMOVED from a
+        /// class (the shape T5b has) still needs an explicit `SetDirty` — this
+        /// would happily report "all present" on an asset carrying a key no
+        /// class has any more.
+        public static void EnsureAssetHasKey(Object so, string assetPath,
+            params string[] markerFields)
         {
-            if (!File.ReadAllText(assetPath).Contains(markerField))
-                EditorUtility.SetDirty(so);
+            string text = File.ReadAllText(assetPath);
+            foreach (string field in markerFields)
+                if (!text.Contains(field)) { EditorUtility.SetDirty(so); return; }
         }
     }
 }

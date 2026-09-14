@@ -51,6 +51,56 @@ namespace Ring.Simulation.Combat
             return top;
         }
 
+        /// app-94sk T4 (validation rule 9): HOW WIDE THE BROAD PHASE HAS TO BE
+        /// for this body — the furthest any VOLUME reaches from the body's own
+        /// vertical axis, in any phase of any clip it can be shot during.
+        ///
+        /// ⛔ PER PART, AND WITH THAT PART'S RADIUS — not "the furthest bone
+        /// anywhere plus the widest radius anywhere". Taking the two maxima
+        /// apart answers a looser number and hides the case the split exists
+        /// for: a thin leg swinging out past a fat torso that never moves.
+        ///
+        /// ⛔⛔ THE LAST CLIP IS EXCLUDED, AND THAT IS THE DEATH TAKE (Р559,
+        /// `PoseBaker`'s ordering contract). A falling body sweeps its bones
+        /// far from its axis — the chaser's head reaches 2.37 m in his death
+        /// take against 1.36 m in a run — and sizing the gather circle to that
+        /// would widen EVERY body by the animation nobody can be hit during.
+        /// ⚠ A TABLE WITH ONE CLIP MEASURES ALL OF ITSELF: it has no death take
+        /// to leave out, which is the shape every fixture table has.
+        ///
+        /// ⚠ THE PLAN VIEW IS `(x, z)`: these are BONES, and bones live in the
+        /// body frame where `.y` is the height (`HitVolumes.ToWorld` is the one
+        /// crossing into the world frame, where height is `.z`).
+        public static float GatherReach(HitPart[] parts, in PoseTable table)
+        {
+            if (parts == null || parts.Length == 0) return 0f;
+            if (table.Bones == null || table.BoneCount <= 0) return 0f;
+
+            int stride = table.BoneCount;
+            int allRows = table.Bones.Length / stride;
+            int rows = table.ClipFirstRow != null && table.ClipFirstRow.Length >= 2
+                ? table.ClipFirstRow[table.ClipFirstRow.Length - 2]
+                : allRows;
+            if (rows <= 0) rows = allRows;
+
+            float widest = 0f;
+            for (int r = 0; r < rows; r++)
+            {
+                int rowBase = r * stride;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i].BoneA >= stride || parts[i].BoneB >= stride) continue;
+                    float a = PlanReach(table.Bones[rowBase + parts[i].BoneA]);
+                    float b = PlanReach(table.Bones[rowBase + parts[i].BoneB]);
+                    float reach = math.max(a, b) + parts[i].Radius;
+                    if (reach > widest) widest = reach;
+                }
+            }
+            return widest;
+
+            static float PlanReach(float3 bone) => math.length(new float2(bone.x, bone.z));
+        }
+
         /// The first part carrying this zone; on a tie, the one with the SMALLER
         /// PartId. ⛔ THE TIE-BREAK IS THE SAME ONE HitVolumes.Resolve USES, and
         /// that is not a coincidence: a zone now appears on SEVERAL volumes

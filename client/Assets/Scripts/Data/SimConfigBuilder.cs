@@ -122,13 +122,13 @@ namespace Ring.Data
                     // the one array that clones — see its own note below).
                     Parts = hero.Parts,
                     // app-94sk T2 (spec §3.3): the broad-phase radius rides
-                    // across as a plain number. ⛔ `Poses` is NOT mapped yet --
-                    // the table is an ASSET the baker produces in T4, and until
-                    // then every shipped section carries an empty one. That is a
-                    // known intermediate state of this branch, not an omission:
-                    // validation rule 12 (T4) is what makes an empty table a
-                    // refusal instead of a silently unhittable body.
-                    GatherRadius = hero.GatherRadius
+                    // across as a plain number.
+                    GatherRadius = hero.GatherRadius,
+                    // app-94sk T4 (spec §3.5а): the baked table. ⛔ A MISSING
+                    // CARRIER MAPS TO AN EMPTY TABLE AND `Validate` REFUSES IT
+                    // BY SECTION NAME (rule 12) — refusing here instead would
+                    // name no body and duplicate a refusal that has a home.
+                    Poses = hero.Poses != null ? hero.Poses.Table : default,
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -338,9 +338,12 @@ namespace Ring.Data
             // Elite/Director all come through this method.
             Parts = m.Parts,
             // app-94sk T2 (spec §3.3, §3.9): broad-phase radius and the striking
-            // volume, through the same one mapping. `Poses` waits for T4 -- see
-            // the hero's own note above.
+            // volume, through the same one mapping.
             GatherRadius = m.GatherRadius,
+            // app-94sk T4 (spec §3.5а): the baked table — same one mapping for
+            // all four mob sections, and the same "empty, then refused by
+            // rule 12 under its own section name" shape as the hero's.
+            Poses = m.Poses != null ? m.Poses.Table : default,
             SwingPartId = m.SwingPartId,
             // app-88jb Т19 (spec §3.4): this archetype's ricochet mapping,
             // through the same one method, for the same reason.
@@ -783,19 +786,19 @@ namespace Ring.Data
             // the 0. Every value that survives those two is therefore at least
             // Parts[0].RestTop -- the top of the legs part, i.e. exactly what the
             // old rule asked for. It guarded the empty set.
-            if (!float.IsNaN(heroHeadBottom) && cfg.Hero.SlideProfileTop > heroHeadBottom)
-            {
-                errors.Add("Hero.SlideProfileTop must be <= the bottom of the collector's head part " +
-                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, " +
-                    $"head part bottom={heroHeadBottom:F3}).");
-            }
-            if (cfg.Hero.SlideProfileTop + cfg.Gunner.ProjectileRadius >= cfg.Gunner.MuzzleHeight)
-            {
-                errors.Add("Hero.SlideProfileTop + Gunner.ProjectileRadius must be < Gunner.MuzzleHeight " +
-                    $"(got SlideProfileTop={cfg.Hero.SlideProfileTop:F3}, " +
-                    $"Gunner.ProjectileRadius={cfg.Gunner.ProjectileRadius:F3}, " +
-                    $"Gunner.MuzzleHeight={cfg.Gunner.MuzzleHeight:F3}).");
-            }
+            // ⛔⛔ TWO SLIDE BOUNDS WITHDRAWN HERE AND REPLACED BY RULE 16 BELOW
+            // (app-94sk T4, spec §3.13). They asked their question of a SCALAR,
+            // `Hero.SlideProfileTop`, which was only ever the body band's top
+            // under validation rule 2 — and rule 2 was withdrawn in T2. Rule 16
+            // asks the same two questions of the CROWN OF THE SLIDE CLIP BY THE
+            // TABLE, which is the figure the player actually sees.
+            //   * the head-bottom bound is not replaced at all: it stood on
+            //     rule 2's contiguity, so with volumes it guarded nothing;
+            //   * "profile + Gunner.ProjectileRadius < Gunner.MuzzleHeight" IS
+            //     replaced, and it is the proof that the gunner's round passes
+            //     OVER a sliding collector;
+            //   * "SlideMuzzleHeight <= SlideProfileTop" (further down) is
+            //     replaced by the second half of rule 16.
 
             // app-88jb Т15, GREEN half of the RED phase whose witness is
             // HitPartsTests.Validate_MuzzleAboveTheTorso_Throws. THE MUZZLE
@@ -824,30 +827,69 @@ namespace Ring.Data
                     $"(got MuzzleHeight={cfg.Hero.MuzzleHeight:F3}, " +
                     $"head part bottom={heroHeadBottom:F3}).");
             }
-            if (cfg.Hero.SlideMuzzleHeight > cfg.Hero.SlideProfileTop)
+
+            // ⛔⛔ RULE 16 (app-94sk T4, spec §3.13): THE SLIDE IS JUDGED BY THE
+            // FIGURE, NOT BY A SCALAR. Two claims, and both were carried by the
+            // `SlideProfileTop` family that rule 5 took with it:
+            //   (1) the gunner's round passes OVER a sliding collector —
+            //       "slide crown by the table + Gunner.ProjectileRadius <
+            //       Gunner.MuzzleHeight". This is the whole reason a slide is
+            //       worth doing, and without a rule it would stop being true
+            //       the first time anybody retuned either number;
+            //   (2) the collector does not shoot from ABOVE HIS OWN SILHOUETTE
+            //       — "Hero.SlideMuzzleHeight <= slide crown by the table".
+            //
+            // ⛔ THE CROWN COMES FROM `HitParts.PoseTop`, NOT FROM ARITHMETIC
+            // WRITTEN HERE (finding C-C7, closed in T2 by making that member
+            // public): a private copy of "the maximum over bone ends plus the
+            // radius" would be its THIRD home.
+            // ⚠ UPRIGHT (`float2.zero` tilt): validation judges the authored
+            // configuration, and a tilt is a runtime state of one body.
+            //
+            // ⚠ IT STANDS DOWN ON A BODY WITH NO SLIDE CLIP, the same
+            // convention `HeadPartBottom`'s NaN sets: `SlideClipIndex` is the
+            // baker's contract (clip 0 rest, clip 1 the slide loop), and a
+            // table that never reached clip 1 cannot express this question.
+            if (cfg.Hero.Poses.ClipFirstRow != null
+                && cfg.Hero.Poses.ClipFirstRow.Length > SlideClipIndex + 1
+                && cfg.Hero.Parts != null && cfg.Hero.Parts.Length > 0)
             {
-                errors.Add("Hero.SlideMuzzleHeight must be <= Hero.SlideProfileTop " +
-                    $"(got SlideMuzzleHeight={cfg.Hero.SlideMuzzleHeight:F3}, " +
-                    $"SlideProfileTop={cfg.Hero.SlideProfileTop:F3}).");
+                int slideRow = cfg.Hero.Poses.ClipFirstRow[SlideClipIndex];
+                float slideCrown = HitParts.PoseTop(cfg.Hero.Parts, in cfg.Hero.Poses,
+                    slideRow, float2.zero);
+                if (slideCrown + cfg.Gunner.ProjectileRadius >= cfg.Gunner.MuzzleHeight)
+                {
+                    errors.Add("Gunner.MuzzleHeight must be above the collector's slide crown " +
+                        $"plus Gunner.ProjectileRadius (slide crown {slideCrown:F3} + " +
+                        $"{cfg.Gunner.ProjectileRadius:F3} against MuzzleHeight " +
+                        $"{cfg.Gunner.MuzzleHeight:F3}) — otherwise the gunner's round no longer " +
+                        "passes over a sliding collector, and the slide stops hiding anything.");
+                }
+                if (cfg.Hero.SlideMuzzleHeight > slideCrown)
+                {
+                    errors.Add("Hero.SlideMuzzleHeight must be <= the collector's slide crown " +
+                        $"(got {cfg.Hero.SlideMuzzleHeight:F3} against a slide crown of " +
+                        $"{slideCrown:F3}) — he would be firing from above his own silhouette.");
+                }
             }
 
-            // app-88jb Т13 (spec §3.10 rule 5, finding C-M3): the slide profile
-            // must land EXACTLY on a boundary of one of the collector's own
-            // parts. Before parts existed the profile was equivalent to the
-            // legs band because both numbers happened to read 0.55; that is
-            // data agreeing with itself, not a rule, and the day one of them
-            // moved the slide would have silently stopped being a crouch under
-            // anything. EXACT equality, no tolerance: both numbers are authored
-            // as the same decimal literal and decimal -> float is
-            // deterministic, while a tolerance would legalize a thin band that
-            // is inside the profile and outside every part at once.
-            if (cfg.Hero.Parts != null && cfg.Hero.Parts.Length > 0
-                && !IsPartBoundary(cfg.Hero.Parts, cfg.Hero.SlideProfileTop))
-            {
-                errors.Add("Hero.SlideProfileTop must coincide with a part boundary of the " +
-                    $"collector's own body (got {cfg.Hero.SlideProfileTop:F3}, boundaries " +
-                    $"{PartBoundaryList(cfg.Hero.Parts)}).");
-            }
+            // ⛔⛔ VALIDATION RULE 5 IS WITHDRAWN HERE (app-94sk T4, owner
+            // decision Н60). It required `Hero.SlideProfileTop` to coincide
+            // EXACTLY with a boundary of one of the collector's parts — a
+            // meaningful claim only while parts were a contiguous COLUMN of
+            // bands (validation rule 2, withdrawn in T2). Volumes are capsules
+            // on bone pairs: they overlap, they are not sorted, and "a
+            // boundary" is no longer a set anything can land on.
+            // ⚠ THE FIELD ITSELF STAYS FOR NOW, AND SO DOES `ReqPositive` ABOVE
+            // — decision Р-C of this task. Two live combat readers still derive
+            // the slide's height ceiling from it (`ProjectileSystem.cs` and
+            // `AimLine.cs`), and their replacement is the POSE, which arrives
+            // with the pose key in T6a/T6b. Withdrawing the number here and
+            // leaving those two without a ceiling would make a sliding
+            // collector as tall as a standing one for three tasks — a silent
+            // change of game outcomes, not a refactor. Rule 16 below already
+            // judges the slide BY THE TABLE, so the scalar no longer decides
+            // anything the configuration is checked on.
 
             // app-88jb Т13 (spec §3.10 rule 14, finding C-I1): REWRITTEN from
             // "max of the three tallest zone tops" to "the crown of every body
@@ -1107,7 +1149,8 @@ namespace Ring.Data
             // app-88jb Т13 (spec §3.10 rules 2/3/4): the collector's own stack
             // of parts. Same helper the four archetypes go through in
             // ValidateMob — one body, every caller.
-            ValidateParts(errors, "Hero", cfg.Hero.Parts);
+            ValidateParts(errors, "Hero", cfg.Hero.Parts, in cfg.Hero.Poses,
+                cfg.Hero.Radius, cfg.Hero.GatherRadius);
             // Rule 6, REWRITTEN BY Т13 exactly as its Т1 form promised: the
             // center of mass cannot sit above the body it belongs to, and the
             // body is now the stack of parts rather than the old zone column. The
@@ -2191,7 +2234,7 @@ namespace Ring.Data
             // parts, and the center of mass measured against IT rather than
             // against the old zone column — see the Hero block's own note for why
             // the rewrite is load-bearing rather than cosmetic.
-            ValidateParts(errors, name, m.Parts);
+            ValidateParts(errors, name, m.Parts, in m.Poses, m.Radius, m.GatherRadius);
             // Rule 10 (app-94sk T2): only an archetype has a strike, so this rule
             // has no counterpart in the Hero block.
             ValidateSwingPart(errors, name, in m);
@@ -2249,12 +2292,122 @@ namespace Ring.Data
         /// history — so what is enforced here is UNIQUENESS; the other half is a
         /// pinned list in HitPartsTests, exactly the way ProtocolVersion and the
         /// length of the zone enum are pinned.
-        static void ValidateParts(List<string> errors, string name, HitPart[] parts)
+        static void ValidateParts(List<string> errors, string name, HitPart[] parts,
+            in PoseTable poses, float radius, float gatherRadius)
         {
             if (parts == null || parts.Length == 0)
             {
                 errors.Add($"{name}.Parts must not be empty — a body with no parts cannot be hit at all.");
                 return;
+            }
+
+            // ⛔⛔ RULE 12 FIRST, AND ITS PLACE IS NOT ARBITRARY (app-94sk T4,
+            // spec §3.13): AN EMPTY TABLE IS THE MOST DANGEROUS REFUSAL THERE
+            // IS, because nothing downstream goes red for it — every volume
+            // resolves against a table with no rows, refuses, and the body is
+            // SILENTLY UNHITTABLE. The rules below index into the table, so
+            // they stand down once this one has spoken.
+            int rowStride = poses.BoneCount;
+            int rows = rowStride > 0 && poses.Bones != null ? poses.Bones.Length / rowStride : 0;
+            if (rowStride <= 0 || rows <= 0 || poses.ClipFirstRow == null
+                || poses.ClipFirstRow.Length < 2)
+            {
+                errors.Add($"{name}.Poses is empty — no baked pose table reached this body. " +
+                    "A body whose volumes have no bones to stand on cannot be hit at all, and " +
+                    "nothing else in the pipeline reports it (run Ring/Bootstrap/Pose Table).");
+                return;
+            }
+
+            // Rule 12's other half: a NaN in a bone coordinate makes a body
+            // UNHITTABLE JUST AS SILENTLY — `Geometry.SegmentCapsule` answers
+            // false on NaN by contract, and the checksum does not catch it
+            // (NaN is a perfectly ordinary bit pattern to fold).
+            for (int i = 0; i < poses.Bones.Length; i++)
+            {
+                float3 b = poses.Bones[i];
+                if (math.all(math.isfinite(b))) continue;
+                errors.Add($"{name}.Poses bone {i % rowStride} of row {i / rowStride} must be " +
+                    $"finite (got {b}) — a non-finite bone makes every capsule on it refuse " +
+                    "every shot, and it does so without a single error.");
+                break;
+            }
+
+            // ⛔ RULE 27 (Р514): THE CHECKSUM IS RECOMPUTED OVER THE LOADED
+            // NUMBERS AND COMPARED WITH THE FIELD. The field is a CACHE, not
+            // the source of truth — taking it on trust would accept a table
+            // somebody substituted, which is precisely the failure the whole
+            // three-level integrity scheme exists to prevent.
+            ulong actual = SimConfigHash.PoseTableChecksum(in poses);
+            if (actual != poses.Checksum)
+            {
+                errors.Add($"{name}.Poses pose table checksum disagrees with its own bytes " +
+                    $"(field 0x{poses.Checksum:X16}, recomputed 0x{actual:X16}) — the table has " +
+                    "been edited since it was baked, or it is not the table it claims to be.");
+            }
+
+            // ⛔ RULE 9 (spec §3.13): the broad phase accepts a body by ONE
+            // circle before a single volume is walked, so that circle has to
+            // cover the furthest any bone reaches in ANY phase — otherwise the
+            // volume that left the circle is dropped from the candidate set
+            // SILENTLY. Two lower bounds, and the second is the one nothing
+            // enforced before this task: the physical radius, and the maximum
+            // over the pose table.
+            if (gatherRadius < radius)
+            {
+                errors.Add($"{name}.GatherRadius must be >= {name}.Radius " +
+                    $"(got {gatherRadius:F3} against {radius:F3}) — the broad phase would drop " +
+                    "bodies the physical circle already covers.");
+            }
+            // ⛔ THE BOUND IS `HitParts.GatherReach` — the furthest a VOLUME
+            // reaches, its own radius included, over every clip except the
+            // death take. A bone-only figure would be too small by exactly one
+            // capsule radius, which on the chaser's torso is half a meter.
+            float tableMax = HitParts.GatherReach(parts, in poses);
+            if (gatherRadius < tableMax)
+            {
+                errors.Add($"{name}.GatherRadius must be >= the reach of its own volumes in the " +
+                    $"pose table (got {gatherRadius:F3} against {tableMax:F3}) — a volume that " +
+                    "leaves the gather circle is dropped from the candidate set with no error at all.");
+            }
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                // ⛔ RULE 6 (spec §3.13): BOTH ends of the pair are checked.
+                // `BoneA` would be caught by the row read below even without a
+                // rule; `BoneB` would index past the row and throw an
+                // IndexOutOfRangeException somewhere in the solver instead.
+                if (parts[i].BoneA >= rowStride)
+                {
+                    errors.Add($"{name}.Parts[{i}].BoneA is outside the pose table " +
+                        $"(got {parts[i].BoneA}, the table has {rowStride} bones).");
+                    continue;
+                }
+                if (parts[i].BoneB >= rowStride)
+                {
+                    errors.Add($"{name}.Parts[{i}].BoneB is outside the pose table " +
+                        $"(got {parts[i].BoneB}, the table has {rowStride} bones).");
+                    continue;
+                }
+
+                // ⛔ RULE 13 (spec §3.13): `RestBottom`/`RestTop` are DERIVED
+                // data — the capsule's extent in the REST POSE, which is row 0
+                // by the baker's clip-order contract. Without this rule they
+                // would become a third source of truth about a body's geometry,
+                // beside the table and the volumes themselves.
+                float ay = poses.Bones[parts[i].BoneA].y;
+                float by = poses.Bones[parts[i].BoneB].y;
+                float bottom = math.min(ay, by) - parts[i].Radius;
+                float top = math.max(ay, by) + parts[i].Radius;
+                if (math.abs(parts[i].RestBottom - bottom) > RestExtentEps)
+                {
+                    errors.Add($"{name}.Parts[{i}].RestBottom disagrees with the rest pose " +
+                        $"(got {parts[i].RestBottom:F4}, the table says {bottom:F4}).");
+                }
+                if (math.abs(parts[i].RestTop - top) > RestExtentEps)
+                {
+                    errors.Add($"{name}.Parts[{i}].RestTop disagrees with the rest pose " +
+                        $"(got {parts[i].RestTop:F4}, the table says {top:F4}).");
+                }
             }
 
             for (int i = 0; i < parts.Length; i++)
@@ -2340,6 +2493,25 @@ namespace Ring.Data
         /// nothing would have failed. It searches BY ZONE instead, through the
         /// one home of that search.
         ///
+        /// app-94sk T4: how far `RestBottom`/`RestTop` may sit from what the
+        /// table says before rule 13 refuses. ⛔ NOT EXACT EQUALITY: the baker
+        /// writes these into a YAML asset through Unity's float serializer and
+        /// the table through its own binary one, so two float paths meet here.
+        /// A tenth of a millimetre is four orders below the thinnest capsule
+        /// this game has (the collector's head, 0.16 m), so nothing a person
+        /// could author slips through.
+        const float RestExtentEps = 1e-4f;
+
+        /// app-94sk T4: the slide loop's clip index, which is the baker's
+        /// ORDERING CONTRACT rather than a guess — clip 0 is the rest clip,
+        /// clip 1 is the slide loop where a body has one, the last clip is the
+        /// death take. ⛔ NOT A LITERAL `1` at the use site: on a one-clip
+        /// table `ClipFirstRow[1]` is the sentinel row count, and a literal
+        /// there reads as a row index while meaning something else entirely.
+        /// ⚠ `Ring.Simulation.Tests.TestConfigs` names the same number for its
+        /// fixture tables; that the two agree IS the contract.
+        internal const int SlideClipIndex = 1;
+
         /// NaN WHEN THE BODY CANNOT EXPRESS THE QUESTION: a body with no head
         /// zone at all has no such seam, and a rule reading 0 there would
         /// refuse every positive height instead of refusing nothing. Callers
@@ -2348,29 +2520,6 @@ namespace Ring.Data
             => parts != null && HitParts.TryFindByZone(parts, HitZone.Head, out HitPart head)
                 ? head.RestBottom
                 : float.NaN;
-
-        /// app-88jb Т13 (rule 5): is `h` one of the heights this stack is cut
-        /// at? The ground (Parts[0].RestBottom) counts — a slide profile of 0 is a
-        /// degenerate authoring choice, not a broken one, and refusing it here
-        /// would be this rule inventing a second opinion about a number
-        /// ReqPositive already owns.
-        static bool IsPartBoundary(HitPart[] parts, float h)
-        {
-            if (parts[0].RestBottom == h) return true;
-            for (int i = 0; i < parts.Length; i++)
-                if (parts[i].RestTop == h) return true;
-            return false;
-        }
-
-        /// The same boundaries as text, for the refusal message — a reader who
-        /// has to fix SlideProfileTop needs the list of values it could have
-        /// been, not just the one it was.
-        static string PartBoundaryList(HitPart[] parts)
-        {
-            var b = new List<string>(parts.Length + 1) { $"{parts[0].RestBottom:F3}" };
-            for (int i = 0; i < parts.Length; i++) b.Add($"{parts[i].RestTop:F3}");
-            return string.Join("/", b);
-        }
 
         static void ReqFinite(List<string> errors, string name, float value)
         {

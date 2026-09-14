@@ -23,8 +23,37 @@ namespace Ring.Simulation.Tests
             var arena = ScriptableObject.CreateInstance<ArenaConfig>();
             // Stage 2 Task 22: seventh BuildShipped() parameter.
             var visibility = ScriptableObject.CreateInstance<VisibilityConfig>();
+
+            // ⛔⛔ THE POSE TABLES ARE NOT COSMETIC HERE (app-94sk T4). A fresh
+            // SO carries a NULL `Poses`, which maps to an EMPTY table — and
+            // validation rules 6, 9, 12, 13 and 27 refuse every configuration
+            // with one. Without these three lines each of the ~45 tests that
+            // calls BuildShipped would go red ON SOMEBODY ELSE'S SUBJECT.
+            // ⚠ THE COLLECTOR NEEDS TWO CLIPS, and that is not decoration:
+            // rule 16 reads the crown of the SLIDE clip through
+            // ClipFirstRow[SlideClipIndex], and on a one-clip table that index
+            // is the row-count sentinel — the read would run past the bones.
+            hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            chaser.Poses = FixtureTable(TestConfigs.ChaserRestPose());
+            gunner.Poses = FixtureTable(TestConfigs.ChaserRestPose());
             return (hero, weapon, chaser, gunner, wave, arena, visibility);
         }
+
+        /// A live carrier around a fixture table. ⛔ ITS HOME IS THIS FILE, not
+        /// `TestConfigs`: it takes a `ScriptableObject`, so it needs
+        /// `Ring.Data` and `UnityEngine`, and `TestConfigs` carries neither.
+        internal static PoseTableAsset FixtureTable(PoseTable table)
+        {
+            var asset = ScriptableObject.CreateInstance<PoseTableAsset>();
+            asset.Table = table;
+            return asset;
+        }
+
+        /// The pose table of a LIVE config asset, BY REFERENCE — a change made
+        /// through it is a change the config build sees, and that is exactly
+        /// what the fixtures of rules 12, 13 and 27 need.
+        internal static ref PoseTable PoseTableFor(MobConfig cfg) => ref cfg.Poses.Table;
+        internal static ref PoseTable PoseTableFor(HeroConfig cfg) => ref cfg.Poses.Table;
 
         /// Stage 3 Task 12 (coordinator finding on mutation M8): the FULL
         /// shipped asset set, and the reason it has to exist is a defect this
@@ -67,6 +96,20 @@ namespace Ring.Simulation.Tests
             var (shippedElite, shippedDirector) = MakeShippedArchetypes();
             elite ??= shippedElite;
             director ??= shippedDirector;
+            // app-94sk T4: a section a test built for itself carries a null
+            // `Poses` like every fresh SO, and validation rule 12 refuses one.
+            // ⛔ DEFAULTED HERE, AT THE ONE DOOR, rather than at the eight call
+            // sites: the reason is the same one that made `elite` an
+            // overridable default above — a test that varies ONE field for ONE
+            // rule must not go red on somebody else's. ⚠ A test that MEANS to
+            // drive rule 12 sets `Poses` to null AFTER this method has run, or
+            // names the empty table itself; `Validate_ABodyWithNoPoseTable_
+            // Throws` in HitPartsTests is that witness.
+            hero.Poses ??= FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            chaser.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
+            gunner.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
+            elite.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
+            director.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
             // Ф2 review C1: the flow asset belongs here too, and leaving it out
             // was this method's own founding defect repeated one parameter
             // over. `Flow` reaching the simulation as five zeros is exactly the
@@ -106,6 +149,10 @@ namespace Ring.Simulation.Tests
             var director = ScriptableObject.CreateInstance<MobConfig>();
             SeedMob(elite, in expected.Elite);
             SeedMob(director, in expected.Director);
+            // ⚠ Their tables arrive through SeedMob, which carries every
+            // MobSimConfig field this way — elite and the Director are born
+            // HERE rather than in MakeDefaults, and each keeps ITS OWN fixture
+            // section's table rather than borrowing the chaser's.
             return (elite, director);
         }
 
@@ -186,6 +233,11 @@ namespace Ring.Simulation.Tests
             // Elite/Director callers would keep MobConfig's chaser-shaped C#
             // default instead of the archetype's own number, silently.
             target.GatherRadius = source.GatherRadius;
+            // app-94sk T4: the pose table travels too, wrapped in a live
+            // carrier. ⛔ WITHOUT IT the seeded archetype reaches BuildShipped
+            // with a null `Poses`, and rules 6/9/12/13/27 refuse it — which
+            // would read as this file's own fixtures being wrong.
+            target.Poses = FixtureTable(source.Poses);
             target.SwingPartId = source.SwingPartId;
         }
 
@@ -194,6 +246,10 @@ namespace Ring.Simulation.Tests
         static SimConfig BuildWith(HeroConfig hero)
         {
             var (_, w, c, g, wv, a, vis) = MakeDefaults();
+            // app-94sk T4: the caller's fresh HeroConfig carries a null `Poses`
+            // like every fresh SO, and rules 12/13/27 refuse one — so the
+            // fixture table is hung here rather than at each of the call sites.
+            hero.Poses ??= FixtureTable(TestConfigs.HeroRestAndSlidePose());
             return BuildShipped(hero, w, c, g, wv, a, vis);
         }
 
@@ -415,8 +471,15 @@ namespace Ring.Simulation.Tests
             // a foot outside that circle. Both halves are asserted: a placeholder
             // that drifts and a fixture that stops being wider are each a defect,
             // and neither would show anywhere else.
-            Assert.AreEqual(cfg.Chaser.Radius, cfg.Chaser.GatherRadius, Eps,
-                "asset-side GatherRadius must stay the placeholder until the baker (T4)");
+            // ⭐ app-94sk T4: THE PLACEHOLDER IS GONE — the baker measured the
+            // chaser's own clips and the bootstrap delivered the number. The
+            // assertion is inverted rather than deleted, because "the asset
+            // side finally exceeds the body circle" is the very thing deviation
+            // 11a was about, and a silent return to the placeholder would mean
+            // the delivery stopped running.
+            Assert.Greater(cfg.Chaser.GatherRadius, cfg.Chaser.Radius,
+                "asset-side GatherRadius must exceed the body circle now that the baker has run "
+                + "— the placeholder was the body radius itself (deviation 11a)");
             Assert.Greater(expected.Chaser.GatherRadius, expected.Chaser.Radius,
                 "fixture-side GatherRadius must exceed the body circle — that is what it is for");
             AssertMobEqual(expected.Gunner, cfg.Gunner);
@@ -621,25 +684,34 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Validate_SlideProfileAboveGunnerMuzzle_Throws()
+        public void Validate_SlideMuzzleAboveTheSlideCrown_Throws()
         {
             var hero = ScriptableObject.CreateInstance<HeroConfig>();
-            // NB (QA2/QD3): a fresh MobConfig has ProjectileRadius = 0 (chaser
-            // defaults), so 1.0 is used: 1.0 + 0 >= MuzzleHeight(0.95) — rule D5
-            // violated, while 1.0 is still under the bottom of the collector's
-            // head part (1.35 — the height Т15 repointed the old body-band
-            // ceiling at) — the other rules stay quiet.
-            // ⚠ app-88jb Т13 TIGHTENED THE ASSERTION, and the reason is this
-            // test's own: 1.0 is not a boundary of any collector part either,
-            // so Т13's rule 5 now ALSO refuses this value and its message also
-            // carries the words "Hero.SlideProfileTop". On the old assertion
-            // this witness would have survived the deletion of rule D5 outright
-            // — green for the wrong rule. The gunner's muzzle is what D5 is
-            // about, so that is what the message must name.
-            hero.SlideProfileTop = 1.0f;
+            // ⛔ app-94sk T4: THIS WITNESS WAS RETARGETED, NOT DELETED. It used
+            // to drive the rule "Hero.SlideProfileTop + Gunner.ProjectileRadius
+            // < Gunner.MuzzleHeight", which rule 16 replaced — the same claim
+            // asked of the CROWN OF THE SLIDE BY THE TABLE instead of a scalar
+            // that only meant anything under the withdrawn validation rule 2.
+            // Of rule 16's two halves this one drives the SECOND, because it is
+            // the half a lone HeroConfig can violate: the collector must not
+            // fire from ABOVE HIS OWN SILHOUETTE. (The gunner half has its own
+            // witness in HitPartsTests, where the gunner's SO is to hand.)
+            //
+            // The slide crown of the fixture table is 0.42 (its own doc), and
+            // the height is taken FROM THE TABLE rather than written as a
+            // literal — a literal would survive a change to the fixture and go
+            // green for the wrong reason.
+            hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            ref PoseTable t = ref PoseTableFor(hero);
+            int slideRow = t.ClipFirstRow[TestConfigs.SlideClipIndex];
+            float slideCrown = Ring.Simulation.Combat.HitParts.PoseTop(
+                hero.Parts, in t, slideRow, float2.zero);
+            Assert.Greater(slideCrown, 0f,
+                "премисса фикстуры: у клипа слайда есть крона, иначе нарушать нечего");
+            hero.SlideMuzzleHeight = slideCrown + 0.1f;
             var ex = Assert.Throws<System.ArgumentException>(() => BuildWith(hero));
-            Assert.That(ex.Message, Does.Contain("SlideProfileTop"));
-            Assert.That(ex.Message, Does.Contain("Gunner.MuzzleHeight"));
+            Assert.That(ex.Message, Does.Contain("Hero.SlideMuzzleHeight"));
+            Assert.That(ex.Message, Does.Contain("slide crown"));
         }
 
         [Test]
@@ -2532,6 +2604,18 @@ namespace Ring.Simulation.Tests
             // SimConfig) is untouched.
             elite.AttackRange = expected.Elite.AttackRange;
             director.AttackRange = expected.Director.AttackRange;
+            // app-94sk T4: THE SAME ARGUMENT ONE STEP FURTHER. Since validation
+            // rule 13 ties a body's extents to its table, and rule 9 ties its
+            // gather circle to both, a body carrying an elite-sized RADIUS and
+            // chaser-sized volumes is no longer coherent either. The three
+            // travel together, and the test's own subject (MaxHp and Radius
+            // reaching SimConfig) is untouched.
+            elite.Parts = (HitPart[])expected.Elite.Parts.Clone();
+            director.Parts = (HitPart[])expected.Director.Parts.Clone();
+            elite.GatherRadius = expected.Elite.GatherRadius;
+            director.GatherRadius = expected.Director.GatherRadius;
+            elite.Poses = FixtureTable(expected.Elite.Poses);
+            director.Poses = FixtureTable(expected.Director.Poses);
 
             SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 
@@ -2575,8 +2659,16 @@ namespace Ring.Simulation.Tests
             Ring.Editor.StageOneSceneBootstrap.ApplyDirectorDefaults(director);
 
             var (h, w, c, g, wv, a, vis) = MakeDefaults();
-            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
             SimConfig expected = TestConfigs.Default();
+            // app-94sk T4: these two are SEEDED with their own numbers, so they
+            // need their OWN tables — validation rule 13 makes the extents and
+            // the table one statement, and `BuildShipped`'s fallback table is
+            // the CHASER's (what an UNseeded MobConfig's C# defaults describe).
+            // ⚠ The pose table is not part of this test's subject: the bootstrap
+            // seeds balance literals, while the real table is a baked artifact.
+            elite.Poses = FixtureTable(expected.Elite.Poses);
+            director.Poses = FixtureTable(expected.Director.Poses);
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 
             AssertMobEqual(expected.Elite, cfg.Elite);
             AssertMobEqual(expected.Director, cfg.Director);
