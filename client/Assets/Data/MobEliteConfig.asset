@@ -48,29 +48,109 @@ MonoBehaviour:
   Parts:
   - BoneA: 0
     BoneB: 1
-    Radius: 0.56
-    Zone: 1
-    DamageMult: 0.75
+    Radius: 1.9723
+    Zone: 3
+    DamageMult: 1.7
     PartId: 0
-    RestBottom: -0.56
-    RestTop: 3.486765
-  - BoneA: 1
-    BoneB: 2
-    Radius: 0.8
+    RestBottom: -1.9723
+    RestTop: 4.899065
+  - BoneA: 8
+    BoneB: 8
+    Radius: 1.016
     Zone: 2
     DamageMult: 1
     PartId: 1
-    RestBottom: 1.849817
-    RestTop: 3.726765
+    RestBottom: 2.176759
+    RestTop: 4.2087593
+  - BoneA: 15
+    BoneB: 15
+    Radius: 1.016
+    Zone: 2
+    DamageMult: 1
+    PartId: 2
+    RestBottom: 2.176759
+    RestTop: 4.2087593
   - BoneA: 2
     BoneB: 3
-    Radius: 0.28
-    Zone: 3
-    DamageMult: 1.7
-    PartId: 2
-    RestBottom: 2.3464408
-    RestTop: 2.929817
-  GatherRadius: 2.0760615
+    Radius: 0.6921
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 3
+    RestBottom: 1.9343407
+    RestTop: 3.341917
+  - BoneA: 3
+    BoneB: 4
+    Radius: 0.6921
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 4
+    RestBottom: 1.6574516
+    RestTop: 3.3185408
+  - BoneA: 4
+    BoneB: 5
+    Radius: 0.4388
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 5
+    RestBottom: 1.1763262
+    RestTop: 2.7883518
+  - BoneA: 5
+    BoneB: 6
+    Radius: 0.4753
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 6
+    RestBottom: -0.0013043284
+    RestTop: 2.0904262
+  - BoneA: 6
+    BoneB: 7
+    Radius: 0.8882
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 7
+    RestBottom: -0.8626802
+    RestTop: 1.3621957
+  - BoneA: 9
+    BoneB: 10
+    Radius: 0.6921
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 8
+    RestBottom: 1.9343405
+    RestTop: 3.341917
+  - BoneA: 10
+    BoneB: 11
+    Radius: 0.6921
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 9
+    RestBottom: 1.6574523
+    RestTop: 3.3185406
+  - BoneA: 11
+    BoneB: 12
+    Radius: 0.4388
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 10
+    RestBottom: 1.1763262
+    RestTop: 2.7883525
+  - BoneA: 12
+    BoneB: 13
+    Radius: 0.4753
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 11
+    RestBottom: -0.0013045967
+    RestTop: 2.0904262
+  - BoneA: 13
+    BoneB: 14
+    Radius: 0.8882
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 12
+    RestBottom: -0.86268157
+    RestTop: 1.3621954
+  GatherRadius: 2.7614193
   SwingPartId: 1
   MaxRicochets: 2
   RicochetRetention: 0.8

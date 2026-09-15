@@ -115,10 +115,10 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.56
-  m_Height: 4.046765
+  m_Radius: 0.8882
+  m_Height: 4.2045984
   m_Direction: 1
-  m_Center: {x: 0, y: 1.4633825, z: 0}
+  m_Center: {x: 0, y: 1.2396176, z: 0}
 --- !u!1 &5671314318094188515
 GameObject:
   m_ObjectHideFlags: 0
@@ -170,10 +170,10 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.28
-  m_Height: 0.58337617
+  m_Radius: 1.9723
+  m_Height: 6.871365
   m_Direction: 1
-  m_Center: {x: 0, y: 2.6381288, z: 0}
+  m_Center: {x: 0, y: 1.4633825, z: 0}
 --- !u!1 &7839156164017716686
 GameObject:
   m_ObjectHideFlags: 0
@@ -225,10 +225,10 @@ CapsuleCollider:
   m_ProvidesContacts: 0
   m_Enabled: 1
   serializedVersion: 2
-  m_Radius: 0.8
-  m_Height: 1.8769479
+  m_Radius: 1.016
+  m_Height: 2.0320003
   m_Direction: 1
-  m_Center: {x: 0, y: 2.788291, z: 0}
+  m_Center: {x: 0, y: 3.192759, z: 0}
 --- !u!1001 &8158427642660964460
 PrefabInstance:
   m_ObjectHideFlags: 0

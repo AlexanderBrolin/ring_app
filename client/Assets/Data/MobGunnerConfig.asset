@@ -46,32 +46,80 @@ MonoBehaviour:
   TiltFallAngle: 0.9
   DownedSeconds: 1.2
   Parts:
-  - BoneA: 0
-    BoneB: 1
-    Radius: 0.35
-    Zone: 1
-    DamageMult: 0.75
-    PartId: 0
-    RestBottom: 1.4340609
-    RestTop: 2.3973646
   - BoneA: 1
     BoneB: 2
-    Radius: 0.5
+    Radius: 0.5315
+    Zone: 2
+    DamageMult: 1
+    PartId: 0
+    RestBottom: 1.252561
+    RestTop: 2.790368
+  - BoneA: 2
+    BoneB: 3
+    Radius: 0.7783
     Zone: 2
     DamageMult: 1
     PartId: 1
-    RestBottom: 1.284061
-    RestTop: 2.7588682
-  - BoneA: 2
-    BoneB: 3
-    Radius: 0.17
+    RestBottom: 1.4805682
+    RestTop: 3.4098084
+  - BoneA: 4
+    BoneB: 4
+    Radius: 1.191
     Zone: 3
     DamageMult: 1.7
     PartId: 2
-    RestBottom: 2.0888681
-    RestTop: 2.8015084
-  GatherRadius: 1.5092446
-  SwingPartId: 1
+    RestBottom: 1.8751442
+    RestTop: 4.257144
+  - BoneA: 5
+    BoneB: 6
+    Radius: 0.5095
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 3
+    RestBottom: 0.84332526
+    RestTop: 2.5282576
+  - BoneA: 6
+    BoneB: 7
+    Radius: 0.2453
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 4
+    RestBottom: 0.6881191
+    RestTop: 1.5981252
+  - BoneA: 7
+    BoneB: 8
+    Radius: 0.3928
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 5
+    RestBottom: -0.32036608
+    RestTop: 1.3262191
+  - BoneA: 9
+    BoneB: 10
+    Radius: 0.5095
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 6
+    RestBottom: 0.89615667
+    RestTop: 2.5584855
+  - BoneA: 10
+    BoneB: 11
+    Radius: 0.2453
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 7
+    RestBottom: 0.66497993
+    RestTop: 1.6509566
+  - BoneA: 11
+    BoneB: 12
+    Radius: 0.3928
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 8
+    RestBottom: -0.32036656
+    RestTop: 1.30308
+  GatherRadius: 2.9642787
+  SwingPartId: -1
   MaxRicochets: 2
   RicochetRetention: 0.8
   RicochetMinSpeed: 6

@@ -25,7 +25,7 @@ MonoBehaviour:
   SlideProfileTop: 0.55
   MuzzleHeight: 1
   SlideMuzzleHeight: 0.45
-  MaxAimHeight: 4.9
+  MaxAimHeight: 5.9
   StaminaMax: 100
   DashStaminaCost: 40
   SlideStaminaCost: 30
@@ -58,31 +58,95 @@ MonoBehaviour:
   TiltSettleSeconds: 0.9
   TiltGain: 10.5
   Parts:
-  - BoneA: 0
-    BoneB: 1
-    Radius: 0.32
-    Zone: 1
-    DamageMult: 0.75
-    PartId: 0
-    RestBottom: -0.32
-    RestTop: 1.1971726
   - BoneA: 1
-    BoneB: 2
-    Radius: 0.45
+    BoneB: 3
+    Radius: 0.1559
+    Zone: 2
+    DamageMult: 1
+    PartId: 0
+    RestBottom: 0.7212726
+    RestTop: 1.2934836
+  - BoneA: 3
+    BoneB: 5
+    Radius: 0.2107
     Zone: 2
     DamageMult: 1
     PartId: 1
-    RestBottom: 0.4271726
-    RestTop: 1.4636033
-  - BoneA: 2
-    BoneB: 3
-    Radius: 0.16
+    RestBottom: 0.9268836
+    RestTop: 1.6570121
+  - BoneA: 5
+    BoneB: 6
+    Radius: 0.2605
     Zone: 3
     DamageMult: 1.7
     PartId: 2
-    RestBottom: 0.85360324
-    RestTop: 1.2975836
-  GatherRadius: 0.65359354
+    RestBottom: 1.185812
+    RestTop: 1.7861304
+  - BoneA: 8
+    BoneB: 9
+    Radius: 0.0835
+    Zone: 2
+    DamageMult: 1
+    PartId: 3
+    RestBottom: 1.0711181
+    RestTop: 1.4852207
+  - BoneA: 9
+    BoneB: 10
+    Radius: 0.1284
+    Zone: 2
+    DamageMult: 1
+    PartId: 4
+    RestBottom: 0.7706654
+    RestTop: 1.2830181
+  - BoneA: 12
+    BoneB: 13
+    Radius: 0.0832
+    Zone: 2
+    DamageMult: 1
+    PartId: 5
+    RestBottom: 1.0922492
+    RestTop: 1.4942206
+  - BoneA: 13
+    BoneB: 14
+    Radius: 0.1284
+    Zone: 2
+    DamageMult: 1
+    PartId: 6
+    RestBottom: 0.7941246
+    RestTop: 1.3038491
+  - BoneA: 15
+    BoneB: 16
+    Radius: 0.1022
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 7
+    RestBottom: 0.4263132
+    RestTop: 0.9995
+  - BoneA: 16
+    BoneB: 17
+    Radius: 0.2604
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 8
+    RestBottom: -0.1572634
+    RestTop: 0.7889132
+  - BoneA: 20
+    BoneB: 21
+    Radius: 0.1017
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 9
+    RestBottom: 0.40876055
+    RestTop: 0.999
+  - BoneA: 21
+    BoneB: 22
+    Radius: 0.2604
+    Zone: 1
+    DamageMult: 0.75
+    PartId: 10
+    RestBottom: -0.15671998
+    RestTop: 0.77086055
+  GatherRadius: 1.1628327
   MaxDepenetrationPerTick: 0.5
   PushRecoilFraction: 0.25
   SlideThrustRecovery: 18
