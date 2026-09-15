@@ -510,8 +510,10 @@ namespace Ring.Simulation.Tests
             // column. Measured on his own bones the chaser's head is a 0.25 m
             // sphere centered at 1.9669 m — 0.44 m LOWER — so the arm is 0.797 m
             // and the peak 0.6085 rad (34.9°) against the shipped 0.9 rad
-            // (51.6°). No point of his head reaches it: even his crown-most head
-            // height, 2.2214, peaks at 0.7447 rad.
+            // (51.6°). No point of his head reaches it: the impulse is LINEAR in
+            // the arm (`Impact.AngularImpulse`), 0.76362 rad per meter of it at
+            // this speed, so even his crown-most head height, 2.2214, peaks at
+            // 0.8029 rad.
             // ⇒ THE CRITERION IS UNREACHABLE ON THE SHIPPED BALANCE, and that is
             // a MEASUREMENT this task produced rather than a defect it
             // introduced — the tuning is the owner's at the milestone (spec
@@ -542,9 +544,19 @@ namespace Ring.Simulation.Tests
             // sources apart on purpose), so a balance retune moves this
             // fixture only by hand, together with the margins in the doc
             // above.
+            // ⚠ app-saqr (T4b): AND THE MESSAGE HAD TO STOP CLAIMING THE FIXTURE
+            // WOULD BE RED ON CORRECT CODE, BECAUSE IT NO LONGER WOULD. At 35 m/s the
+            // rate is 0.50908 rad per meter of arm, so this fixture's head half
+            // peaks at 0.4057 rad and its body half at 0.0113 — both on the
+            // right side of π/9, and both halves would pass. The 52.5 is kept
+            // because the SPEED IS THE GAME'S and the fixture's margins are
+            // quoted at it; what the assert guards is the assignment one line
+            // up being folded back into the shared fixture, and that is now all
+            // it claims. ⚠ Its flying sibling is a different case: there the
+            // 52.5 IS still load-bearing, by 5 %, and its own message says so.
             Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
-                "фикстура: явное присваивание 52.5 строкой выше снято — на общих 35 порог " +
-                "не достигается и тест красен на верном коде");
+                "фикстура: явное присваивание 52.5 строкой выше снято — числа полей и запасы " +
+                "в доке выше посчитаны на игровой скорости, а не на общих 35");
 
             var w = new SimulationWorld(7, cfg);
             PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
@@ -673,22 +685,25 @@ namespace Ring.Simulation.Tests
             // stops (head.Radius + ProjectileRadius) short of the body's axis,
             // so on a climbing shot it sits BELOW the aim:
             //
-            //   enterX  = 6 - (0.2545 + 0.12)             = 5.6255 m
-            //   contact = 1.0 + (aim - 1.0) * 5.6255 / 6
+            //   enterX  = bodyX - (0.2545 + 0.12)
+            //   contact = muzzleH + (aim - muzzleH) * (enterX - muzzleX) / standOff
             //
-            // ⛔⛔ app-saqr (T4b): WHAT DID MOVE IS THE HEAD, BY 0.44 m DOWN, and
-            // with it the whole of this criterion's reachability — the sibling
-            // `WorldHeadshot_OnTheChasersOwnHeadPart_...` above carries the
-            // account and the booking. Measured on his own bones: the aim taken
-            // here, 80 % of the way up his head volume, is 2.1196 m, the contact
-            // 2.0497 m, the arm 0.8797 m and the peak 0.6718 rad (38.5°) —
-            // against the shipped fall threshold of 0.9 rad it is not a
-            // knockdown at all, while the body half peaks at 0.0246 rad (1.4°).
+            // ⛔ THE DIVISOR IS THE STAND-OFF, NOT THE BODY'S ABSCISSA, and that
+            // is app-saqr's doing: the muzzle no longer sits at the origin (the
+            // paragraph after next says why), so a chain written over a six-meter
+            // flight describes a shot this fixture does not fire. MEASURED from
+            // where it does fire: aim 2.1196 m, contact 1.8222 m, arm 0.6522 m,
+            // peak 0.4980 rad (28.5°), against a body half of 0.0911 rad (5.2°).
+            //
+            // ⛔⛔ app-saqr (T4b): AND WHAT MOVED UNDER ALL OF IT IS THE HEAD, BY
+            // 0.44 m DOWN, with it the whole of this criterion's reachability —
+            // the sibling `WorldHeadshot_OnTheChasersOwnHeadPart_...` above
+            // carries the account and the booking. Against the SHIPPED fall
+            // threshold of 0.9 rad neither half is a knockdown at all.
             // ⇒ THE THIRD EXPLICIT FIXTURE, π/9 (20°), is the sibling's and is
-            // taken here for the sibling's reason. Against it this fixture's own
-            // halves are 0.4980 rad and 0.0911 rad — the head 43 % above, the
-            // body nearly four times below — and the shipped 0.9 remains the
-            // owner's to tune at the milestone.
+            // taken here for the sibling's reason: the head clears it by 43 %
+            // and the body sits nearly four times below, while the shipped 0.9
+            // remains the owner's to tune at the milestone.
             //
             // ⛔⛔ AND THE MUZZLE MOVED UP THE LINE, WHICH IS THE SECOND THING
             // THE MEASURED LAYOUT FORCED. The chaser's head volume sits ENTIRELY
@@ -725,9 +740,14 @@ namespace Ring.Simulation.Tests
             // a mirror of the shipped 52.5 as of Т14, deliberately not a live
             // read of the .asset; the first sibling above carries the full
             // account (Т14/Т23 fix-round, Ruling 201 / review finding B-1).
+            // ⚠ app-saqr (T4b): THE NUMBERS IN THE MESSAGE ARE THIS LAYOUT'S.
+            // The arm at the contact is 0.6522 m, so the peak is 0.4980 rad at
+            // 52.5 and 0.3320 rad at the shared fixture's 35 — against π/9 =
+            // 0.34907 the second is a MISS, by 5 %. Here, unlike in the seam
+            // sibling, the game's speed really is load-bearing.
             Assert.AreEqual(52.5f, cfg.Weapon.ProjectileSpeed, 1e-4f,
                 "фикстура: явное присваивание 52.5 строкой выше снято — на общих 35 пик " +
-                "0.6810 рад против порога 0.9 и тест красен на верном коде");
+                "0.3320 рад против порога π/9 = 0.34907 и тест красен на верном коде");
 
             var w = new SimulationWorld(7, cfg);
             PlayerState hero = w.Player; hero.Hp = 1e6f; w.SetPlayerForTest(hero);
@@ -755,16 +775,34 @@ namespace Ring.Simulation.Tests
             float stepLength = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
             float gatherPad = cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius;
             float standOff = 0.5f * (stepLength + gatherPad);
-            Assert.Less(standOff, stepLength,
-                "премисса: один шаг снаряда обязан накрыть всё пересечение тела — иначе грудь "
-                + "заберёт попадание на предыдущем шаге, и лестница зон до головы не дойдёт");
-            Assert.Greater(standOff, gatherPad,
-                "премисса: дуло стоит ВНЕ круга охвата цели — иначе раунд начинает внутри тела "
-                + "и никуда не летит");
             var muzzle = new float2(mobPos.x - standOff, 0f);
+
+            // ⛔ ONE PREMISE, NOT TWO, AND IT IS MEASURED HORIZONTALLY. `standOff`
+            // is the MIDDLE of the interval `[gatherPad, stepLength]`, so "it is
+            // below the step" and "it is above the gather circle" are one
+            // statement about that interval — a second assert could not fail once
+            // the first passed. What has to be said is that the interval is
+            // USABLE on the shot actually fired: `FireAimed3D` scales a UNIT 3D
+            // direction by the speed, so a climbing round advances LESS along X
+            // than its own step length, and the flat progress is what has to
+            // cover the body.
+            void AssertOneStepSpansTheBody(float aimH)
+            {
+                float climb = aimH - cfg.Hero.MuzzleHeight;
+                float flatPerStep = stepLength * standOff
+                    / math.sqrt(standOff * standOff + climb * climb);
+                Assert.That(gatherPad, Is.InRange(0f, flatPerStep),
+                    "премисса: тело целиком умещается в ОДИН горизонтальный шаг снаряда — иначе "
+                    + "грудь заберёт попадание на предыдущем шаге, и лестница зон до головы "
+                    + "не дойдёт");
+                Assert.Less(gatherPad, standOff,
+                    "премисса: дуло стоит ВНЕ круга охвата цели — иначе раунд начинает внутри "
+                    + "тела и никуда не летит");
+            }
 
             bool KnocksDown(float aimH, HitZone expectedZone, string premise)
             {
+                AssertOneStepSpansTheBody(aimH);
                 MobState m = w.Mobs[0];
                 m.Pos = mobPos; m.Vel = float2.zero;
                 m.Hp = 1e6f; m.Ai = MobAiState.Idle;

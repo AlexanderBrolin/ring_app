@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using Ring.Data;
+using Ring.Simulation.Core;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -379,5 +381,54 @@ namespace Ring.Editor
             foreach (string field in markerFields)
                 if (!text.Contains(field)) { EditorUtility.SetDirty(so); return; }
         }
+
+        /// bd `app-saqr` (T4b): THE TWELVE SHEETS THE GAME LOADS, ASSEMBLED ONCE.
+        ///
+        /// ⛔ ONE HOME, because there are two callers and their disagreement
+        /// would be silent: `LongRunHarness` MEASURES this configuration and
+        /// `ShippedConfigVerify` asserts that it ASSEMBLES. A second spelling of
+        /// the list means a thirteenth sheet needs two edits, and the run where
+        /// one of them is missed is the run where the gate stops testing what the
+        /// harness measures.
+        ///
+        /// ⚠ NOTHING IS SUBSTITUTED OR REPAIRED HERE: the point of both callers
+        /// is to meet the game's own numbers, so this fails exactly where the
+        /// game would — `SimConfigBuilder.Build` throws with every broken rule
+        /// named, and that message is the whole value of the gate.
+        public static SimConfig BuildShippedConfig()
+        {
+            return SimConfigBuilder.Build(
+                LoadBattleAsset<HeroConfig>("HeroConfig"),
+                LoadBattleAsset<WeaponConfig>("WeaponConfig"),
+                LoadBattleAsset<MobConfig>("MobChaserConfig"),
+                LoadBattleAsset<MobConfig>("MobGunnerConfig"),
+                LoadBattleAsset<WaveConfig>("WaveConfig"),
+                LoadBattleAsset<ArenaConfig>("ArenaConfig"),
+                LoadBattleAsset<VisibilityConfig>("VisibilityConfig"),
+                // Stage 3 Task 12 (owner decision R-73): the two archetype
+                // sheets and the match-flow one ride along — an Elite-free
+                // configuration is not the arena the game ships.
+                LoadBattleAsset<MobConfig>("MobEliteConfig"),
+                LoadBattleAsset<MobConfig>("MobDirectorConfig"),
+                LoadBattleAsset<MatchFlowConfig>("MatchFlowConfig"),
+                // Stage 3 Task 13: the catalog and the loot balance sheet, same
+                // reasoning.
+                LoadBattleAsset<ItemCatalog>("ItemCatalog"),
+                LoadBattleAsset<LootConfig>("LootConfig"));
+        }
+
+        /// One battle sheet, refused by name when it is missing: a null here
+        /// would surface as a `NullReferenceException` inside the builder,
+        /// naming nothing.
+        public static T LoadBattleAsset<T>(string name) where T : Object
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<T>($"{BattleDataDir}/{name}.asset");
+            if (asset == null)
+                throw new InvalidOperationException(
+                    $"missing battle asset '{BattleDataDir}/{name}.asset'.");
+            return asset;
+        }
+
+        public const string BattleDataDir = "Assets/Data";
     }
 }

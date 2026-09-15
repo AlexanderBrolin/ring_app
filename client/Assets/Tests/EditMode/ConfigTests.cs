@@ -1970,6 +1970,16 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(e.SprayVariance, a.SprayVariance, Eps);
         }
 
+        /// app-saqr (T4b): a bootstrap seed against rule 9's own number — see the
+        /// call sites for why both sides are asserted and why the upper one is a
+        /// rounding step rather than zero.
+        static void AssertSeededAtItsReach(string name, float seed, float reach)
+        {
+            Assert.That(seed - reach, Is.InRange(0f, 1e-2f),
+                $"{name}: сид GatherRadius разошёлся с охватом собственных объёмов больше чем "
+                + $"на сантиметр — это уже решение, а не округление (охват {reach}, сид {seed})");
+        }
+
         static void AssertMobEqual(MobSimConfig e, MobSimConfig a)
         {
             Assert.AreEqual(e.MaxSpeed, a.MaxSpeed, Eps);
@@ -2698,12 +2708,24 @@ namespace Ring.Simulation.Tests
             // than as a literal: a seed below it would be refused by
             // `SimConfigBuilder` anyway, and a seed above it would silently
             // widen the broad phase.
-            Assert.GreaterOrEqual(cfg.Elite.GatherRadius,
-                TestConfigs.GatherReachOf(in cfg.Elite.Poses, cfg.Elite.Parts),
-                "Elite: сид GatherRadius меньше охвата собственных объёмов (правило 9)");
-            Assert.GreaterOrEqual(cfg.Director.GatherRadius,
-                TestConfigs.GatherReachOf(in cfg.Director.Poses, cfg.Director.Parts),
-                "Director: сид GatherRadius меньше охвата собственных объёмов (правило 9)");
+            // ⛔ BOTH SIDES OF THE SEED, AND THE UPPER ONE IS THE HALF THAT CAN
+            // FAIL HERE. `SimConfigBuilder` already refuses a seed BELOW the
+            // reach, so a bare `GreaterOrEqual` could not go red once
+            // `BuildShipped` had returned — a guard with no reachable failure.
+            // What nothing else watches is a seed ABOVE it, which silently widens
+            // the broad phase and costs work on every body of every tick.
+            // ⚠ THE UPPER BOUND IS A CENTIMETRE, not zero, and the reason is
+            // measured rather than chosen: these seeds are written by hand off
+            // the instrument's own report, so they carry a person's rounding —
+            // the elite's sits 1e-7 above its reach and the Director's 1.4e-4,
+            // which is not one consistent rule and does not need to be. What a
+            // BOUND has to separate is a rounding from a DECISION, and a broad
+            // phase widened on purpose moves by tens of centimetres, not by
+            // fractions of a millimetre.
+            AssertSeededAtItsReach("Elite", cfg.Elite.GatherRadius,
+                TestConfigs.GatherReachOf(in cfg.Elite.Poses, cfg.Elite.Parts));
+            AssertSeededAtItsReach("Director", cfg.Director.GatherRadius,
+                TestConfigs.GatherReachOf(in cfg.Director.Poses, cfg.Director.Parts));
             // ⚠ ONLY THE CHASER'S FIXTURE SKELETON SWINGS A BONE OUT (that is what
             // fixtures 4/4a are for), so for these two the computed number lands
             // exactly ON the body circle. What is asserted is the RULE — the

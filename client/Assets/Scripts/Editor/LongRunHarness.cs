@@ -173,43 +173,20 @@ namespace Ring.Editor
         /// See the class doc's "Immortal bot" note: every number here comes from the
         /// real battle SO assets EXCEPT Hero.MaxHp, overwritten after Build() so this
         /// one run can't die and freeze — Assets/Data itself is never touched.
+        /// ⛔ app-saqr (T4b): THE TWELVE SHEETS ARE LOADED IN ONE PLACE NOW,
+        /// `EditorBootstrapUtils.BuildShippedConfig`. This method used to spell
+        /// the list out, and `ShippedConfigVerify` — a gate whose whole subject
+        /// is "does that same list assemble" — could only have spelled it out a
+        /// second time. A thirteenth sheet would then need two edits, and the
+        /// day one of them is missed the gate stops testing what the harness
+        /// measures. ⚠ The IMMORTAL BOT stays here, where it belongs: the
+        /// harness overrides Hp AFTER the build so one long run cannot die and
+        /// freeze, and `Assets/Data` itself is never touched.
         static SimConfig BuildBattleConfig()
         {
-            HeroConfig hero = Load<HeroConfig>("HeroConfig");
-            WeaponConfig weapon = Load<WeaponConfig>("WeaponConfig");
-            MobConfig chaser = Load<MobConfig>("MobChaserConfig");
-            MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
-            WaveConfig wave = Load<WaveConfig>("WaveConfig");
-            ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
-            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
-            // Stage 3 Task 12 (owner decision R-73): the harness measures the
-            // REAL battle config, so it loads the two new archetype assets and
-            // the match-flow one alongside the seven it already had — an
-            // Elite-free long run would stop measuring the arena the game
-            // actually ships.
-            MobConfig elite = Load<MobConfig>("MobEliteConfig");
-            MobConfig director = Load<MobConfig>("MobDirectorConfig");
-            MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
-            // Stage 3 Task 13: the catalog and loot balance sheet — same
-            // "measure the real battle config" reasoning as elite/director/
-            // flow above.
-            ItemCatalog items = Load<ItemCatalog>("ItemCatalog");
-            LootConfig loot = Load<LootConfig>("LootConfig");
-            SimConfig cfg = SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena,
-                visibility, elite, director, flow, items, loot);
+            SimConfig cfg = EditorBootstrapUtils.BuildShippedConfig();
             cfg.Hero.MaxHp = 1e9f;
             return cfg;
-        }
-
-        static T Load<T>(string name) where T : UnityEngine.Object
-        {
-            var asset = AssetDatabase.LoadAssetAtPath<T>($"{DataDir}/{name}.asset");
-            if (asset == null)
-            {
-                throw new InvalidOperationException(
-                    $"LongRunHarness: missing battle asset '{DataDir}/{name}.asset'.");
-            }
-            return asset;
         }
     }
 }

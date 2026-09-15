@@ -661,14 +661,31 @@ namespace Ring.Simulation.Tests
             var c = Range();
             const float tieRadius = 0.45f, tieHeight = 1.2f;
             PoseTable tieColumn = TestConfigs.ColumnPose(tieHeight, 2f, 2.4f);
-            HitPart[] tieShape =
+            // ⛔ A SEPARATE ARRAY EACH, and that is not fussiness: one shared
+            // instance makes a later edit to "the chaser's shape" silently edit
+            // the collector's too, and a fixture whose two bodies cannot be told
+            // apart in the debugger is a trap for whoever reads it next.
+            static HitPart[] TieShape(float radius, float height) => new[]
             {
-                new HitPart { BoneA = 1, BoneB = 1, Radius = tieRadius, Zone = HitZone.Body,
+                new HitPart { BoneA = 1, BoneB = 1, Radius = radius, Zone = HitZone.Body,
                     DamageMult = 1f, PartId = 0,
-                    RestBottom = tieHeight - tieRadius, RestTop = tieHeight + tieRadius },
+                    RestBottom = height - radius, RestTop = height + radius },
             };
-            c.Hero.Parts = tieShape; c.Hero.Poses = tieColumn; c.Hero.Radius = tieRadius;
-            c.Chaser.Parts = tieShape; c.Chaser.Poses = tieColumn; c.Chaser.Radius = tieRadius;
+            c.Hero.Parts = TieShape(tieRadius, tieHeight);
+            c.Hero.Poses = tieColumn; c.Hero.Radius = tieRadius;
+            c.Chaser.Parts = TieShape(tieRadius, tieHeight);
+            c.Chaser.Poses = tieColumn; c.Chaser.Radius = tieRadius;
+            // ⛔ AND THE GATHER CIRCLES TOO: the broad phase collects candidates
+            // by `GatherRadius`, not by `Radius`, so two bodies declared
+            // "mirror-identical for the sake of a bit-exact tie" have to be
+            // identical in THAT field as well. `TestConfigs` computes it per body
+            // off the real layout (collector 1.10, chaser 0.92), and leaving that
+            // asymmetry in would decide the tie outside the premise loop below.
+            // ⚠ Rule 9's floor is respected: the shared value is the reach of the
+            // shape they now share.
+            float tieGather = HitParts.GatherReach(c.Hero.Parts, in c.Hero.Poses);
+            c.Hero.GatherRadius = tieGather;
+            c.Chaser.GatherRadius = tieGather;
             float halfGap = c.Chaser.AttackRange;
             const float sweepRadius = 1f;
             Assert.Less(halfGap, sweepRadius + c.Hero.Radius,

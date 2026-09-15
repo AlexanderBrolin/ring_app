@@ -1036,27 +1036,43 @@ namespace Ring.Simulation.Tests
             // segments form one leg is read off the bones they share
             // (`LegsApart` below), never off names — the table carries none.
             //
-            // ⛔⛔ AND IT IS THE WIDEST GAP BETWEEN TWO LEGS, NOT THE NARROWEST,
-            // WHICH IS A CORRECTION THE MEASUREMENT FORCED. Legs MEET at the
-            // body — the Director's front and rear hips sit 0.91 m apart and
-            // his thighs are 0.74 m thick, so up there the "gap" is −0.57 m on
-            // a perfectly correct layout, and it is anatomy rather than a
-            // defect. What milestone item 1 claims is that a path BETWEEN the
-            // legs exists, not that one exists at every height. ⚠ The mutation
-            // is still caught: legs collapsed onto one axis (M402) have no gap
-            // anywhere, so the widest is negative too.
+            // ⛔⛔ AND IT IS MEASURED AT THE DISTAL SEGMENTS, WHICH IS WHAT MAKES
+            // "THE NARROWEST" ASKABLE AT ALL. Legs MEET at the body — the
+            // Director's front and rear hips sit 0.91 m apart and his thighs are
+            // 0.74 m thick, so up there the gap is −0.57 m on a perfectly correct
+            // layout, and that is anatomy rather than a defect. Taking the WIDEST
+            // gap instead would dodge that, and it dodges too much: with four
+            // legs a collapsed INNER pair stays invisible behind a healthy outer
+            // one, which is exactly what milestone item 8 exists to see. So the
+            // measure is the NARROWEST gap between the FURTHEST-DOWN segment of
+            // each leg — where legs are apart if they are apart anywhere, and
+            // where a pair sharing an axis reads −2r at once.
+            // ⚠ MEASURED, and the threshold is the plan's own `2 ProjectileRadius`
+            // rather than a bare zero: chaser +0.3636, gunner +0.6722, elite
+            // +0.6536, Director +0.3178 against 0.24.
+            //
+            // ⛔⛔ THE COLLECTOR IS OUT, AND THE NUMBER SAYS WHY RATHER THAN THE
+            // SILENCE THAT USED TO: his own shins OVERLAP in the plan — the gap
+            // is −0.1229 m, because his feet stand 0.40 m apart in his rest pose
+            // while the two shin capsules are 0.2604 m thick each. That is a
+            // fact about the measured collector, not about this fixture, and it
+            // is booked (bd, discovered from app-w4ca) so the milestone sees it.
             SimConfig cfg = TestConfigs.Default();
             foreach (var body in new[]
                      {
                          ("Chaser", cfg.Chaser.Parts, cfg.Chaser.Poses),
                          ("Gunner", cfg.Gunner.Parts, cfg.Gunner.Poses),
+                         ("Elite", cfg.Elite.Parts, cfg.Elite.Poses),
                          ("Director", cfg.Director.Parts, cfg.Director.Poses),
                      })
             {
                 HitPart[] legs = System.Array.FindAll(body.Item2, x => x.Zone == HitZone.Legs);
-                Assert.GreaterOrEqual(legs.Length, 2, $"{body.Item1}: premise — more than one leg");
-                float gap = LegsApart(legs, body.Item3, row: 0);
-                Assert.Greater(gap, 0f,
+                // ⚠ LEGS, NOT LEG VOLUMES: the chaser carries six volumes on two
+                // legs, so counting the array would answer a different question
+                // from the one the sentence asks.
+                float gap = LegsApart(legs, body.Item3, row: 0, out int legCount);
+                Assert.GreaterOrEqual(legCount, 2, $"{body.Item1}: premise — more than one leg");
+                Assert.Greater(gap, 2f * cfg.Weapon.ProjectileRadius,
                     $"{body.Item1}: its legs close up — «the round passes between the legs» "
                     + "is unreachable on this layout");
             }
@@ -1094,9 +1110,10 @@ namespace Ring.Simulation.Tests
                 + "otherwise it holds of every body and witnesses nothing");
         }
 
-        /// The WIDEST gap in the body's PLAN between two DIFFERENT legs, the
-        /// capsule radii taken off — see fixture 45 for why the widest and not
-        /// the narrowest. ⛔ WHICH VOLUMES ARE ONE LEG IS DERIVED,
+        /// The NARROWEST gap in the body's PLAN between the LOWEST segments of
+        /// two DIFFERENT legs, the capsule radii taken off — see fixture 45 for
+        /// why the lowest segments and not the whole leg. ⛔ WHICH VOLUMES ARE
+        /// ONE LEG IS DERIVED,
         /// NOT DECLARED: two segments belong to the same leg when they share a
         /// bone, and sharing is transitive — a knee joins thigh to shin, the
         /// shin joins the foot. That makes the grouping work unchanged for the
@@ -1104,7 +1121,7 @@ namespace Ring.Simulation.Tests
         /// ⚠ THE PLAN IS `(x, z)`: `.y` is the height in the body frame
         /// (`HitVolumes.ToWorld`), so a gap measured with it would be the
         /// distance between a knee and an ankle.
-        static float LegsApart(HitPart[] legs, in PoseTable t, int row)
+        static float LegsApart(HitPart[] legs, in PoseTable t, int row, out int legCount)
         {
             int stride = t.BoneCount;
             int rowBase = row * stride;
@@ -1120,18 +1137,36 @@ namespace Ring.Simulation.Tests
                     if (gi != gj) group[gi] = gj;
                 }
 
-            float gap = float.NegativeInfinity;
+            // ⛔ ONE SEGMENT PER LEG — THE LOWEST — AND THAT IS WHAT MAKES THE
+            // NARROWEST GAP AN HONEST QUESTION (see the fixture's own doc). A
+            // leg's upper segments live at the body, where legs genuinely meet;
+            // its lowest one is where a path between them either exists or does
+            // not. "Lowest" is read off the bones, never off names.
+            var distal = new System.Collections.Generic.Dictionary<int, int>(legs.Length);
             for (int i = 0; i < legs.Length; i++)
-                for (int j = 0; j < i; j++)
+            {
+                int g = Root(group, i);
+                if (!distal.TryGetValue(g, out int best)
+                    || LowestBoneY(in legs[i], in t, rowBase) < LowestBoneY(in legs[best], in t, rowBase))
+                    distal[g] = i;
+            }
+            legCount = distal.Count;
+
+            float gap = float.PositiveInfinity;
+            var chosen = new System.Collections.Generic.List<int>(distal.Values);
+            for (int x = 0; x < chosen.Count; x++)
+                for (int y = 0; y < x; y++)
                 {
-                    if (Root(group, i) == Root(group, j)) continue;
+                    int i = chosen[x], j = chosen[y];
                     float between = SegmentsApart(
                         Plan(t.Bones[rowBase + legs[i].BoneA]), Plan(t.Bones[rowBase + legs[i].BoneB]),
                         Plan(t.Bones[rowBase + legs[j].BoneA]), Plan(t.Bones[rowBase + legs[j].BoneB]))
                         - legs[i].Radius - legs[j].Radius;
-                    if (between > gap) gap = between;
+                    if (between < gap) gap = between;
                 }
-            return gap;
+            // A body with fewer than two legs has no gap to report, and the
+            // caller's own premise is what says so.
+            return chosen.Count < 2 ? float.NegativeInfinity : gap;
 
             static int Root(int[] g, int i)
             {
@@ -1139,6 +1174,9 @@ namespace Ring.Simulation.Tests
                 return i;
             }
         }
+
+        static float LowestBoneY(in HitPart part, in PoseTable t, int rowBase) =>
+            math.min(t.Bones[rowBase + part.BoneA].y, t.Bones[rowBase + part.BoneB].y);
 
         static bool SharesABone(in HitPart a, in HitPart b) =>
             a.BoneA == b.BoneA || a.BoneA == b.BoneB || a.BoneB == b.BoneA || a.BoneB == b.BoneB;

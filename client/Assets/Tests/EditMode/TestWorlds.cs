@@ -92,6 +92,54 @@ namespace Ring.Simulation.Tests
             return part;
         }
 
+        /// ⛔⛔ app-saqr (T4b): "DOES THE AXIS MEET THIS BODY AT THIS HEIGHT",
+        /// AND IT IS THE QUESTION HALF THIS FILE ASKS. While a body was one
+        /// circle the answer was `|offset| < Radius + projRadius` and every
+        /// fixture here wrote it inline; laid out on real bones a body is a set
+        /// of capsules at DIFFERENT heights, and no scalar answers it any more.
+        /// ⛔ `GatherRadius` IS NOT THAT SCALAR EITHER, and the difference is
+        /// this file's whole subject: the gather circle says whether a body is
+        /// LOOKED AT — reach over every volume and every pose row, height
+        /// ignored — while what decides whether the LINE IS HELD is the
+        /// silhouette AT THE RAY'S OWN HEIGHT.
+        ///
+        /// ⚠ THE PROJECTION IS EXACT, NOT AN APPROXIMATION: the axis is a level
+        /// line running down +X, so distance to it is measured entirely in the
+        /// (world y, height) plane. A bone's own plan `.z` is what the world's
+        /// `y` carries (`HitVolumes.ToWorld`) and its `.y` is the height, so the
+        /// body's offset moves the volume by `-offsetY` in that plane.
+        /// ⚠ `Geometry.ClosestPointOnSegment` is the project's own primitive for
+        /// the remaining half, reused rather than re-derived — the same
+        /// discipline `TestConfigs.TryFindCleanVolume` follows.
+        public static bool AxisMeets(HitPart[] parts, in PoseTable poses, float offsetY, float height,
+            float projRadius)
+        {
+            for (int i = 0; i < parts.Length; i++)
+                if (VolumeMeetsAxis(in parts[i], in poses, offsetY, height, projRadius)) return true;
+            return false;
+        }
+
+        /// The same question asked of ONE zone — "is it the LEGS the axis meets
+        /// here, and not the torso", which is what a fixture about zones means.
+        public static bool AxisMeetsZone(HitPart[] parts, in PoseTable poses, HitZone zone,
+            float offsetY, float height, float projRadius)
+        {
+            for (int i = 0; i < parts.Length; i++)
+                if (parts[i].Zone == zone
+                    && VolumeMeetsAxis(in parts[i], in poses, offsetY, height, projRadius)) return true;
+            return false;
+        }
+
+        static bool VolumeMeetsAxis(in HitPart part, in PoseTable poses, float offsetY, float height,
+            float projRadius)
+        {
+            float3 a = poses.Bones[part.BoneA], b = poses.Bones[part.BoneB];
+            var p = new float2(-offsetY, height);
+            return math.distance(p, Geometry.ClosestPointOnSegment(p,
+                       new float2(a.z, a.y), new float2(b.z, b.y), out _))
+                   <= part.Radius + projRadius;
+        }
+
         /// A world with every mob slot filled (via the SpawnMobForTest seam,
         /// half Chaser/half Gunner so both fire/movement/AI paths are live) and
         /// warmed up under sustained player fire for ~100 ticks, so its

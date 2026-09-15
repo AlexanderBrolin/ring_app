@@ -681,29 +681,32 @@ namespace Ring.Editor
             // apiece), so the OR above is false and `Apply()` would write
             // nothing at all while every gate stayed green — the exact shape of
             // deviation 11a, one task later.
-            // ⇒ The second half compares the count of volumes ON THE SHEET with
-            // the count the CODE holds, asked through the one home of that
-            // layout (`PartsDefaultsOf`), so it cannot disagree with what the
-            // delivery is about to write.
+            // ⇒ The second half compares the BONE PAIRS on the sheet with the
+            // pairs the CODE holds, asked through the one home of that layout
+            // (`PartsDefaultsOf`), so it cannot disagree with what the delivery
+            // is about to write.
             bool partsPending =
                 !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Parts:") ||
-                PartsCountDiffers("HeroConfig", AnimatorCatalog.BodyKind.Collector) ||
-                PartsCountDiffers("MobChaserConfig", AnimatorCatalog.BodyKind.Chaser) ||
-                PartsCountDiffers("MobGunnerConfig", AnimatorCatalog.BodyKind.Gunner) ||
-                PartsCountDiffers("MobEliteConfig", AnimatorCatalog.BodyKind.Elite) ||
-                PartsCountDiffers("MobDirectorConfig", AnimatorCatalog.BodyKind.Director);
+                PartsDiffer("HeroConfig", AnimatorCatalog.BodyKind.Collector) ||
+                PartsDiffer("MobChaserConfig", AnimatorCatalog.BodyKind.Chaser) ||
+                PartsDiffer("MobGunnerConfig", AnimatorCatalog.BodyKind.Gunner) ||
+                PartsDiffer("MobEliteConfig", AnimatorCatalog.BodyKind.Elite) ||
+                PartsDiffer("MobDirectorConfig", AnimatorCatalog.BodyKind.Director);
 
             // app-94sk T4 (deviation 11a): the baked pose table, the gather
             // radius taken off it, and the rest-pose extents recomputed from
-            // it. ⛔ KEYED ON `Poses:` BEING ABSENT, which can be true exactly
-            // once: the field is introduced by this very task, so no committed
-            // asset can carry it, and once written the gate can never re-fire
-            // and stomp a later retune (rule 14's intent, same shape as
-            // partsPending above).
+            // it. ⛔ KEYED ON `Poses:` BEING ABSENT, which could be true exactly
+            // once: the field was introduced by that task, so no asset committed
+            // before it could carry it.
+            // ⚠ app-saqr (T4b): THAT ONCE HAS PASSED — all five sheets carry the
+            // key since T4 — so this gate is now permanently CLOSED, and what
+            // opens the pose delivery is the LAYOUT's gate at the call site
+            // below. The doc stays because it explains the shape the two gates
+            // share (rule 14's intent, same shape as partsPending above).
             bool posesPending =
                 !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Poses:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Poses:") ||
@@ -3479,11 +3482,20 @@ namespace Ring.Editor
         /// which fires on `e.Zone == HitZone.Head`. Dropping the zone would
         /// silently lengthen his time-to-kill (against milestone item 5 and
         /// risk Р-C) and take his exploding death with it.
-        /// ⚠ IT IS A DEGENERATE CAPSULE (`BoneA == BoneB`): his shell skins to
-        /// ONE bone, so the volume is a sphere on it. Every geometry primitive
-        /// already collapses a zero-length segment to a circle by name
-        /// (`Geometry.ClosestPointOnSegment`, `SegmentStadium`), so this is a
-        /// shape the solver has, not one it has to learn.
+        /// ⛔⛔ IT IS A CAPSULE FROM HIS ROOT TO HIS BODY BONE, AND SAYING SO
+        /// COSTS THIS DOC ITS PREVIOUS SENTENCE. It read "a degenerate capsule
+        /// (`BoneA == BoneB`) — a sphere on one bone", which is what ruling 400
+        /// recorded and NOT what the array below carries: `BoneA = 0, BoneB = 1`.
+        /// The extents prove the capsule rather than the sphere — `RestBottom`
+        /// is exactly −`Radius`, i.e. the root at y = 0, and `RestTop` −
+        /// `Radius` is the body bone at 2.9268.
+        /// ⚠ THE COST OF THAT PAIR IS MEASURED AND BOOKED, NOT GUESSED: reaching
+        /// the root stretches the zone to the ground, and since
+        /// `HitVolumes.ZoneRank` puts `Head` above every other zone regardless of
+        /// entry depth, his ten leg volumes and both guns can no longer win a
+        /// single hit. That is bd `app-4vju`, and the shape it settles is the
+        /// owner's at the milestone — this doc's job is only to stop describing
+        /// a sphere the code does not build.
         /// ⚠ THE GUNS TAKE `HitZone.Body`: they are the only torso-zone volumes
         /// he has left, and a blow to one is an ordinary hit.
         static bool ApplyElitePartsDefaults(MobConfig m)
@@ -3540,7 +3552,9 @@ namespace Ring.Editor
         ///   1 Body · 2/10 Front_Shoulder l/r · 3/11 Front_Leg1 · 4/12
         ///   Front_Leg2 · 5/13 Front_Leg3 · 6/14 Back_Shoulder l/r ·
         ///   7/15 Back_Leg1 · 8/16 Back_Leg2 · 9/17 Back_Leg3 · 18/19 Gun l/r
-        /// ⚠ The body is one degenerate-capsule volume carrying `HitZone.Head`,
+        /// ⚠ The body is one Root→Body CAPSULE carrying `HitZone.Head` — not the
+        /// sphere ruling 400 recorded, and with the same measured cost (bd
+        /// `app-4vju`) —
         /// and the guns carry `HitZone.Body` — see `ApplyElitePartsDefaults`
         /// above, whose doc carries the whole argument (finding D-I8).
         /// ⚠ THE OLD "LEGS END AT 1.51 BY OWNER DECISION" (bd app-50db, "a
@@ -3684,20 +3698,53 @@ namespace Ring.Editor
             return changed;
         }
 
-        /// bd `app-saqr` (T4b): does the SHEET carry a different number of
-        /// volumes than the code does? ⛔ THE COUNT IS READ OFF THE TEXT, not off
-        /// the loaded object: what this gate dates is the DELIVERY, and a loaded
-        /// object is whatever the last delivery left — asking it would be asking
-        /// the answer. `BoneA` is counted because it is written once per volume
-        /// and belongs to no other field of these five sheets (verified: the only
-        /// occurrences are inside `Parts`).
-        static bool PartsCountDiffers(string assetName, AnimatorCatalog.BodyKind kind)
+        /// bd `app-saqr` (T4b): does the SHEET carry a different LAYOUT than the
+        /// code does?
+        ///
+        /// ⛔ THE BONE PAIRS, NOT MERELY THE COUNT, and the difference is a whole
+        /// class of silent refusal: a re-cut that keeps the number of volumes and
+        /// moves them onto other bones — a rebake, a rig change, a split of one
+        /// capsule into two halves of the same count — would pass a counting gate
+        /// and never reach the sheet. That is the very shape this gate was added
+        /// to close, one step further along.
+        ///
+        /// ⛔ RADII AND EXTENTS ARE DELIBERATELY NOT COMPARED: `ApplyPoseNumbers`
+        /// recomputes both from the BAKED table right after this delivery, so on
+        /// the sheet they are the baker's numbers and in the code they are the
+        /// fixture's. Comparing them would make this gate fire on every run and
+        /// re-stomp the baker's own work — which R-IDEM would then catch as a
+        /// tree that never settles.
+        ///
+        /// ⚠ THE SHEET IS READ AS TEXT, not through the loaded object: what this
+        /// gate dates is the DELIVERY, and the loaded object is whatever the last
+        /// delivery left. The two fields are serialized one per volume and in
+        /// order, so lining them up is a read of two lists.
+        static bool PartsDiffer(string assetName, AnimatorCatalog.BodyKind kind)
         {
             string text = System.IO.File.ReadAllText($"{DataDir}/{assetName}.asset");
-            int onSheet = 0;
-            for (int i = text.IndexOf("BoneA", System.StringComparison.Ordinal); i >= 0;
-                 i = text.IndexOf("BoneA", i + 1, System.StringComparison.Ordinal)) onSheet++;
-            return onSheet != PartsDefaultsOf(kind).Length;
+            HitPart[] code = PartsDefaultsOf(kind);
+            var a = ReadBytes(text, "BoneA");
+            var b = ReadBytes(text, "BoneB");
+            if (a.Count != code.Length || b.Count != code.Length) return true;
+            for (int i = 0; i < code.Length; i++)
+                if (a[i] != code[i].BoneA || b[i] != code[i].BoneB) return true;
+            return false;
+        }
+
+        /// Every `  <field>: <byte>` of a serialized asset, in file order.
+        static System.Collections.Generic.List<int> ReadBytes(string text, string field)
+        {
+            var found = new System.Collections.Generic.List<int>();
+            string key = field + ": ";
+            for (int i = text.IndexOf(key, System.StringComparison.Ordinal); i >= 0;
+                 i = text.IndexOf(key, i + 1, System.StringComparison.Ordinal))
+            {
+                int at = i + key.Length, value = 0;
+                while (at < text.Length && text[at] >= '0' && text[at] <= '9')
+                    value = value * 10 + (text[at++] - '0');
+                found.Add(value);
+            }
+            return found;
         }
 
         /// bd `app-saqr` (plan T4b step 1): ONE BODY'S LAYOUT AS THE CODE
@@ -4615,26 +4662,63 @@ namespace Ring.Editor
         /// capsule on the body's own axis, while a zone's volumes stand at their
         /// own offsets from it, so an exact envelope would need the pose table
         /// this method is not given. It is the best answer available from
-        /// `HitPart` alone and it is never NARROWER than what the loop it
-        /// replaces produced.
+        /// `HitPart` alone.
+        ///
+        /// ⛔⛔ AND THE BELTS ARE CUT NOT TO SWALLOW ONE ANOTHER, WHICH THE
+        /// ENVELOPE ALONE DOES NOT GIVE. `AimProvider.TryAimProxy` takes the
+        /// NEAREST hit of one raycast and names the zone off the collider it
+        /// found, so a belt that CONTAINS another makes the inner one
+        /// unreachable for the cursor. Measured on the delivered chaser before
+        /// this cut: `AimProxy_Body` is 0.8347 m wide and spans 0.52-2.62, and
+        /// the whole of his `AimProxy_Head` sphere (0.2545 m at 1.9669) sits
+        /// inside it — the cursor would have answered `Body` on his head for
+        /// ever.
+        /// ⇒ Each belt's top is capped at the bottom of the belt ABOVE it, so
+        /// the three STACK instead of nesting. That is the shape
+        /// `ClassifyProxyZone` has assumed since it was written, and the shape
+        /// the three bands had by construction before the layout replaced them.
+        /// ⚠ THE CAP IS SKIPPED WHERE IT WOULD LEAVE NOTHING: on the elite and
+        /// the Director the `Head` zone is the whole shell (spec §3.2 / D-I8),
+        /// so capping their `Body` belt against it would delete it. Their belts
+        /// nest, and that matches what the simulation itself answers on those
+        /// two bodies — bd `app-4vju`, not this method's business.
         static bool EnsureAimProxyChildren(Transform root, HitPart[] parts)
         {
             bool changed = false;
-            foreach (HitZone zone in new[] { HitZone.Legs, HitZone.Body, HitZone.Head })
+            // Bottom-up, so each belt can be capped against the one above it.
+            HitZone[] stack = { HitZone.Legs, HitZone.Body, HitZone.Head };
+            var bottoms = new float[stack.Length];
+            var tops = new float[stack.Length];
+            var radii = new float[stack.Length];
+            for (int z = 0; z < stack.Length; z++)
             {
-                float bottom = float.PositiveInfinity, top = float.NegativeInfinity, radius = 0f;
+                bottoms[z] = float.PositiveInfinity;
+                tops[z] = float.NegativeInfinity;
                 for (int i = 0; i < parts.Length; i++)
                 {
-                    if (parts[i].Zone != zone) continue;
-                    bottom = Mathf.Min(bottom, parts[i].RestBottom);
-                    top = Mathf.Max(top, parts[i].RestTop);
-                    radius = Mathf.Max(radius, parts[i].Radius);
+                    if (parts[i].Zone != stack[z]) continue;
+                    bottoms[z] = Mathf.Min(bottoms[z], parts[i].RestBottom);
+                    tops[z] = Mathf.Max(tops[z], parts[i].RestTop);
+                    radii[z] = Mathf.Max(radii[z], parts[i].Radius);
                 }
-                // ⚠ A BODY MAY SIMPLY NOT HAVE A ZONE — the gunner has no arms
-                // and the elite carries no legs-free shell — and a belt for a
-                // zone nothing occupies would be a trigger in empty air.
-                if (radius <= 0f) continue;
-                changed |= EnsureAimProxyCapsule(root, "AimProxy_" + zone, bottom, top, radius);
+            }
+            for (int z = 0; z < stack.Length; z++)
+            {
+                // ⚠ A BODY MAY SIMPLY NOT HAVE A ZONE, and a belt for a zone
+                // nothing occupies would be a trigger in empty air. Every shipped
+                // body carries all three today, so this arm is reached only by a
+                // hand-built layout.
+                if (radii[z] <= 0f) continue;
+                float top = tops[z];
+                for (int above = z + 1; above < stack.Length; above++)
+                {
+                    if (radii[above] <= 0f) continue;
+                    if (bottoms[above] > bottoms[z]) top = Mathf.Min(top, bottoms[above]);
+                    break;
+                }
+                if (top <= bottoms[z]) top = tops[z];   // the cap would leave nothing
+                changed |= EnsureAimProxyCapsule(root, "AimProxy_" + stack[z],
+                    bottoms[z], top, radii[z]);
             }
             return changed;
         }

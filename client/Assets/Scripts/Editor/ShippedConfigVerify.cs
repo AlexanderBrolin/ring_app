@@ -25,18 +25,17 @@ namespace Ring.Editor
     /// lives here beside `PoseBakeVerify` — whose own subject is likewise an
     /// artifact a pull request cannot show — and not in `Tests/EditMode`.
     ///
-    /// ⚠ IT BUILDS THE REAL TWELVE, through `SimConfigBuilder.Build`, which is
-    /// the same call `LongRunHarness.BuildBattleConfig` makes and the same one
-    /// the game makes at load. Nothing is substituted and nothing is repaired:
-    /// the point is precisely to fail when the game would.
+    /// ⚠ IT BUILDS THE REAL TWELVE, through the one home of that list —
+    /// `EditorBootstrapUtils.BuildShippedConfig`, which `LongRunHarness` also
+    /// calls, and which ends in the same `SimConfigBuilder.Build` the game makes
+    /// at load. Nothing is substituted and nothing is repaired: the point is
+    /// precisely to fail when the game would.
     ///
     /// Run it from the menu, or in batchmode:
     ///   Unity -batchmode -nographics -quit -projectPath client \
     ///         -executeMethod Ring.Editor.ShippedConfigVerify.Verify
     public static class ShippedConfigVerify
     {
-        const string DataDir = "Assets/Data";
-
         [MenuItem("Ring/Audit/Verify Shipped Config")]
         public static void Verify()
         {
@@ -72,35 +71,15 @@ namespace Ring.Editor
             Debug.Log(report.ToString());
         }
 
-        /// The twelve sheets the game loads, in the order `SimConfigBuilder.Build`
-        /// takes them. ⚠ `Build`, not `BuildShipped`: the latter is the tests'
-        /// own entry point, which takes loose structs; this one takes the assets.
+        /// The twelve sheets the game loads, through the ONE home of that list
+        /// (`EditorBootstrapUtils.BuildShippedConfig`) — the same one
+        /// `LongRunHarness` measures. ⚠ `Build`, not `BuildShipped`: the latter
+        /// is the tests' own entry point, which takes loose structs; that one
+        /// takes the assets.
         static SimConfig Build(System.Text.StringBuilder report)
         {
-            HeroConfig hero = Load<HeroConfig>("HeroConfig");
-            WeaponConfig weapon = Load<WeaponConfig>("WeaponConfig");
-            MobConfig chaser = Load<MobConfig>("MobChaserConfig");
-            MobConfig gunner = Load<MobConfig>("MobGunnerConfig");
-            WaveConfig wave = Load<WaveConfig>("WaveConfig");
-            ArenaConfig arena = Load<ArenaConfig>("ArenaConfig");
-            VisibilityConfig visibility = Load<VisibilityConfig>("VisibilityConfig");
-            MobConfig elite = Load<MobConfig>("MobEliteConfig");
-            MobConfig director = Load<MobConfig>("MobDirectorConfig");
-            MatchFlowConfig flow = Load<MatchFlowConfig>("MatchFlowConfig");
-            ItemCatalog items = Load<ItemCatalog>("ItemCatalog");
-            LootConfig loot = Load<LootConfig>("LootConfig");
-            report.AppendLine("twelve sheets loaded from " + DataDir);
-            return SimConfigBuilder.Build(hero, weapon, chaser, gunner, wave, arena,
-                visibility, elite, director, flow, items, loot);
-        }
-
-        static T Load<T>(string name) where T : Object
-        {
-            var asset = AssetDatabase.LoadAssetAtPath<T>($"{DataDir}/{name}.asset");
-            if (asset == null)
-                throw new System.InvalidOperationException(
-                    $"ShippedConfigVerify: missing battle asset '{DataDir}/{name}.asset'.");
-            return asset;
+            report.AppendLine("twelve sheets loaded from " + EditorBootstrapUtils.BattleDataDir);
+            return EditorBootstrapUtils.BuildShippedConfig();
         }
 
         static void Exit(int code) => EditorApplication.Exit(code);

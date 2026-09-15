@@ -240,17 +240,20 @@ namespace Ring.Simulation.Tests
             // a grazing round off the table. It is still the only witness of it
             // in the suite, and the zone half is kept — asked of the layout
             // (whose volume OWNS the crown) instead of of a literal.
+            // ⛔ THE CROWN COMES FROM ITS ONE HOME AND THE VOLUME IS FOUND AGAINST
+            // IT — not recomputed here. A local maximum-over-RestTop loop would
+            // be a fourth spelling of `HitParts.RestCrown`, and asserting the two
+            // agree would be `f(x) == f(x)`: two implementations of one formula,
+            // green on any data (lesson 428).
+            float column = HitParts.RestCrown(cfg.Chaser.Parts);
             HitPart crownVolume = default;
             bool crownFound = false;
             foreach (HitPart p in cfg.Chaser.Parts)
             {
-                if (crownFound && p.RestTop <= crownVolume.RestTop) continue;
-                crownVolume = p; crownFound = true;
+                if (p.RestTop < column) continue;
+                crownVolume = p; crownFound = true; break;
             }
-            Assert.IsTrue(crownFound, "премисса: у чейзера есть хоть один объём");
-            float column = crownVolume.RestTop;
-            Assert.AreEqual(HitParts.RestCrown(cfg.Chaser.Parts), column, 1e-6f,
-                "премисса: найденный объём и есть тот, чей верх — крона тела");
+            Assert.IsTrue(crownFound, "премисса: крону тела держит какой-то его объём");
 
             var grazing = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(grazing, (MobType.Chaser, new float2(5f, 0f)));

@@ -57,57 +57,14 @@ namespace Ring.Simulation.Tests
         static float BarrierTopThatHolds(in SimConfig cfg)
             => cfg.Hero.MuzzleHeight + cfg.Weapon.ProjectileRadius + 1f;
 
-        /// ⛔⛔ app-saqr (T4b): "DOES THE AXIS MEET THIS BODY AT THIS HEIGHT",
-        /// AND IT IS THE QUESTION HALF THIS FILE ASKS. While a body was one
-        /// circle the answer was `|offset| < Radius + projRadius` and every
-        /// fixture here wrote it inline; laid out on real bones a body is a set
-        /// of capsules at DIFFERENT heights, and no scalar answers it any more.
-        /// ⛔ `GatherRadius` IS NOT THAT SCALAR EITHER, and the difference is
-        /// this file's whole subject: the gather circle says whether a body is
-        /// LOOKED AT — reach over every volume and every pose row, height
-        /// ignored — while what decides whether the LINE IS HELD is the
-        /// silhouette AT THE RAY'S OWN HEIGHT.
-        ///
-        /// ⚠ THE PROJECTION IS EXACT, NOT AN APPROXIMATION: the axis is a level
-        /// line running down +X, so distance to it is measured entirely in the
-        /// (world y, height) plane. A bone's own plan `.z` is what the world's
-        /// `y` carries (`HitVolumes.ToWorld`) and its `.y` is the height, so the
-        /// body's offset moves the volume by `-offsetY` in that plane.
-        /// ⚠ `Geometry.ClosestPointOnSegment` is the project's own primitive for
-        /// the remaining half, reused rather than re-derived — the same
-        /// discipline `TestConfigs.TryFindCleanVolume` follows.
-        static bool AxisMeets(HitPart[] parts, in PoseTable poses, float offsetY, float height,
-            float projRadius)
-        {
-            for (int i = 0; i < parts.Length; i++)
-                if (VolumeMeetsAxis(in parts[i], in poses, offsetY, height, projRadius)) return true;
-            return false;
-        }
-
-        /// The same question asked of ONE zone — "is it the LEGS the axis meets
-        /// here, and not the torso", which is what a fixture about zones means.
-        static bool AxisMeetsZone(HitPart[] parts, in PoseTable poses, HitZone zone,
-            float offsetY, float height, float projRadius)
-        {
-            for (int i = 0; i < parts.Length; i++)
-                if (parts[i].Zone == zone
-                    && VolumeMeetsAxis(in parts[i], in poses, offsetY, height, projRadius)) return true;
-            return false;
-        }
-
-        static bool VolumeMeetsAxis(in HitPart part, in PoseTable poses, float offsetY, float height,
-            float projRadius)
-        {
-            float3 a = poses.Bones[part.BoneA], b = poses.Bones[part.BoneB];
-            var p = new float2(-offsetY, height);
-            return math.distance(p, Geometry.ClosestPointOnSegment(p,
-                       new float2(a.z, a.y), new float2(b.z, b.y), out _))
-                   <= part.Radius + projRadius;
-        }
-
-        /// The widest offset to `sign`'s side at which the axis still meets the
-        /// body at `height` — the padded SILHOUETTE's own edge, which is the
-        /// threshold "a body off the line does not hold it" is about.
+        /// The widest offset at which the axis still meets the body at `height`
+        /// — the padded SILHOUETTE's own edge, which is the threshold "a body off
+        /// the line does not hold it" is about.
+        /// ⚠ ONE SIDE, and it is the `+y` one because that is the side the only
+        /// caller places its body on. A `sign` parameter stood here until it was
+        /// noticed that nothing ever passed −1: a knob with one setting is a
+        /// knob nobody chose (rule 3). The other side is a two-line change the
+        /// day a fixture needs it.
         /// ⛔ FOUND BY BISECTION ON `AxisMeets` RATHER THAN SOLVED: a capsule's
         /// half-width at a height has a closed form, but a BODY's is the upper
         /// envelope of eleven to fifteen of them, and re-deriving that envelope
@@ -117,17 +74,17 @@ namespace Ring.Simulation.Tests
         /// that meets nothing means the answer does not exist, and the caller is
         /// told so rather than handed a zero that reads like an edge.
         static float SilhouetteEdge(HitPart[] parts, in PoseTable poses, float height,
-            float projRadius, float sign)
+            float projRadius)
         {
-            Assert.IsTrue(AxisMeets(parts, poses, 0f, height, projRadius),
+            Assert.IsTrue(TestWorlds.AxisMeets(parts, poses, 0f, height, projRadius),
                 "премисса: на этой высоте тело накрывает собственную ось — иначе края силуэта нет");
             float lo = 0f, hi = HitParts.GatherReach(parts, in poses) + projRadius + 1f;
             for (int i = 0; i < 60; i++)
             {
                 float mid = 0.5f * (lo + hi);
-                if (AxisMeets(parts, poses, sign * mid, height, projRadius)) lo = mid; else hi = mid;
+                if (TestWorlds.AxisMeets(parts, poses, mid, height, projRadius)) lo = mid; else hi = mid;
             }
-            return sign * lo;
+            return lo;
         }
 
         [Test]
@@ -327,9 +284,15 @@ namespace Ring.Simulation.Tests
             Assert.Greater(cfg.Arena.BarrierTop,
                 cfg.Hero.MuzzleHeight + cfg.Weapon.ProjectileRadius,
                 "премисса фикстуры: стена выше луча и обязана держать");
-            Assert.Less(math.abs(body.y - muzzle.y),
-                cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
-                "премисса фикстуры: тело падированным кругом накрывает ось линии");
+            // ⛔ app-saqr (T4b): ASKED OF THE SILHOUETTE, NOT OF A SCALAR. The
+            // body and the muzzle share this fixture's axis, so the old form
+            // (`|body.y - muzzle.y| < Radius + projRadius`) compared zero against
+            // a positive number and could not fail — a premise that was true of
+            // any layout, including one that presents nothing at the ray's height.
+            Assert.IsTrue(TestWorlds.AxisMeets(cfg.Chaser.Parts, in cfg.Chaser.Poses, body.y - muzzle.y,
+                    cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius),
+                "премисса фикстуры: на высоте луча тело действительно стоит — иначе стена "
+                + "выиграла бы у тела, которого там нет");
             Assert.Less(math.distance(muzzle, body), toWall,
                 "премисса фикстуры: тело стоит ближе стены");
 
@@ -356,9 +319,9 @@ namespace Ring.Simulation.Tests
             // What the line is actually held by is the EDGE OF THE SILHOUETTE at
             // the ray's own height, and that is asked of the geometry.
             float padded = SilhouetteEdge(cfg.Chaser.Parts, in cfg.Chaser.Poses,
-                cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius, sign: 1f);
+                cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius);
             float bare = SilhouetteEdge(cfg.Chaser.Parts, in cfg.Chaser.Poses,
-                cfg.Hero.MuzzleHeight, projRadius: 0f, sign: 1f);
+                cfg.Hero.MuzzleHeight, projRadius: 0f);
             // ⛔ BOTH SIDES OF THE PADDED BOUNDARY, AND THAT IS WHAT KILLS THE
             // MUTANT: dropping the projectile's own radius only NARROWS the
             // threshold, so "a body off the line does not hold it" stays true
@@ -406,10 +369,13 @@ namespace Ring.Simulation.Tests
             // exactly the reach of the widest volume, so on a single-clip body
             // there is no offset that is inside the circle and outside every
             // volume — in the PLAN. There is in SPACE: the gunner's legs are the
-            // only volumes standing at 1.0 m, they swing out 0.95 m, and his
-            // gather circle reaches 1.57 m because his HEAD is that wide up at
-            // 3 m. Measured: at 1.3 m aside the axis clears his nearest volume
-            // by 0.34 m and is still 0.39 m inside his gather circle.
+            // only volumes standing at 1.0 m, and his silhouette there ends at
+            // 0.95 m — while his gather circle reaches 1.57 m, sized by the same
+            // legs UP AT THE KNEE, where `MidLeg` swings 1.056 m out and its
+            // capsule adds 0.51. (Rule 9 takes the furthest BONE plus that
+            // volume's radius, not the widest point of the silhouette at any one
+            // height.) Measured: at 1.3 m aside the axis clears his nearest
+            // volume by 0.34 m and is still 0.39 m inside his gather circle.
             var near = new float2(6f, 1.3f);
             var far = new float2(12f, 0f);
             var snap = Snap(in cfg, mobs: 2);
@@ -419,7 +385,7 @@ namespace Ring.Simulation.Tests
                 Hp = cfg.Chaser.MaxHp };
             var muzzle = new float2(cfg.Weapon.MuzzleOffset, 0f);
 
-            Assert.IsFalse(AxisMeets(cfg.Gunner.Parts, in cfg.Gunner.Poses, near.y,
+            Assert.IsFalse(TestWorlds.AxisMeets(cfg.Gunner.Parts, in cfg.Gunner.Poses, near.y,
                     cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: ось не задевает НИ ОДНОГО объёма ближнего тела — иначе оно не откажет");
             Assert.Less(near.y, cfg.Gunner.GatherRadius + cfg.Weapon.ProjectileRadius,
@@ -428,10 +394,10 @@ namespace Ring.Simulation.Tests
             // volumes of his that stand at this height at all: the premise above
             // would also be satisfied by an axis that simply flew over him, and
             // this one says the refusal is SIDEWAYS rather than vertical.
-            Assert.IsTrue(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
                     0f, cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: на высоте дула у ближнего тела ноги стоят — отказ боковой, а не по высоте");
-            Assert.IsFalse(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerCorpus.Zone,
+            Assert.IsFalse(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerCorpus.Zone,
                     0f, cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: колпак корпуса ближнего тела до этой высоты не достаёт");
             Assert.Less(near.x, far.x, "премисса фикстуры: отказавшее тело — ближнее");
@@ -491,7 +457,7 @@ namespace Ring.Simulation.Tests
             // wider-gathered body further ASIDE, which worked while the two
             // circles were close; laid out on real bones they are not — the
             // gunner gathers at 1.57 m against the collector's 1.10 — and the
-            // offset that equalises the entries (1.177 m) lies outside the
+            // offset that equalizes the entries (1.177 m) lies outside the
             // gunner's own SILHOUETTE at this height, so he is refused and a
             // refused candidate ties with nobody.
             // ⛔ NOR WILL AN EQUALITY COMPUTED FROM TWO DIFFERENT RADII DO, and
@@ -533,13 +499,13 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(snap.Mobs[0].Pos.y, -snap.Players[1].Pos.y, 0f,
                 "премисса фикстуры: смещения зеркальны — иначе входы не совпадут побитово");
             const float gunnerOffset = offset, heroOffset = -offset;
-            Assert.IsTrue(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
                     gunnerOffset, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: ось задевает ноги ганнера — иначе он откажет и тай-брейка не будет");
-            Assert.IsFalse(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, heroCorpus.Zone,
+            Assert.IsFalse(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, heroCorpus.Zone,
                     gunnerOffset, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: корпус ганнера на этой высоте до оси не достаёт — ответ будет ногами");
-            Assert.IsTrue(AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
                     heroOffset, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: у сборщика корпус эту высоту накрывает");
             Assert.AreNotEqual(heroCorpus.Zone, gunnerLegs.Zone,
@@ -589,13 +555,13 @@ namespace Ring.Simulation.Tests
             // subject needs is exactly two facts, and they are stated as such:
             // at the STANDING height the axis meets his torso, and at the SLIDE
             // height it meets his legs and NOT his torso.
-            Assert.IsTrue(AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserCorpus.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserCorpus.Zone,
                     bodyPos.y, cfg.Hero.MuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: стоя ось проходит внутри объёма корпуса");
-            Assert.IsTrue(AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserLegs.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserLegs.Zone,
                     bodyPos.y, cfg.Hero.SlideMuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: в слайде ось идёт вдоль капсулы ноги, а не мимо неё");
-            Assert.IsFalse(AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserCorpus.Zone,
+            Assert.IsFalse(TestWorlds.AxisMeetsZone(cfg.Chaser.Parts, in cfg.Chaser.Poses, chaserCorpus.Zone,
                     bodyPos.y, cfg.Hero.SlideMuzzleHeight, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: в слайде корпус до оси не достаёт — иначе зона не сменится");
             Assert.AreNotEqual(chaserLegs.Zone, chaserCorpus.Zone,
@@ -780,13 +746,13 @@ namespace Ring.Simulation.Tests
             // ⚠ PREMISES AGAINST THE SILHOUETTE: what decides is which of a
             // body's volumes stands at the ray's own height, and that is one
             // question with one home in this file.
-            Assert.IsTrue(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
                     0f, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: у ганнера на этой высоте стоят ноги");
-            Assert.IsFalse(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerCorpus.Zone,
+            Assert.IsFalse(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerCorpus.Zone,
                     0f, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: у ганнера корпус до этой высоты не достаёт — стоят только ноги");
-            Assert.IsTrue(AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
                     0f, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: у сборщика корпус эту высоту накрывает");
             Assert.AreNotEqual(gunnerLegs.Zone, heroCorpus.Zone,
@@ -849,10 +815,10 @@ namespace Ring.Simulation.Tests
 
             Assert.Less(math.abs(offset), padGather,
                 "премисса фикстуры: круг охвата A ось задевает — иначе A в кандидаты не попадёт");
-            Assert.IsTrue(AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Hero.Parts, in cfg.Hero.Poses, heroCorpus.Zone,
                     offset, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: на этой высоте A отвечает корпусом");
-            Assert.IsTrue(AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
+            Assert.IsTrue(TestWorlds.AxisMeetsZone(cfg.Gunner.Parts, in cfg.Gunner.Poses, gunnerLegs.Zone,
                     0f, muzzleH, cfg.Weapon.ProjectileRadius),
                 "премисса фикстуры: на этой высоте B отвечает ногами");
             Assert.AreNotEqual(gunnerLegs.Zone, heroCorpus.Zone,
@@ -1073,8 +1039,12 @@ namespace Ring.Simulation.Tests
 
             Assert.AreEqual(0f, Spread.HipRadians(in cfg.Weapon, in shooter, in cfg.Hero), Eps,
                 "премисса фикстуры: конус занулён — иначе выстрел уходит внутри конуса, а линия рисует ось");
-            Assert.Less(math.abs(targetPos.y - shooter.Pos.y), cfg.Chaser.Radius,
-                "премисса фикстуры: цель стоит на линии огня");
+            // ⛔ app-saqr (T4b): the SILHOUETTE again — both stand on y = 0 here,
+            // so the scalar form compared zero against a positive number.
+            Assert.IsTrue(TestWorlds.AxisMeets(cfg.Chaser.Parts, in cfg.Chaser.Poses,
+                    targetPos.y - shooter.Pos.y, cfg.Hero.MuzzleHeight,
+                    cfg.Weapon.ProjectileRadius),
+                "премисса фикстуры: цель стоит на линии огня и на высоте дула её объёмы есть");
 
             AimLineSolution line = AimLine.Solve(shooter.Pos, fire.AimPoint,
                 cfg.Hero.MuzzleHeight, in cfg, snap, snap.LocalPlayerIndex, Scratch(in cfg));
