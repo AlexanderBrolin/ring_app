@@ -278,44 +278,34 @@ namespace Ring.Simulation.Tests
                 // LootTargetContainerId: an entity id, not a magnitude —
                 // nothing for ApplyConfig to ever clamp it against.
                 ["LootTargetContainerId"] = float.PositiveInfinity,
-                // app-88jb Т7: the collector's tilt spring. BOTH are the
-                // RecoilOffset case, which is the case this map's own doc
-                // spells out as a documented "not clamped" rather than an
-                // oversight — "re-clamped every tick by WeaponSystem against
-                // RecoilMaxRad instead of by ApplyConfig". Here the every-tick
-                // bound is TiltSystem's collector pass, which walks
-                // Impact.SpringStep and drags any magnitude back through the
-                // RestEpsilon snap to exactly zero in a finite number of
-                // ticks.
+                // ⛔ THE COLLECTOR'S TILT PAIR IS NOT IN THIS MAP, AND ITS
+                // ABSENCE IS THE ENTRY (app-94sk T5a). app-88jb Т7 mapped
+                // both to `float.PositiveInfinity` here; T5a made them
+                // `float2`, `float2` is listed in `unmeasuredFieldTypes`
+                // below, and the sweep therefore `continue`s past them before
+                // it ever looks a ceiling up. Two entries that can never be
+                // read is exactly the dead code this file has no reverse
+                // guard for — nothing asserts the map's size or its key set —
+                // so they are gone rather than left to look deliberate.
                 //
-                // AND, UNLIKE THE MOB'S TILT, THERE IS NOTHING TO CLAMP THEM
-                // AGAINST. Т6 gave ApplyConfig a mob pass precisely because
-                // MobSimConfig.TiltFallAngle is a config value that MOVES on
-                // a hot tweak, and a body left past a lowered threshold would
-                // hang past an end it can never reach. HeroSimConfig carries
-                // no such angle and is never to be given one (Р377, ADR-001
-                // §9: a round may not take control away from a player), so a
-                // collector's tilt has no ceiling for a migration to clamp it
-                // down TO. Hot-tweaking TiltGain, TiltDampingRatio or
-                // TiltSettleSeconds does not invalidate a tilt already in
-                // flight either — the spring simply settles it on the new
-                // numbers.
-                //
-                // ⚠ WHY NOT A LITERAL PI CEILING (implementer's call, plan
-                // Т7's own suggestion, and it is recorded here rather than
-                // silently dropped). Mapping Tilt to math.PI would require a
-                // matching clamp in ApplyConfig's PLAYER loop, and that clamp
-                // would be a branch NO TEST COULD EVER KILL: nothing the game
-                // can do produces |Tilt| > PI (the arsenal's largest impulse
-                // peaks near 0.6 rad), so its only witness would be this
-                // pass's own injected 1e6 — a mutation with no victim, which
-                // is exactly the shape Т6's fix-round called out. It would
-                // also put a bare geometric constant into production balance
-                // code, against CRITICAL RULE 6. If a real ceiling is ever
-                // wanted, it belongs in HeroSimConfig with a [Range] and the
-                // four marker things, not in a literal here.
-                ["Tilt"] = float.PositiveInfinity,
-                ["TiltVel"] = float.PositiveInfinity,
+                // WHAT THEY SAID IS STILL TRUE AND IS WHY NOTHING REPLACED
+                // THEM. ApplyConfig does not clamp a collector's tilt because
+                // there is nothing to clamp it AGAINST: Т6 gave the mob pass a
+                // ceiling only because `MobSimConfig.TiltFallAngle` is a
+                // config value that MOVES on a tweak, while `HeroSimConfig`
+                // carries no such angle and is never to be given one (Р377,
+                // ADR-001 §9 — a round may not take control away from a
+                // player). The every-tick bound is `TiltSystem`'s collector
+                // pass, which drags any magnitude back to exactly zero
+                // through `Impact.SpringStep`'s `RestEpsilon` snap in a finite
+                // number of ticks — the same "documented not-clamped" shape
+                // this map's own doc spells out for `RecoilOffset`. A literal
+                // PI ceiling was considered and refused at Т7: it would need a
+                // matching branch in ApplyConfig's PLAYER loop that no test
+                // could ever kill (nothing the game can do produces a lean
+                // past PI — the arsenal's largest impulse peaks near 0.6 rad),
+                // and it would put a bare geometric constant into production
+                // balance code against CRITICAL RULE 6.
                 // app-88jb Т24 (spec §3.6): the rewind slot is an ADDRESS,
                 // not a magnitude -- there is no "too large" value of it to
                 // clamp towards, only a valid one and an invalid one, and
@@ -415,7 +405,11 @@ namespace Ring.Simulation.Tests
             // nothing else. Т6 ADDED that pass, and the asserts below are the
             // witnesses of it; the line anchor is deliberately gone, because
             // anchors rot and this file has paid for that before.
-            // Two halves, one witness each:
+            // ⚠ THE LIST CARRIES NO COUNT, deliberately: it opened as "two
+            // halves, one witness each" and has been three since Т6 and five
+            // since app-94sk T5a, because every task that added a claim added
+            // it at the bottom and left the number at the top. What belongs
+            // here is whatever ApplyConfig's mob pass promises:
             //   * a mob already down does NOT get up retroactively when the
             //     threshold is lowered -- otherwise a balance edit would
             //     resurrect bodies;
@@ -424,7 +418,11 @@ namespace Ring.Simulation.Tests
             //     magnitude in ApplyConfig already keeps;
             //   * and so does the StateTimer of an already-downed body, into
             //     the new DownedSeconds -- otherwise a shortened window would
-            //     leave a mob lying past an end it can never reach.
+            //     leave a mob lying past an end it can never reach;
+            //   * the clamp is by LENGTH and it SHORTENS rather than turns:
+            //     a lean off the axis keeps its heading (T5a);
+            //   * and the body it clamped is STILL STANDING one tick later,
+            //     which is the promise the other four are only evidence for.
             // THE THIRD ASSERT LIVES HERE RATHER THAN IN A TEST OF ITS OWN
             // (implementer's call, coordinator's open question of Step 4):
             // this method already builds the exact fixture that witness needs
@@ -437,8 +435,38 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(7, cfg);
             w.SpawnMobForTest(MobType.Gunner, new float2(6f, 0f));
             var m = w.Mobs[0];
-            m.Hp = 1e6f; m.Ai = MobAiState.Downed; m.StateTimer = 0.1f; m.Tilt = 1.2f;
+            m.Hp = 1e6f; m.Ai = MobAiState.Downed; m.StateTimer = 0.1f;
+            // ⛔ ON ONE AXIS, EXPLICITLY (app-94sk T5a). `m.Tilt = 1.2f` still
+            // COMPILES against a `float2` — `Unity.Mathematics` has an
+            // implicit `float -> float2` — and would silently mean (1.2, 1.2),
+            // a lean of length 1.697 instead of the 1.2 this fixture states.
+            m.Tilt = new float2(1.2f, 0f);
             w.SetMobForTest(0, m);
+
+            // THE SECOND BODY IS THE VECTOR HALF OF THE SAME CLAIM (T5a): a
+            // lean that is NOT on one axis. It is what tells a clamp by LENGTH
+            // apart from a clamp per COMPONENT, and only the first of those is
+            // the rule this method's own name states.
+            //
+            // ⛔ THE NUMBERS ARE CHOSEN BY MEASUREMENT, NOT FOR LOOKS, and
+            // they carry TWO failures at once (float32 replica, 200 000
+            // directions per angle):
+            //   * per COMPONENT, (0.5, 0.1) against the new angle 0.4 comes
+            //     out (0.4, 0.1) — length 0.4123, above the very angle the
+            //     tweak just set, and turned from 11.31° to 14.04°;
+            //   * by LENGTH but with NO HEADROOM, the scale reads back
+            //     0.40000004 — three ulps over — and `TiltSystem`, which
+            //     measures with a square root, fells the body on the next
+            //     tick. That direction is one of the 17.9% that overshoot;
+            //     the (1.2, 0.6) this fixture used to carry is one of the
+            //     57% that land exactly on the ceiling and could not have
+            //     caught it.
+            w.SpawnMobForTest(MobType.Gunner, new float2(9f, 0f));
+            var diagonal = w.Mobs[1];
+            diagonal.Hp = 1e6f; diagonal.Ai = MobAiState.Idle;
+            float2 givenLean = new float2(0.5f, 0.1f);
+            diagonal.Tilt = givenLean;
+            w.SetMobForTest(1, diagonal);
 
             // SimConfig and MobSimConfig are both structs (SimConfig.cs:740,
             // :118), so this is a copy by value and `cfg` keeps the old angle.
@@ -451,11 +479,43 @@ namespace Ring.Simulation.Tests
             w.ApplyConfig(tighter);
 
             Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai, "хот-твик поднял упавшего");
-            Assert.LessOrEqual(math.abs(w.Mobs[0].Tilt), 0.4f, "крен не заклампен в новый максимум");
+            Assert.LessOrEqual(math.length(w.Mobs[0].Tilt), tighter.Gunner.TiltFallAngle,
+                "крен не заклампен в новый максимум");
+
+            // Expectations as the fixture's own values, never re-typed
+            // literals: the ceiling is the angle set above, and the heading is
+            // read out of the very variable the body was leaned with.
+            //
+            // ⛔ NO TOLERANCE ON THE CEILING, and that is the point of the
+            // assert. `TiltSystem` asks `length > angle` with no slack at all,
+            // so a fixture that allowed itself even 1e-5 here would be green
+            // on a clamp whose result the NEXT TICK treats as past the
+            // threshold.
+            float2 clamped = w.Mobs[1].Tilt;
+            Assert.LessOrEqual(math.length(clamped), tighter.Gunner.TiltFallAngle,
+                "крен по двум осям не заклампен по ДЛИНЕ до значения, которое порог примет");
+            Assert.AreEqual(math.atan2(givenLean.y, givenLean.x),
+                math.atan2(clamped.y, clamped.x), 1e-4f,
+                "кламп ПОВЕРНУЛ крен вместо того, чтобы укоротить его");
             // Expectation stated as the fixture's own field, never as a
             // repeated literal (two-sources-of-numbers rule).
             Assert.LessOrEqual(w.Mobs[0].StateTimer, tighter.Gunner.DownedSeconds,
                 "таймер лежачего не заклампен в новое окно DownedSeconds");
+
+            // ⛔⛔ AND THE PROMISE ITSELF, WHICH EVERY ASSERT ABOVE IS ONLY
+            // EVIDENCE FOR: one tick later the clamped body is STILL STANDING.
+            // Until app-94sk T5a this fixture never ticked the world at all,
+            // so "a balance edit must not fell bodies" — the sentence
+            // ApplyConfig's own comment is written around — had no witness
+            // whatsoever; it inspected the clamp's output and trusted that
+            // `TiltSystem` would agree with it. It does not agree for free:
+            // the clamp scales in float32 and the threshold re-measures with a
+            // square root, and without the headroom `ApplyConfig` scales into,
+            // THIS line is the one that goes red.
+            w.Tick(default);
+            Assert.AreNotEqual(MobAiState.Downed, w.Mobs[1].Ai,
+                "заклампенное тело уронил СЛЕДУЮЩИЙ ТИК — длина, которую вернул кламп, "
+                + "читается порогом как «за порогом»");
         }
 
         [Test]

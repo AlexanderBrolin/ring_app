@@ -1,5 +1,4 @@
 using Ring.Simulation.Core;
-using Unity.Mathematics;
 using UnityEngine;
 
 namespace Ring.Presentation
@@ -62,30 +61,35 @@ namespace Ring.Presentation
     /// three proxies plus this stripped `_visual`, the same shape
     /// `MobChaserView` carries) and Р375 requires them to stay upright
     /// regardless of what the model does (Ruling 46). `m.Tilt` is the
-    /// AUTHORITATIVE signed magnitude in radians (`PlayerState.Tilt`'s own
-    /// doc, Core/SimStates.cs) — real for this client's OWN doll, where
+    /// AUTHORITATIVE lean — a `float2` whose length is the angle in radians
+    /// and whose heading is the way the body leans (`PlayerState.Tilt`'s own
+    /// doc, Core/SimStates.cs; a signed magnitude until app-94sk T5a) — real
+    /// for this client's OWN doll, where
     /// `NetworkSimBackend.ApplyOwnPlayer` copies the predicted `PlayerState`
     /// whole into the render snapshot; always zero for every OTHER doll,
     /// because the wire's `PlayerRecord` (`SnapshotBlocks.cs`) carries only
     /// `Index/Pos/Dir/Hp/Flags` and `PlayerFlags.ToSyntheticState` never sets
-    /// a field it has no bit for. The AXIS the scalar has no room for arrives
-    /// separately, from the hit event: `ViewRegistry.HandlePlayerEvent`'s new
-    /// `PlayerDamaged` branch (VICTIM convention, `SimEvent.PlayerIndex`'s own
-    /// doc) reaches this doll through the same `DispatchToDoll` this class's
-    /// `HandleEvent` already answers to for `PlayerDied`/`ProjectileFired`,
-    /// and that switch's new case calls `SetHitDir` with `SimEvent.HitDir` the
-    /// instant a blow lands — see that method's own doc for the arithmetic.
+    /// a field it has no bit for. THE DIRECTION IS NOT A SEPARATE ARRIVAL
+    /// ANY MORE: since app-94sk T5a `PlayerState.Tilt` is a `float2` whose
+    /// length is the angle and whose heading is the lean, so this class
+    /// derives its axis from the value it already reads. Until T5a it came
+    /// from the event — `ViewRegistry.HandlePlayerEvent`'s `PlayerDamaged`
+    /// branch reached this doll through `DispatchToDoll` and called
+    /// `SetHitDir` with `SimEvent.HitDir` — and that is precisely the defect
+    /// the owner named: the axis was overwritten on EVERY blow while the
+    /// magnitude still carried the previous one, so a collector circling a
+    /// mob at 3 m saw his own doll jump between axes several times a second.
+    /// Both the field and the setter are gone.
     /// Facing was ALREADY kept off the transform before this task existed
     /// (this doc's own opening paragraph — dash lean as an offset over
     /// `_facing`), so tilt adds no second writer here: it is a THIRD term
     /// folded into the one write at the bottom of `Sync`, OUTERMOST, for the
-    /// same reason `MobVisual` puts its tilt outermost — `_tiltAxis` is a
-    /// fixed WORLD axis (`SetHitDir` builds it through `SimSpace.ToWorld`),
-    /// not one relative to wherever the model currently faces. A doll with no
-    /// axis yet (`_tiltAxis` still `Vector3.zero`, `Bind`'s reset) composes to
-    /// `Quaternion.identity` through an explicit guard, exactly
-    /// `MobVisual.Sync`'s own (Ruling 49 — content, not defense; Unity's own
-    /// `Quaternion.AngleAxis` docs are silent on a zero-length axis).
+    /// same reason `MobVisual` puts its tilt outermost — the axis is a WORLD
+    /// axis, not one relative to wherever the model currently faces. An
+    /// UPRIGHT doll composes to `Quaternion.identity` through an explicit
+    /// guard, exactly `MobVisual.Sync`'s own (Ruling 49 — content, not
+    /// defense; Unity's own `Quaternion.AngleAxis` docs are silent on a
+    /// zero-length axis).
     ///
     /// THE COLLECTOR HAS NO KNOCKDOWN THRESHOLD (Р377), the one place this
     /// departs from the mob's tilt: `HeroSimConfig` carries no `TiltFallAngle`
@@ -112,13 +116,6 @@ namespace Ring.Presentation
         Transform _spine;
         Transform _chest;
         Quaternion _facing = Quaternion.identity;
-
-        /// Horizontal perpendicular to the last hit's `HitDir`, set by
-        /// `SetHitDir` — see the class doc's tilt paragraph for the axis's
-        /// source and the arithmetic, and `Sync`'s own guard comment for why
-        /// `Vector3.zero` (a freshly pooled doll's default) is read as
-        /// content ("no axis yet") rather than defended against.
-        Vector3 _tiltAxis;
 
         Vector3 _prevPos;
         bool _hasPrevPos;
@@ -208,11 +205,12 @@ namespace Ring.Presentation
             _animator.SetFloat(AnimIds.Speed, 0f);
             _animator.Update(0f);
             _facing = _visual.rotation;
-            // Pool-rebind hygiene, the tilt half (bd `app-9m57`): the
-            // previous life's hit axis must not leak into a fresh spawn,
-            // same reasoning as `_facing` on the line above and
-            // `MobVisual.Bind`'s own `_tiltAxis` reset (Б5/ПБ19).
-            _tiltAxis = Vector3.zero;
+            // THE TILT HALF OF THIS HYGIENE IS GONE WITH THE FIELD IT
+            // CLEARED (bd `app-9m57`, closed by app-94sk T5a): a pooled
+            // doll's lean now arrives whole inside `m.Tilt`, so there is no
+            // previous life's axis left to leak — and no way for a doll bound
+            // to an already-leaning body to come up straight, which is what
+            // the reset did to `MobVisual` (see `MobState.Tilt`'s own doc).
         }
 
         /// Forget where this doll last stood (Stage 2 Task 47c fix-round 1) —
@@ -311,23 +309,16 @@ namespace Ring.Presentation
             // written every Sync, never gated behind either branch that
             // built `rotation`, because `m.Tilt` walks every tick
             // (Combat/TiltSystem.cs) regardless of whether this doll happens
-            // to be turning or dashing this frame. `_tiltAxis` is a fixed
-            // WORLD axis (`SetHitDir` builds it through `SimSpace.ToWorld`),
-            // not one relative to whichever way the model currently faces,
-            // which is why it has to apply on top of `rotation` rather than
-            // fold inside it. `m.Tilt` is radians (`PlayerState.Tilt`'s own
-            // doc); `Quaternion.AngleAxis` wants degrees, hence the one
-            // `Mathf.Rad2Deg` below — this class's first read of `Tilt` at
-            // all. THE GUARD IS CONTENT, NOT DEFENSE (Ruling 49): a doll not
-            // yet hit genuinely has no axis (`_tiltAxis` reads
-            // `Vector3.zero` straight out of `Bind`'s reset), and
-            // `Quaternion.AngleAxis`'s own documentation says nothing about
-            // a zero-length axis either way — checked, not assumed, the same
-            // finding `MobVisual.Sync` already made on this same call.
-            Quaternion tilt = _tiltAxis.sqrMagnitude > 0f
-                ? Quaternion.AngleAxis(m.Tilt * Mathf.Rad2Deg, _tiltAxis)
-                : Quaternion.identity;
-            _visual.rotation = tilt * rotation;
+            // to be turning or dashing this frame.
+            //
+            // THE LEAN AND ITS AXIS ARE ONE FIELD since app-94sk T5a, and the
+            // arithmetic that turns it into a rotation lives in ONE home for
+            // both dolls -- `SimSpace.TiltRotation` (rule 2; its own doc
+            // carries the axis, the sign, the units and the upright guard).
+            // It composes OUTERMOST over `rotation` because that axis is
+            // fixed in the WORLD, not relative to whichever way this model
+            // currently faces.
+            _visual.rotation = SimSpace.TiltRotation(m.Tilt) * rotation;
 
             // One-shot return on the Aim layer: no transitions exist in the
             // generated controller — the return is code-driven (Б9).
@@ -437,14 +428,16 @@ namespace Ring.Presentation
             _slidePhase = phase;
         }
 
-        /// `ViewRegistry.HandlePlayerEvent`'s per-slot fan-out (П-1): death,
-        /// own-shot retrigger and — bd `app-9m57`, the third kind, which is
-        /// what supersedes this paragraph's earlier "death and own-shot
-        /// retrigger" wording — the hit-tilt axis. The caller has already
-        /// decided this event belongs to THIS doll's slot — `PlayerDied`/
-        /// `PlayerDamaged` by their shared VICTIM convention, `ProjectileFired`
-        /// by its ACTOR one (`SimEvent.PlayerIndex`'s own doc) — so no
-        /// owner/index test is repeated here.
+        /// `ViewRegistry.HandlePlayerEvent`'s per-slot fan-out (П-1): death
+        /// and own-shot retrigger. THE COUNT HAS BEEN BOTH TWO AND THREE —
+        /// bd `app-9m57` added `PlayerDamaged` as a third to hand this doll a
+        /// hit-tilt AXIS, and app-94sk T5a took it away with the axis itself
+        /// (`PlayerState.Tilt` carries its own heading now) — so this
+        /// paragraph is back to the two it opened on. The caller has already
+        /// decided this event belongs to THIS doll's slot — `PlayerDied` by
+        /// the VICTIM convention, `ProjectileFired` by its ACTOR one
+        /// (`SimEvent.PlayerIndex`'s own doc) — so no owner/index test is
+        /// repeated here.
         ///
         /// `oneShotCrossFadeSeconds` is a PARAMETER because an event arrives in
         /// the `Update` phase, before this frame's `PlayerVisualParams` has been
@@ -452,12 +445,15 @@ namespace Ring.Presentation
         /// `GameFeelConfig.OneShotCrossFadeSeconds` off the config right there
         /// and hands it in. Nothing is cached from the last `Sync` — the value
         /// is this instant's, which is what a PlayMode hot-tweak needs.
-        /// `PlayerDamaged`'s branch below does not use it — `SetHitDir` only
-        /// records a fact for the next `Sync`, unlike the other two kinds' own
-        /// one-shot Animator calls — but the parameter stays shared rather
-        /// than split off: every caller of this method is the same single
-        /// call site (`ViewRegistry.DispatchToDoll`), which already has the
-        /// value in hand for all three kinds alike.
+        /// ONLY `PlayerDied` SPENDS IT, and the parameter is shared rather
+        /// than split off because every caller of this method is the same
+        /// single call site (`ViewRegistry.DispatchToDoll`), which has the
+        /// value in hand whatever the kind. `ProjectileFired` crossfades over
+        /// NOTHING — `_animator.Play(..., 0f)` below is a hard cut, on
+        /// purpose: a shot must land on the frame it was fired. The third
+        /// kind bd `app-9m57` once routed here (`PlayerDamaged`) ignored the
+        /// parameter too, and app-94sk T5a removed it along with the setter
+        /// it existed for.
         ///
         /// `PlayerDied` does not set an "am I dead" flag here: the registry
         /// detaches this doll into its corpse list on the same event, and from
@@ -474,47 +470,7 @@ namespace Ring.Presentation
                     _animator.Play(AnimIds.PistolShoot, AimLayer, 0f);
                     _animator.Update(0f); // land the state this frame (ПБ1)
                     break;
-                case SimEventKind.PlayerDamaged:
-                    SetHitDir(e.HitDir);
-                    break;
             }
-        }
-
-        /// Hands over the horizontal axis a positive `m.Tilt` rotates around
-        /// in the next `Sync` (bd `app-9m57`, mirroring Ruling 46/47/48 for
-        /// the collector). Called by `HandleEvent`'s `PlayerDamaged` branch
-        /// above with the event's own `HitDir` the instant a blow lands,
-        /// because `PlayerState.Tilt` is a signed SCALAR with no direction of
-        /// its own (its own doc, Core/SimStates.cs) and this is the only
-        /// source of one on this side of the wire — real for this client's
-        /// own doll, synthetic (and therefore Tilt-less) for every other one,
-        /// see the class doc's own network-boundary paragraph.
-        ///
-        /// THE AXIS, NOT THE DIRECTION ITSELF: `hitDir` is the shot's unit
-        /// direction of travel in the sim plane (`SimEvent.HitDir`'s own
-        /// doc, Core/SimEvents.cs); the body does not spin around that
-        /// vector, it tips OVER it, around the horizontal line
-        /// perpendicular to it. `Vector3.Cross(Vector3.up, worldDir)` is
-        /// that perpendicular, and its sign is not arbitrary: it is the one
-        /// that makes a positive `m.Tilt` rotate `_visual`'s top ALONG
-        /// `worldDir` — the same "along the shot" arm `PlayerState.Tilt`'s
-        /// own doc names for a hit above `HeroSimConfig.CenterOfMassHeight`
-        /// (`Impact.AngularImpulse`'s formula, `SimulationWorld.cs`).
-        /// `SimSpace.ToWorld` is the sole sim→world seam (its own class doc,
-        /// `SimSpace.cs:12`) — no inline `new Vector3(x, 0f, y)` here.
-        ///
-        /// `Cross(up, worldDir)` is already unit length without an explicit
-        /// `.normalized`, for the same reason `MobVisual.SetHitDir`'s own
-        /// doc gives: `hitDir` is a unit vector by construction
-        /// (`ProjectileSystem.cs`'s `math.normalizesafe`), `ToWorld`
-        /// preserves that length (a lossless axis swap, no scaling), and
-        /// `Vector3.up` is always perpendicular to a vector confined to the
-        /// horizontal plane it maps into — so the cross product's magnitude
-        /// is `1 * 1 * sin(90°) = 1` by construction, every time.
-        void SetHitDir(float2 hitDir)
-        {
-            Vector3 worldDir = SimSpace.ToWorld(hitDir);
-            _tiltAxis = Vector3.Cross(Vector3.up, worldDir);
         }
 
         /// The pose half of becoming a corpse (Stage 2 Task 47a) — ONE home for

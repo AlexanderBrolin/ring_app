@@ -37,14 +37,20 @@ namespace Ring.Simulation.Combat
         public const float RestEpsilon = 1e-4f;
 
         /// One explicit-integrator step of the tilt spring, snap included (Т5).
-        /// PUBLIC and pure, because THREE callers need exactly this arithmetic and
-        /// one of them lives outside the simulation assembly: TiltSystem's mob pass,
-        /// TiltSystem's collector pass, and -- since app-88jb Т31 --
-        /// Ring.Networking.Client.MobTiltIntegrator, which rebuilds a struck mob's
-        /// tilt on a networked client (this line named Presentation's MobVisual
-        /// until the owner put that reconstruction in the network backend instead;
-        /// the count and the reason are unchanged, the caller is not). Written once
-        /// here rather than three times there.
+        ///
+        /// ⚠ ONE CALLER SINCE app-94sk T5a, AND THE COUNT IS A MEASUREMENT
+        /// (the rule this file already states for AngularImpulse below): the
+        /// three that used to need this shape -- TiltSystem's mob pass, its
+        /// collector pass and Ring.Networking.Client.MobTiltIntegrator --
+        /// all step a `float2` now and bind to the overload below. What is
+        /// left is PeakTilt, in this same class, whose subject is the
+        /// MAGNITUDE a given moment reaches and which would only throw a
+        /// direction away again.
+        /// ⚠ `public` IS THEREFORE NO LONGER EARNED BY AN OUTSIDE CALLER --
+        /// it is kept because this is published surface that PeakTilt's own
+        /// doc refers to, and narrowing it is a visibility change with no
+        /// caller asking for it, not because Ring.Networking still reaches
+        /// in. The overload below is the one that does.
         ///
         /// THE SNAP IS PART OF THE STEP, not a caller's afterthought: an exponential
         /// never reaches zero, so after ~25 s the tilt drifts into the DENORMAL range
@@ -61,6 +67,48 @@ namespace Ring.Simulation.Combat
             {
                 tilt = 0f;
                 tiltVel = 0f;
+            }
+        }
+
+        /// THE SAME SPRING, COMPONENTWISE (app-94sk T5a, spec §3.20), for the
+        /// bodies whose tilt carries a DIRECTION as well as an angle.
+        ///
+        /// A SECOND OVERLOAD RATHER THAN A REPLACEMENT, and that is not a
+        /// courtesy to old callers: PeakTilt (further down this class) still
+        /// wants the scalar, because its subject is the MAGNITUDE a blow of a
+        /// given moment reaches and a direction would only be a number it has
+        /// to throw away again. THIS overload carries the three callers the
+        /// scalar one used to name -- TiltSystem's mob pass, its collector
+        /// pass and Ring.Networking.Client.MobTiltIntegrator -- and the last
+        /// of them is why it is `public`: Ring.Networking is outside
+        /// Simulation/AssemblyInfo.cs's single InternalsVisibleTo. One
+        /// formula, two shapes, four callers between them.
+        ///
+        /// STILL ONE HOME OF THE ARITHMETIC (Р544), and the reason is the
+        /// spring itself rather than a preference: a LINEAR spring's
+        /// components are independent -- `-k*x - c*v` on x knows nothing of y
+        /// -- so running it on a float2 IS running it twice, and there is no
+        /// second formula here to drift from the first. For the same reason
+        /// the stability limits rule 8 (SimConfigBuilder.ReqStableSpring)
+        /// judges the numbers by do not move: what is stable per component is
+        /// stable for the pair.
+        ///
+        /// THE SNAP IS BY LENGTH, NOT PER COMPONENT, and that is the one place
+        /// where "componentwise" would have been wrong. A per-component snap
+        /// would zero the axis that came to rest while the other still swings
+        /// -- which does not settle the body, it ROTATES the lean in place, on
+        /// a tick nobody hit it. The subject of the snap is "this body has
+        /// come to rest", and rest is a property of the vector whole.
+        public static void SpringStep(ref float2 tilt, ref float2 tiltVel,
+            float dampingRatio, float settleSeconds, float dt)
+        {
+            SpringFromSettle(dampingRatio, settleSeconds, out float k, out float c);
+            tiltVel += (-k * tilt - c * tiltVel) * dt;
+            tilt += tiltVel * dt;
+            if (math.length(tilt) < RestEpsilon && math.length(tiltVel) < RestEpsilon)
+            {
+                tilt = float2.zero;
+                tiltVel = float2.zero;
             }
         }
 

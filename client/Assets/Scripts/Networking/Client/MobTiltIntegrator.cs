@@ -100,8 +100,8 @@ namespace Ring.Networking.Client
     {
         readonly int[] _ids;
         readonly MobType[] _types;
-        readonly float[] _tilt;
-        readonly float[] _tiltVel;
+        readonly float2[] _tilt;
+        readonly float2[] _tiltVel;
 
         /// How far the render clock may jump forward before stepping the
         /// spring stops being worth it — three settle times, in ticks, over
@@ -137,8 +137,8 @@ namespace Ring.Networking.Client
             int capacity = math.max(1, cfg.Arena.MaxMobs);
             _ids = new int[capacity];
             _types = new MobType[capacity];
-            _tilt = new float[capacity];
-            _tiltVel = new float[capacity];
+            _tilt = new float2[capacity];
+            _tiltVel = new float2[capacity];
 
             float slowestSettle = math.max(
                 math.max(cfg.Chaser.TiltSettleSeconds, cfg.Gunner.TiltSettleSeconds),
@@ -173,7 +173,17 @@ namespace Ring.Networking.Client
         /// never how many a long match mints. What the collision costs is
         /// bounded by the settle window — the wrong spring for one body's rock
         /// — and the slot frees itself at the snap.
-        public bool Apply(int mobId, MobType type, float angularImpulse)
+        ///
+        /// THE MOMENT IS A VECTOR SINCE app-94sk T5a (spec §3.20), and the
+        /// caller builds it the way the server does -- the blow's heading
+        /// times the signed scalar `AngularImpulseFor` answers
+        /// (`SimulationWorld.DamageMob`: `dir * Impact.AngularImpulse(...)`).
+        /// The direction was ALREADY ARRIVING and was being spent elsewhere:
+        /// `ProjectileEnded` has carried it since Т31, and Presentation read
+        /// it off the event to set `MobVisual._tiltAxis` by hand. Summing it
+        /// in HERE is what lets two blows from opposite sides cancel a lean
+        /// instead of the last one overwriting the first one's axis.
+        public bool Apply(int mobId, MobType type, float2 angularImpulse)
         {
             for (int i = 0; i < _count; i++)
             {
@@ -186,7 +196,7 @@ namespace Ring.Networking.Client
 
             _ids[_count] = mobId;
             _types[_count] = type;
-            _tilt[_count] = 0f;
+            _tilt[_count] = float2.zero;
             _tiltVel[_count] = angularImpulse;
             _count++;
             return true;
@@ -243,7 +253,7 @@ namespace Ring.Networking.Client
                     // never a tolerance of this file's choosing. Without it
                     // the table fills with bodies that stopped moving a match
                     // ago and refuses the next real blow.
-                    if (_tilt[i] == 0f && _tiltVel[i] == 0f)
+                    if (math.all(_tilt[i] == 0f) && math.all(_tiltVel[i] == 0f))
                     {
                         RemoveAt(i);
                         // NO `i++` HERE: the swap-remove just moved the LAST
@@ -288,7 +298,7 @@ namespace Ring.Networking.Client
         }
 
         /// The pair this mob is at, or `false` if it is not tilting.
-        public bool TryGetTilt(int mobId, out float tilt, out float tiltVel)
+        public bool TryGetTilt(int mobId, out float2 tilt, out float2 tiltVel)
         {
             for (int i = 0; i < _count; i++)
             {
@@ -298,8 +308,8 @@ namespace Ring.Networking.Client
                 return true;
             }
 
-            tilt = 0f;
-            tiltVel = 0f;
+            tilt = float2.zero;
+            tiltVel = float2.zero;
             return false;
         }
 
@@ -348,14 +358,30 @@ namespace Ring.Networking.Client
         /// `Impact.ProjectileMassFor` and `SnapshotEvents.SpeedCapFor` BOTH
         /// fork on this byte, so a collector's own shot mistaken for a mob's
         /// rebuilds a blow several times weaker than the one that landed.
-        public static float AngularImpulseFor(byte ownerIndex, in MobSimConfig target,
-            float hitHeight, in SimConfig cfg)
+        /// ⭐ IT RETURNS THE VECTOR, AND `hitDir` IS A PARAMETER, since
+        /// app-94sk T5a. The product used to be formed at the call site, by
+        /// `NetworkSimBackend.ApplyMobHit` — which is a `MonoBehaviour` no
+        /// EditMode fixture constructs, so the one multiplication that decides
+        /// WHICH WAY a networked body leans had no witness at all, while the
+        /// tests re-typed the same product themselves and stayed green
+        /// whatever the backend did. Moving it in here gives the backend no
+        /// arithmetic of its own to get wrong and puts this line under
+        /// `MobTiltIntegratorTests`, beside the authoritative moment it is
+        /// required to equal.
+        ///
+        /// `hitDir` is the blow's heading off `ProjectileEnded`, unit by the
+        /// wire's construction (`Quantize.DirBack` returns
+        /// `(cos a, sin a)`), which is what makes this vector's LENGTH the
+        /// signed moment itself — the same product
+        /// `SimulationWorld.DamageMob` forms from the round's own `dir`.
+        public static float2 AngularImpulseFor(byte ownerIndex, in MobSimConfig target,
+            float hitHeight, float2 hitDir, in SimConfig cfg)
         {
             float dv = Impact.VelocityDelta(
                 Impact.ProjectileMassFor(ownerIndex, in cfg),
                 SnapshotEvents.SpeedCapFor(ownerIndex, in cfg),
                 target.Mass, target.ImpactSpeedCap, damping: 1f);
-            return Impact.AngularImpulse(hitHeight, target.CenterOfMassHeight, dv,
+            return hitDir * Impact.AngularImpulse(hitHeight, target.CenterOfMassHeight, dv,
                 target.TiltGain);
         }
 

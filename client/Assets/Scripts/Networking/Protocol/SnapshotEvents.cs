@@ -285,18 +285,22 @@ namespace Ring.Networking.Protocol
         /// above — that field is the ROUND's own id, which the tracer and the
         /// ghost are retired by, and it stays so.
         ///
-        /// THREE READERS ON THE CLIENT, AND `MobVisual` IS NONE OF THEM. An
+        /// TWO READERS ON THE CLIENT, AND `MobVisual` IS NEITHER OF THEM. An
         /// earlier wording of this doc named it, from the red phase, while the
         /// plan still rebuilt the tilt inside the view; the owner put that
         /// reconstruction in the network backend instead (Ruling 255), and
         /// this is the measured list. `ClientEventDecoder` lifts the field
         /// into `SimEvent.EntityId` on the HitMob ending — and only there —
-        /// after which three consumers address a body by it:
+        /// after which two consumers address a body by it:
         /// `GameFeelDirector.HandleProjectileHit` flashes the view it finds by
-        /// that id, `ViewRegistry.HandleEvent` gives the struck body its tilt
-        /// AXIS through `SetHitDir` on the view it finds by that id, and
-        /// `NetworkSimBackend.ApplyMobHit` asks `MobTypeMemory` for the
-        /// victim's archetype by it and keys `MobTiltIntegrator`'s slot on it.
+        /// that id, and `NetworkSimBackend.ApplyMobHit` asks `MobTypeMemory`
+        /// for the victim's archetype by it and keys `MobTiltIntegrator`'s
+        /// slot on it. THE COUNT WAS THREE UNTIL app-94sk T5a: the third was
+        /// `ViewRegistry.HandleEvent`, which looked the struck body up to hand
+        /// `MobVisual.SetHitDir` an AXIS, because `MobState.Tilt` was a signed
+        /// scalar. The tilt is a `float2` carrying its own heading now, so
+        /// that lookup and that setter are both gone and the direction is
+        /// spent one layer down, inside `ApplyMobHit`'s own impulse.
         /// `MobVisual` never sees an id at all: the backend patches the
         /// finished `Tilt` into the published pair, and the component draws
         /// the same field it always drew.

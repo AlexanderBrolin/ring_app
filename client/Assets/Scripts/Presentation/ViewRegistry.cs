@@ -425,42 +425,33 @@ namespace Ring.Presentation
         /// `EntityId` would delete whichever projectile view happens to share a
         /// number with a player slot.
         ///
-        /// `ProjectileHit` USED TO stay wholly absent, and this paragraph used
-        /// to explain why: the round's id used to be missing from the event
-        /// (Stage 2 Task 28 fixed that), and even after it wasn't, nothing
-        /// needed it here — this whole method is an early, explicit version of
-        /// a retirement the next `LateUpdate` diff performs anyway (class doc),
-        /// so a THIRD retiring branch would only have duplicated that diff.
-        /// THAT REASONING STILL HOLDS FOR RETIREMENT, and is why the branch
-        /// below does none: app-88jb Т11 (Ruling 48, coordinator) needed
-        /// `EntityId` for something this method had never done for any kind
-        /// before — reaching a STILL-LIVE mob rather than retiring one. Body
-        /// tilt (`MobVisual.Sync`, Ruling 46/47) reads its magnitude straight
-        /// off the authoritative `MobState.Tilt`, but the axis lives only on
-        /// this event's `HitDir` (`MobState.Tilt`'s own doc: the field is a
-        /// signed scalar with no direction of its own), and `_activeMobs` is
-        /// the one place in Presentation that knows `id -> MobView` at all
-        /// (class doc). So the branch below is a forward, not a retirement: it
-        /// looks the mob up by `EntityId` and hands its `Visual` the hit
-        /// direction. The lookup is not a guard against a race — `ProjectileHit`
-        /// is always emitted before the `DamageMob` call that can end in
-        /// `MobDied` for the very same blow (`ProjectileSystem.cs`'s `HitMob`
-        /// branch, the emit ahead of the `DamageMob` call in program order),
-        /// and `MobDied` is what retires a `MobView` here — so offline this
-        /// lookup practically always finds its mob, killing blow included. It
-        /// is there for the OTHER side, WHICH SINCE app-88jb Т31 IS NO LONGER
-        /// A NO-OP. This paragraph used to end by saying that on a networked
-        /// client `EntityId` is always the wire's safe zero for this kind, so
-        /// the branch never found anything — `_activeMobs` holds no key 0,
-        /// entity ids start at 1. Т31 widened `ProjectileEnded` to carry the
-        /// VICTIM's id beside the round's, and `ClientEventDecoder` now puts
-        /// it in exactly this field, so the lookup finds its mob over the wire
-        /// too and the axis reaches the visual on both paths. The magnitude
-        /// arrives with it: `NetworkSimBackend` synthesizes `MobState.Tilt`
-        /// into the published pair through `MobTiltIntegrator`, so the
-        /// authoritative-offline / zero-over-the-wire boundary this paragraph
-        /// and `MobVisual`'s class doc used to draw is gone, and nothing in
-        /// this file had to change for it.
+        /// `ProjectileHit` STAYS WHOLLY ABSENT, for the reason it always
+        /// had: the round's id was once missing from the event (Stage 2 Task
+        /// 28 fixed that), and even after it wasn't, nothing needed it here —
+        /// this whole method is an early, explicit version of a retirement the
+        /// next `LateUpdate` diff performs anyway (class doc), so a THIRD
+        /// retiring branch would only have duplicated that diff.
+        ///
+        /// IT WAS ABSENT, THEN PRESENT, AND IS ABSENT AGAIN, and the round
+        /// trip is worth one paragraph because the reason it left the second
+        /// time is not the reason it was missing the first. Т11 (Ruling 48) added
+        /// a `ProjectileHit` branch that did something this method had never
+        /// done for any kind — reached a STILL-LIVE mob, looked it up by
+        /// `EntityId` and handed its `Visual` the blow's direction, because
+        /// `MobState.Tilt` was a signed scalar with no direction of its own
+        /// and `_activeMobs` is the one place in Presentation that knows
+        /// `id -> MobView` (class doc). T5a made the tilt a `float2` that
+        /// carries its own heading, so there is nothing left to forward and
+        /// the branch is gone with the field it fed. The direction it used to
+        /// carry is not lost — it is applied one layer earlier and on both
+        /// paths: offline `SimulationWorld.DamageMob` multiplies the moment
+        /// by the shot's heading, and over the wire
+        /// `NetworkSimBackend.ApplyMobHit` does the same with the `HitDir`
+        /// `ProjectileEnded` has carried since Т31, feeding
+        /// `MobTiltIntegrator`. What that cost this class is one lookup per
+        /// landed round per frame; what it bought is in `MobState.Tilt`'s own
+        /// doc — an axis that could no longer be overwritten while the lean
+        /// it belonged to was still swinging.
         public void HandleEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -474,17 +465,6 @@ namespace Ring.Presentation
                     break;
                 case SimEventKind.ProjectileHitPlayer:
                     RetireProjectile(e.SecondaryEntityId);
-                    break;
-                case SimEventKind.ProjectileHit:
-                    // Ruling 48 (app-88jb Т11) — see this method's own doc for
-                    // the full reasoning. `TryGetValue` rather than an indexer:
-                    // a miss is silent on both paths and worth logging on
-                    // neither. It used to be the RULE over the wire, where the
-                    // event named no victim at all; since Т31 it is the same
-                    // ordinary residue as offline — a mob this client has not
-                    // been told about, or one whose view was already retired.
-                    if (_activeMobs.TryGetValue(e.EntityId, out MobView hitMobView))
-                        hitMobView.Visual?.SetHitDir(e.HitDir);
                     break;
             }
         }
@@ -509,12 +489,14 @@ namespace Ring.Presentation
         /// retirement pass where the doll's slot used to sit, rather than
         /// merging into it.
         ///
-        /// THREE kinds are routed here as of bd `app-9m57`, which added the
-        /// third — this paragraph used to open "Only the two kinds the doll
-        /// reacts to are routed", and app-9m57 is what cancels that count,
-        /// not the rule underneath it: the index each kind names is still a
-        /// per-KIND convention off `SimEvent.PlayerIndex`'s own doc, not one
-        /// rule shared by all three:
+        /// TWO kinds are routed here, and the count has been both two and
+        /// three: bd `app-9m57` added `PlayerDamaged` as a third, and
+        /// app-94sk T5a took it away again when the thing it was routed FOR
+        /// stopped existing — it reached the doll only to hand
+        /// `PlayerVisual.SetHitDir` an axis, and `PlayerState.Tilt` now
+        /// carries its own heading. What survives both edits is the rule
+        /// underneath: the index each kind names is a per-KIND convention off
+        /// `SimEvent.PlayerIndex`'s own doc, not one rule shared by all:
         ///  - `PlayerDied` — VICTIM ("PlayerDamaged/PlayerDied (mirrors
         ///    EntityId's convention for those two kinds)"), i.e. the player who
         ///    died, which is the doll that must play Death01. Taking the
@@ -523,12 +505,6 @@ namespace Ring.Presentation
         ///    ProjectileFired, … / SpawnProjectile's ownerIndex"), i.e. the
         ///    shooter, which is the doll that must replay Pistol_Shoot. A mob's
         ///    round carries `ProjectileIds.NoOwner` and names no doll at all;
-        ///  - `PlayerDamaged` — VICTIM, the SAME convention and the same
-        ///    quoted doc line as `PlayerDied` above, i.e. the player who took
-        ///    the blow: `PlayerVisual.SetHitDir` needs `e.HitDir` to give the
-        ///    body's tilt (`PlayerState.Tilt`, authoritative magnitude, no
-        ///    direction of its own) an axis to tip around. Taking the
-        ///    ATTACKER here would tilt the shooter instead of the one hit.
         /// An event naming a slot with no live doll is ignored, which on the
         /// networked backend is the ORDINARY `PlayerDied` and not every one of
         /// them (Stage 2 Task 47a fix-round 1 — this paragraph used to say
@@ -554,11 +530,6 @@ namespace Ring.Presentation
         /// networked backend therefore had no corpses at all (`app-2rf`) — and
         /// keeping this path is not redundancy: it is the only maker of a body
         /// on the frames where the picture never carried the death.
-        /// `PlayerDamaged` shares that same "no live doll, no-op" refusal for
-        /// a different reason than the two kinds above (bd `app-9m57`): it
-        /// makes no corpse and plays no one-shot, so a missed doll costs
-        /// nothing but the axis for a hit-tilt this same frame's absent
-        /// `Sync` was never going to draw anyway.
         public void HandlePlayerEvent(in SimEvent e)
         {
             switch (e.Kind)
@@ -567,15 +538,6 @@ namespace Ring.Presentation
                     DispatchToDoll(e.PlayerIndex, in e, death: true);
                     break;
                 case SimEventKind.ProjectileFired:
-                    DispatchToDoll(e.PlayerIndex, in e, death: false);
-                    break;
-                case SimEventKind.PlayerDamaged:
-                    // bd `app-9m57`: VICTIM convention (this method's own doc
-                    // above), same DispatchToDoll → PlayerVisual.HandleEvent
-                    // path the other two kinds already use — one dispatch
-                    // mechanism, not a second lookup grown next to it.
-                    // `death: false` — a hit is not a death, and `IntoCorpse`
-                    // must not run off this kind.
                     DispatchToDoll(e.PlayerIndex, in e, death: false);
                     break;
             }

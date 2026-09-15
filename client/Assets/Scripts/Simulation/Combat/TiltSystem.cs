@@ -89,7 +89,15 @@ namespace Ring.Simulation.Combat
                 // StateTimer is the EXISTING generic FSM timer, not a new
                 // field (findings B-I3/A-I13) -- nothing else owns it while
                 // the archetype FSM is canceled.
-                if (m.Ai != MobAiState.Downed && math.abs(m.Tilt) > cfg.TiltFallAngle)
+                //
+                // BY LENGTH SINCE app-94sk T5a, and it is the SAME comparison
+                // it always was: the tilt is a vector now, `math.abs` on a
+                // scalar was already "how far from upright", and that is what
+                // `math.length` answers for a pair. A per-component test would
+                // have been a different question -- a body leaning equally on
+                // both axes would have had to lean `TiltFallAngle` on EACH to
+                // fall, i.e. to sqrt(2) times the stated angle.
+                if (m.Ai != MobAiState.Downed && math.length(m.Tilt) > cfg.TiltFallAngle)
                 {
                     m.Ai = MobAiState.Downed;
                     m.StateTimer = 0f;

@@ -342,8 +342,28 @@ namespace Ring.Networking.Client
                             // `NetworkSimBackend`'s tilt integrator asks the
                             // archetype memory about it.
                             e.EntityId = p.VictimId;
-                            // The axis half of that tilt: a signed scalar has
-                            // no direction of its own (`MobState.Tilt`).
+                            // The direction half of that tilt. It used to be
+                            // called the AXIS half, because `MobState.Tilt`
+                            // was a signed scalar with no direction of its
+                            // own and Presentation built an axis out of this
+                            // by hand; since app-94sk T5a the tilt IS a
+                            // vector, and `NetworkSimBackend.ApplyMobHit`
+                            // hands this to `MobTiltIntegrator.AngularImpulseFor`,
+                            // which forms the moment along it.
+                            //
+                            // ⚠ UNIT BY THE WIRE'S OWN CONSTRUCTION, NOT BY
+                            // the server's `math.normalizesafe`: what arrives
+                            // here went through `Quantize.DirBack`, which
+                            // returns `(cos a, sin a)` for an angle recovered
+                            // from ONE byte. Unit either way — which is what
+                            // makes the product's LENGTH the moment itself —
+                            // but quantized to 360/256 = 1.40625° steps, so a
+                            // rebuilt lean can point up to 0.703° off the
+                            // heading the server resolved. That decides no
+                            // outcome (the pair never rides the wire, Р383;
+                            // this is a picture), and it is the same
+                            // approximation every other `p.Dir` consumer on
+                            // this side already lives with.
                             e.HitDir = p.Dir;
                             // And where the round entered the body —
                             // `PersistentPropsDirector.SpawnHitSpark` places

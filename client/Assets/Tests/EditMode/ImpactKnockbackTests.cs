@@ -234,8 +234,18 @@ namespace Ring.Simulation.Tests
             Assert.Greater(1f, cfg.Hero.CenterOfMassHeight,
                 "fixture premise: the round must land ABOVE the collector's center of mass, "
                 + "or the sign asserted below is not the one this geometry produces");
-            Assert.Greater(w.PlayerAt(1).Tilt, 0f,
+            // ⭐ AND SINCE app-94sk T5a THE DIRECTION IS A CLAIM TOO, not just
+            // a sign. The round travels from the origin to (6, 0), so `dir` is
+            // +x and the lean has to lie on that axis: a blow may lean a body
+            // along its own line and nowhere else. Before the tilt was a
+            // vector there was no way to ask this at all — the axis lived in
+            // Presentation and the simulation had only a magnitude — which is
+            // precisely the gap T5a closes.
+            float2 tilt = w.PlayerAt(1).Tilt;
+            Assert.Greater(tilt.x, 0f,
                 "момент попадания выше центра масс не наклонил сборщика по ходу выстрела");
+            Assert.AreEqual(0f, tilt.y, 1e-6f,
+                "крен ушёл с линии выстрела — направление берётся не из dir");
         }
 
         [Test]
@@ -290,10 +300,64 @@ namespace Ring.Simulation.Tests
             // arsenal can reach — the claim is about the ABSENCE of a
             // threshold, so the fixture has to stand where a threshold would
             // certainly have fired.
-            var p = w.Player; p.Tilt = 3f; p.TiltVel = 0f; w.SetPlayerForTest(p);
+            var p = w.Player; p.Tilt = new float2(3f, 0f); p.TiltVel = float2.zero;
+            w.SetPlayerForTest(p);
             w.Tick(default);
             Assert.IsTrue(w.Player.Alive, "сборщик умер от крена");
-            Assert.Less(math.abs(w.Player.Tilt), 3f, "крен сборщика не возвращается пружиной");
+            Assert.Less(math.length(w.Player.Tilt), 3f, "крен сборщика не возвращается пружиной");
+        }
+
+        [Test]
+        public void TheCollectorLeansALONGTheBlow_WhateverHeadingItCameOn()
+        {
+            // ⛔⛔ app-94sk T5a, and it exists because the multiplication that
+            // IS T5a had no witness on this side. `DamagePlayer` lays the
+            // moment down as `dir * Impact.AngularImpulse(...)`, but every
+            // collector fixture in this file fires from the origin at a body
+            // on the +x axis — and on that heading `dir * scalar` and a bare
+            // `new float2(scalar, 0f)` are the same two numbers, so a build
+            // that dropped `dir` entirely passed the whole suite. The mob half
+            // of the same claim lives in
+            // `ImpactPhysicsTests.HitAboveCenterOfMass_TipsAlongTheShot_...`;
+            // `DamageMob` and `DamagePlayer` write that product out
+            // separately, so one witness cannot cover both.
+            //
+            // THE HEADING IS OFF-AXIS AND ASYMMETRIC for that fixture's stated
+            // reasons: off-axis so dropping `dir` shows, asymmetric because on
+            // a 45° heading `dir.yx == dir` and swapping the axes would pass.
+            //
+            // DIRECTLY THROUGH `DamagePlayer`, not through a fired round: the
+            // subject is which way the moment points, and aiming a real
+            // projectile along an arbitrary heading would drag this fixture
+            // into the arena geometry every other test in this file is careful
+            // about. The height is ABOVE the center of mass so the arm is
+            // positive and the lean runs along the blow rather than against
+            // it — the sign is the neighbor fixture's subject, not this one's.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(7, cfg, playerCount: 2);
+            TestWorlds.RelocatePlayerForTest(w, 1, new float2(6f, 0f));
+            var victim = w.PlayerAt(1); victim.IframeTimer = 0f; w.SetPlayerForTest(1, victim);
+
+            float2 blowDir = math.normalize(new float2(1f, 2f));
+            float com = cfg.Hero.CenterOfMassHeight;
+            Assert.Greater(com + 0.5f, com,
+                "fixture premise: the blow must land ABOVE the center of mass, or the lean "
+                + "runs the other way and the projection below changes sign");
+
+            w.DamagePlayer(1, attackerIndex: 0, dmg: 1f, pos: w.PlayerAt(1).Pos,
+                zone: HitZone.Body, dir: blowDir, hitHeight: com + 0.5f,
+                projectileMass: cfg.Weapon.ProjectileMass,
+                projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
+
+            float2 moment = w.PlayerAt(1).TiltVel;
+            float along = math.dot(moment, blowDir);
+            Assert.Greater(along, 0f,
+                "момент не лёг ВДОЛЬ удара — проекция на его курс неположительна");
+            // AND NOTHING LANDED ACROSS IT: the whole moment is the blow's own
+            // heading times a scalar, so the residue off that line is zero.
+            // This is the assert a build that ignored `dir` fails.
+            Assert.AreEqual(0f, math.length(moment - blowDir * along), 1e-6f,
+                "часть момента легла ПОПЕРЁК удара — направление берётся не из dir");
         }
     }
 }

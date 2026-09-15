@@ -144,6 +144,21 @@ namespace Ring.Simulation.Core
         /// the sign falls out of `hitHeight - CenterOfMassHeight` with no
         /// branch anywhere.
         ///
+        /// A VECTOR SINCE app-94sk T5a (spec §3.20), and what it gained is
+        /// the half a scalar could not carry: WHICH WAY the body leans. The
+        /// LENGTH is the angle in radians -- everything the scalar meant --
+        /// and the DIRECTION is the horizontal heading the body leans
+        /// towards, which is the shot's own `dir` at the blow
+        /// (SimulationWorld.DamagePlayer multiplies the signed moment by it,
+        /// so an undercutting hit leans the body AGAINST the shot with no
+        /// branch, exactly as the sign always did). Before T5a the direction
+        /// lived in Presentation as `PlayerVisual._tiltAxis`, rewritten by
+        /// every incoming PlayerDamaged -- a body leaning from one blow
+        /// snapped onto the next blow's axis while keeping the first one's
+        /// magnitude, which the owner read as "a lag or a bug". There is
+        /// nothing to snap now: the axis is not a second piece of state that
+        /// can disagree with this one, it is derived from this one.
+        ///
         /// THE COLLECTOR HAS NO KNOCKDOWN THRESHOLD, and that is the one
         /// place this pair parts company with the mob's (Р377).
         /// MobSimConfig.TiltFallAngle tips a mob into MobAiState.Downed;
@@ -168,7 +183,7 @@ namespace Ring.Simulation.Core
         /// error that does not exist — the defect R-209 classifies against.
         /// The spring itself (Impact.SpringStep) is the same arithmetic on
         /// both sides; it is the OWNERSHIP that differs.
-        public float Tilt, TiltVel;
+        public float2 Tilt, TiltVel;
 
         /// app-88jb Т24 (spec §3.6, decisions Р406/Н6): this collector's row
         /// in PositionHistory. Collectors are rewound on exactly the same
@@ -347,7 +362,27 @@ namespace Ring.Simulation.Core
         /// client is legal because tilt decides no game outcome -- the hit parts
         /// do not rotate with it (Р375) -- and the rebuild writes into a render
         /// snapshot, never into a world.
-        public float Tilt, TiltVel;
+        ///
+        /// A VECTOR SINCE app-94sk T5a (spec §3.20), on PlayerState.Tilt's own
+        /// account -- LENGTH is the angle, DIRECTION is the heading the body
+        /// leans towards, and SimulationWorld.DamageMob builds it as the
+        /// shot's `dir` times the signed moment, so an undercutting hit still
+        /// leans the body AGAINST the shot with no branch. What it replaced
+        /// was MobVisual._tiltAxis, which ViewRegistry rewrote on every
+        /// incoming ProjectileHit: a body already leaning from one blow kept
+        /// that magnitude and snapped onto the next blow's axis. It also ends
+        /// the second, quieter hole in the same crutch -- MobVisual.Bind reset
+        /// the axis to zero, so a body first SEEN already downed stood up
+        /// straight -- because a lean rebuilt from the state cannot be missing
+        /// the half the state carries.
+        ///
+        /// THE CLIENT'S REBUILD GAINED THE DIRECTION WITH IT, and it was
+        /// already on the wire: ProjectileEnded has carried the blow's
+        /// direction since Т31 (that is what ViewRegistry read to set the
+        /// axis), so MobTiltIntegrator.Apply now takes it and nothing new
+        /// needs a byte. Р383 stands -- the PAIR still never rides the wire,
+        /// it is still rebuilt from an event.
+        public float2 Tilt, TiltVel;
     }
 
     /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE

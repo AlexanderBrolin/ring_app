@@ -50,12 +50,18 @@ namespace Ring.Simulation.Tests
         public void TwoHitsOnOneTick_Sum()
         {
             var log = new ImpactPulseLog(capacityTicks: 32);
-            log.Add(10u, new ImpactPulse(new float2(0.2f, 0f), 0.1f));
-            log.Add(10u, new ImpactPulse(new float2(0f, 0.3f), 0.4f));
+            // THE TWO MOMENTS ARE ON DIFFERENT AXES, exactly as the two
+            // deltas already were (app-94sk T5a): since the moment became a
+            // `float2` a summed pair of PARALLEL moments would be satisfied
+            // by a sum that dropped a component, and the whole subject here
+            // is that two blows in one tick both survive.
+            log.Add(10u, new ImpactPulse(new float2(0.2f, 0f), new float2(0.1f, 0f)));
+            log.Add(10u, new ImpactPulse(new float2(0f, 0.3f), new float2(0f, 0.4f)));
             ImpactPulse got = log.For(10u);
             Assert.AreEqual(0.2f, got.Delta.x, 1e-5f);
             Assert.AreEqual(0.3f, got.Delta.y, 1e-5f);
-            Assert.AreEqual(0.5f, got.TiltImpulse, 1e-5f, "моменты не сложились");
+            Assert.AreEqual(0.1f, got.TiltImpulse.x, 1e-5f, "моменты не сложились по x");
+            Assert.AreEqual(0.4f, got.TiltImpulse.y, 1e-5f, "моменты не сложились по y");
         }
 
         [Test]
@@ -64,7 +70,7 @@ namespace Ring.Simulation.Tests
             // Rule Р417: an impulse is applied in the tick of its own event
             // EXACTLY once, but a replay may ASK about it any number of times.
             var log = new ImpactPulseLog(capacityTicks: 32);
-            log.Add(7u, new ImpactPulse(new float2(0.5f, 0f), 0f));
+            log.Add(7u, new ImpactPulse(new float2(0.5f, 0f), float2.zero));
             Assert.AreEqual(0.5f, log.For(7u).Delta.x, 1e-5f);
             Assert.AreEqual(0.5f, log.For(7u).Delta.x, 1e-5f, "повторный запрос съел импульс");
         }
@@ -75,7 +81,7 @@ namespace Ring.Simulation.Tests
             var log = new ImpactPulseLog(capacityTicks: 32);
             ImpactPulse got = log.For(5u);
             Assert.AreEqual(0f, math.length(got.Delta), 1e-6f);
-            Assert.AreEqual(0f, got.TiltImpulse, 1e-6f);
+            Assert.AreEqual(0f, math.length(got.TiltImpulse), 1e-6f);
         }
 
         [Test]
@@ -86,7 +92,7 @@ namespace Ring.Simulation.Tests
             // new tick — exactly the class of defect a slot-addressed history
             // has, and exactly why the Ф3 history is addressed that way.
             var log = new ImpactPulseLog(capacityTicks: 32);
-            log.Add(8u, new ImpactPulse(new float2(9f, 0f), 0f));
+            log.Add(8u, new ImpactPulse(new float2(9f, 0f), float2.zero));
             // ⚠ THE ASSERTION STANDS BEFORE `Prune` — round-3 fix (finding
             // D-I3): if both reads stand AFTER `Prune`, and `Prune` physically
             // zeroes the slot (a legitimate implementation), the mutation
@@ -112,12 +118,12 @@ namespace Ring.Simulation.Tests
             // HONEST BOUND: a `Reset` that zeroes `_tickOf` AND clears `_pulses` is
             // indistinguishable here. This witnesses the BRANCH, not the sentinel.
             var log = new ImpactPulseLog(capacityTicks: 32);
-            log.Add(0u, new ImpactPulse(new float2(0.7f, 0f), 0.3f));
+            log.Add(0u, new ImpactPulse(new float2(0.7f, 0f), new float2(0.3f, 0f)));
             log.Reset();
             ImpactPulse got = log.For(0u);
             Assert.AreEqual(0f, math.length(got.Delta), 1e-6f,
                 "Reset не забыл тик — смена эпохи принесёт толчок из прошлого матча");
-            Assert.AreEqual(0f, got.TiltImpulse, 1e-6f, "Reset не забыл момент");
+            Assert.AreEqual(0f, math.length(got.TiltImpulse), 1e-6f, "Reset не забыл момент");
         }
 
         [Test]
@@ -129,7 +135,7 @@ namespace Ring.Simulation.Tests
             // first read -- so the constructor floors the capacity instead of handing
             // a caller an exception on some later tick.
             var log = new ImpactPulseLog(capacityTicks: 0);
-            log.Add(5u, new ImpactPulse(new float2(0.4f, 0f), 0.2f));
+            log.Add(5u, new ImpactPulse(new float2(0.4f, 0f), new float2(0.2f, 0f)));
             Assert.AreEqual(0.4f, log.For(5u).Delta.x, 1e-5f,
                 "враждебная ёмкость не сведена к одному слоту");
             Assert.AreEqual(0f, log.For(6u).Delta.x, 1e-6f,

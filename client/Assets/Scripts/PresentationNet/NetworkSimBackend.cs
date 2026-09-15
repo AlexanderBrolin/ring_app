@@ -3498,8 +3498,17 @@ namespace Ring.Presentation.Net
             if (!_mobTypes.TryGetType(e.EntityId, out MobType type)) return;
 
             ref readonly MobSimConfig target = ref SimConfig.MobConfigFor(in _cfg, type);
-            _mobTilt.Apply(e.EntityId, type,
-                MobTiltIntegrator.AngularImpulseFor(e.PlayerIndex, in target, e.Height, in _cfg));
+            // `e.HitDir` GOES IN AS AN ARGUMENT, not as a multiplication
+            // written here (app-94sk T5a, spec §3.20): this class is a
+            // `MonoBehaviour` and no EditMode fixture constructs it, so
+            // arithmetic that lives HERE has no witness by construction.
+            // `AngularImpulseFor` owns the product and `MobTiltIntegratorTests`
+            // pins it against the authoritative moment. The direction itself
+            // costs nothing new — `ProjectileEnded` has carried it since Т31,
+            // and until T5a it was read one layer up, by
+            // `ViewRegistry.HandleEvent`, to hand `MobVisual` an axis by hand.
+            _mobTilt.Apply(e.EntityId, type, MobTiltIntegrator.AngularImpulseFor(
+                e.PlayerIndex, in target, e.Height, e.HitDir, in _cfg));
         }
 
         /// EVERYTHING THIS CLASS OWNS THAT A NEW MATCH INVALIDATES, cleared the

@@ -43,6 +43,18 @@ namespace Ring.Simulation.Tests
         /// the moment is not a zero that any implementation would produce.
         const float HitHeight = 2.0f;
 
+        /// The blow's heading, which `HitTheChaser` shoots along and every
+        /// fixture here hands to `AngularImpulseFor` (app-94sk T5a).
+        ///
+        /// ⛔ OFF-AXIS AND ASYMMETRIC, and neither word is decoration. On
+        /// `(1, 0)` the product `hitDir * scalar` and a bare
+        /// `new float2(scalar, 0f)` are the same two numbers, so a build that
+        /// dropped the heading passed every fixture in this file; on a 45°
+        /// heading `dir.yx == dir`, so one that swapped the axes passed too.
+        /// `normalize((1, 2))` refuses both and stays unit, which is what
+        /// keeps this product's LENGTH equal to the signed moment.
+        static readonly float2 HitDir = math.normalize(new float2(1f, 2f));
+
         /// The shooter's seat. A real one rather than `ProjectileIds.NoOwner`,
         /// because the two select DIFFERENT projectile masses and speed caps —
         /// `Impact.ProjectileMassFor` and `SnapshotEvents.SpeedCapFor` both fork
@@ -71,7 +83,7 @@ namespace Ring.Simulation.Tests
         /// `SpeedCapFor` answers for that same seat.
         static void HitTheChaser(SimulationWorld w, in SimConfig cfg)
         {
-            w.DamageMob(0, 1f, new float2(10f, 0f), HitZone.Head, new float2(1f, 0f),
+            w.DamageMob(0, 1f, new float2(10f, 0f), HitZone.Head, HitDir,
                 ownerIndex: ShooterSlot, hitHeight: HitHeight,
                 projectileMass: cfg.Weapon.ProjectileMass,
                 projectileSpeed3D: SnapshotEvents.SpeedCapFor(ShooterSlot, in cfg));
@@ -89,22 +101,33 @@ namespace Ring.Simulation.Tests
         {
             var w = FrozenChaser(out SimConfig cfg);
 
-            Assert.AreEqual(0f, w.Mobs[0].TiltVel, 0f,
+            Assert.AreEqual(0f, math.length(w.Mobs[0].TiltVel), 0f,
                 "fixture premise: the body carries no angular velocity before the blow, so what "
                 + "is read after it IS the impulse and not a sum with something older");
 
             HitTheChaser(w, in cfg);
-            float fromWorld = w.Mobs[0].TiltVel;
+            float2 fromWorld = w.Mobs[0].TiltVel;
 
-            Assert.AreNotEqual(0f, fromWorld,
+            Assert.AreNotEqual(0f, math.length(fromWorld),
                 "fixture premise: the blow really did put a moment into the body — otherwise the "
                 + "comparison below is two zeros agreeing");
 
-            Assert.AreEqual(fromWorld,
-                MobTiltIntegrator.AngularImpulseFor(ShooterSlot, in cfg.Chaser, HitHeight, in cfg),
-                0f,
+            // BOTH COMPONENTS, AGAINST THE PRODUCT THE CLIENT ACTUALLY FORMS
+            // (app-94sk T5a) — and the product is asked of PRODUCTION rather
+            // than rebuilt here. `AngularImpulseFor` takes the heading and
+            // returns the vector since T5a, precisely so this comparison
+            // covers the multiplication too: while the test formed it itself,
+            // a client that dropped the heading agreed with this fixture and
+            // leaned every networked body along +x. Comparing lengths would
+            // have let the same build through.
+            float2 fromClient = MobTiltIntegrator.AngularImpulseFor(
+                ShooterSlot, in cfg.Chaser, HitHeight, HitDir, in cfg);
+            Assert.AreEqual(fromWorld.x, fromClient.x, 0f,
                 "момент клиента разошёлся с моментом авторитетного мира — крен по сети будет "
                 + "другой силы, чем оффлайн");
+            Assert.AreEqual(fromWorld.y, fromClient.y, 0f,
+                "момент клиента разошёлся с авторитетным по второй оси — крен по сети ляжет "
+                + "в другую сторону");
         }
 
         /// Test 13. THE CURVE, tick for tick, and the two halves are driven in
@@ -124,10 +147,12 @@ namespace Ring.Simulation.Tests
             var w = FrozenChaser(out SimConfig cfg);
             int mobId = w.Mobs[0].Id;
 
-            Assert.AreEqual(0f, w.Mobs[0].Tilt, 0f, "fixture premise: the body starts upright");
+            Assert.AreEqual(0f, math.length(w.Mobs[0].Tilt), 0f,
+                "fixture premise: the body starts upright");
             HitTheChaser(w, in cfg);
-            float impulse = w.Mobs[0].TiltVel;
-            Assert.AreNotEqual(0f, impulse, "fixture premise: there is a moment to integrate");
+            float2 impulse = w.Mobs[0].TiltVel;
+            Assert.AreNotEqual(0f, math.length(impulse),
+                "fixture premise: there is a moment to integrate");
 
             var integrator = new MobTiltIntegrator(in cfg);
             Assert.IsTrue(integrator.Apply(mobId, MobType.Chaser, impulse),
@@ -138,15 +163,22 @@ namespace Ring.Simulation.Tests
                 TestWorlds.IdleTicks(w, 1);
                 integrator.StepTicks(1, in cfg);
 
-                Assert.IsTrue(integrator.TryGetTilt(mobId, out float tilt, out float tiltVel),
+                Assert.IsTrue(integrator.TryGetTilt(mobId, out float2 tilt, out float2 tiltVel),
                     $"тик {t}: интегратор потерял моба, который ещё качается в мире");
-                Assert.AreEqual(w.Mobs[0].Tilt, tilt, 1e-6f,
+                // COMPONENT BY COMPONENT: a curve that agreed in magnitude
+                // while drifting in heading is exactly the divergence the
+                // vector carries and a length comparison would hide.
+                Assert.AreEqual(w.Mobs[0].Tilt.x, tilt.x, 1e-6f,
                     $"тик {t}: крен разошёлся с авторитетным миром");
-                Assert.AreEqual(w.Mobs[0].TiltVel, tiltVel, 1e-6f,
+                Assert.AreEqual(w.Mobs[0].Tilt.y, tilt.y, 1e-6f,
+                    $"тик {t}: крен разошёлся с авторитетным миром по второй оси");
+                Assert.AreEqual(w.Mobs[0].TiltVel.x, tiltVel.x, 1e-6f,
                     $"тик {t}: угловая скорость разошлась с авторитетным миром");
+                Assert.AreEqual(w.Mobs[0].TiltVel.y, tiltVel.y, 1e-6f,
+                    $"тик {t}: угловая скорость разошлась с авторитетным миром по второй оси");
             }
 
-            Assert.AreNotEqual(0f, w.Mobs[0].Tilt,
+            Assert.AreNotEqual(0f, math.length(w.Mobs[0].Tilt),
                 "witness: the body is still swinging at the end of the window, so the run above "
                 + "compared a real curve rather than a pair of settled zeros");
         }
@@ -159,9 +191,12 @@ namespace Ring.Simulation.Tests
         public void TwoHitsInOneTick_SumIntoOneAngularVelocity()
         {
             // Two DIFFERENT moments, so a sum is distinguishable from either
-            // one doubled and from either one alone.
-            const float first = 3f;
-            const float second = -1.25f;
+            // one doubled and from either one alone — and ON DIFFERENT AXES
+            // since app-94sk T5a, which makes them distinguishable from a sum
+            // that quietly dropped a component as well. Two blows from
+            // different sides is the ordinary case this table exists for.
+            float2 first = new float2(3f, 0f);
+            float2 second = new float2(0f, -1.25f);
             const int mobId = 7;
 
             SimConfig cfg = TestConfigs.OpenField();
@@ -175,10 +210,12 @@ namespace Ring.Simulation.Tests
                 "два удара по одному телу — один слот, а не два: список наклонённых ищется линейно "
                 + "и второй слот с тем же id разошёлся бы с первым");
 
-            Assert.IsTrue(integrator.TryGetTilt(mobId, out _, out float tiltVel));
-            Assert.AreEqual(first + second, tiltVel, 1e-6f,
+            Assert.IsTrue(integrator.TryGetTilt(mobId, out _, out float2 tiltVel));
+            Assert.AreEqual(first.x + second.x, tiltVel.x, 1e-6f,
                 "два удара в одном тике не сложились: DamageMob складывает через +=, и тело, "
                 + "получившее два попадания, обязано качнуться сильнее");
+            Assert.AreEqual(first.y + second.y, tiltVel.y, 1e-6f,
+                "второй удар не сложился по своей оси — сумма моментов покомпонентная");
         }
 
         /// Test 15. THE SLOT COMES BACK. `Impact.SpringStep` snaps the pair to
@@ -200,8 +237,8 @@ namespace Ring.Simulation.Tests
             int window = (int)math.ceil(3f * cfg.Chaser.TiltSettleSeconds / SimulationWorld.TickDt);
 
             var integrator = new MobTiltIntegrator(in cfg);
-            float impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot, in cfg.Chaser,
-                HitHeight, in cfg);
+            float2 impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot,
+                in cfg.Chaser, HitHeight, HitDir, in cfg);
 
             Assert.IsTrue(integrator.Apply(mobId, MobType.Chaser, impulse),
                 "удар не принят — освобождать нечего");
@@ -232,8 +269,8 @@ namespace Ring.Simulation.Tests
 
             SimConfig cfg = TestConfigs.OpenField();
             var integrator = new MobTiltIntegrator(in cfg);
-            float impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot, in cfg.Chaser,
-                HitHeight, in cfg);
+            float2 impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot,
+                in cfg.Chaser, HitHeight, HitDir, in cfg);
 
             Assert.IsTrue(integrator.Apply(tiltedId, MobType.Chaser, impulse), "удар не принят");
             integrator.StepTicks(1, in cfg);
@@ -249,12 +286,13 @@ namespace Ring.Simulation.Tests
             // The array arrives zeroed, so "the neighbors are zero" is true of
             // an integrator that wrote nothing at all — this is the assertion
             // that tells the two apart, and it has to come first.
-            Assert.AreNotEqual(0f, mobs[1].Tilt,
+            Assert.AreNotEqual(0f, math.length(mobs[1].Tilt),
                 "крен не попал в опубликованную пару — по сети моб останется стоять прямо");
-            Assert.AreEqual(0f, mobs[0].Tilt, 0f,
+            Assert.AreEqual(0f, math.length(mobs[0].Tilt), 0f,
                 "сосед с меньшим id накренился — патч идёт по id, а не по индексу");
-            Assert.AreEqual(0f, mobs[2].Tilt, 0f, "сосед с большим id накренился");
-            Assert.AreEqual(0f, mobs[0].TiltVel, 0f, "и угловая скорость соседа осталась нулевой");
+            Assert.AreEqual(0f, math.length(mobs[2].Tilt), 0f, "сосед с большим id накренился");
+            Assert.AreEqual(0f, math.length(mobs[0].TiltVel), 0f,
+                "и угловая скорость соседа осталась нулевой");
 
             integrator.Reset();
             Assert.AreEqual(0, integrator.Count,
@@ -265,7 +303,7 @@ namespace Ring.Simulation.Tests
                 new MobState { Id = tiltedId, Type = MobType.Chaser },
             };
             integrator.WriteInto(again, again.Length);
-            Assert.AreEqual(0f, again[0].Tilt, 0f,
+            Assert.AreEqual(0f, math.length(again[0].Tilt), 0f,
                 "после сброса патчить нечего: новый матч раздаёт id заново, и старый крен на "
                 + "чужом теле — неверный ответ, а не отсутствующий");
         }
@@ -331,8 +369,11 @@ namespace Ring.Simulation.Tests
             // subject here is the table, and a moment taken from
             // `AngularImpulseFor` would make every mutation of THAT method
             // move this fixture's settle tick as well.
-            const float hardBlow = 8f;
-            const float graze = 0.05f;
+            // Along `HitDir`, the one heading these fixtures shoot on: the
+            // subject is the TABLE, and a blow off that axis would add a
+            // question this test is not asking.
+            float2 hardBlow = HitDir * 8f;
+            float2 graze = HitDir * 0.05f;
             // Test 13's window, and for its reason: the hard blow is still
             // swinging at the end of it, which the last assertion pins.
             const int ticks = 45;
@@ -361,15 +402,19 @@ namespace Ring.Simulation.Tests
                 if (freedOnTick == 0 && crowded.Count == 1) freedOnTick = t;
 
                 Assert.IsTrue(
-                    alone.TryGetTilt(hardHitId, out float lonelyTilt, out float lonelyTiltVel),
+                    alone.TryGetTilt(hardHitId, out float2 lonelyTilt, out float2 lonelyTiltVel),
                     $"тик {t}: эталонное тело выпало из своей таблицы раньше срока");
-                Assert.IsTrue(crowded.TryGetTilt(hardHitId, out float tilt, out float tiltVel),
+                Assert.IsTrue(crowded.TryGetTilt(hardHitId, out float2 tilt, out float2 tiltVel),
                     $"тик {t}: тело потеряно таблицей, в которой сосед освободил слот");
-                Assert.AreEqual(lonelyTilt, tilt, 1e-6f,
+                Assert.AreEqual(lonelyTilt.x, tilt.x, 1e-6f,
                     $"тик {t}: крен тела зависит от того, кто ещё стоял в таблице — своп-ремув "
                     + "пропустил переехавшее тело, и его кривая отстала на тик от авторитетной");
-                Assert.AreEqual(lonelyTiltVel, tiltVel, 1e-6f,
+                Assert.AreEqual(lonelyTilt.y, tilt.y, 1e-6f,
+                    $"тик {t}: крен тела по второй оси зависит от соседей по таблице");
+                Assert.AreEqual(lonelyTiltVel.x, tiltVel.x, 1e-6f,
                     $"тик {t}: угловая скорость тела зависит от соседей по таблице");
+                Assert.AreEqual(lonelyTiltVel.y, tiltVel.y, 1e-6f,
+                    $"тик {t}: угловая скорость по второй оси зависит от соседей по таблице");
             }
 
             Assert.AreNotEqual(0, freedOnTick,
@@ -379,8 +424,8 @@ namespace Ring.Simulation.Tests
                 "и освободился ровно один слот: второе тело обязано было пережить окно");
             Assert.IsFalse(crowded.TryGetTilt(grazedId, out _, out _),
                 "защёлкнувшийся сосед остался в таблице");
-            Assert.IsTrue(crowded.TryGetTilt(hardHitId, out float finalTilt, out _));
-            Assert.AreNotEqual(0f, finalTilt,
+            Assert.IsTrue(crowded.TryGetTilt(hardHitId, out float2 finalTilt, out _));
+            Assert.AreNotEqual(0f, math.length(finalTilt),
                 "witness: the hard-hit body is still swinging at the end of the window, so the "
                 + "run above compared two live curves rather than two settled zeros");
         }
@@ -413,9 +458,9 @@ namespace Ring.Simulation.Tests
             const int watchedId = firstId;
             // Three moments no two of which can be mistaken for each other: the
             // watched slot's, its neighbors' and the one the refusal carries.
-            const float watchedImpulse = 3f;
-            const float fillerImpulse = 1f;
-            const float refusedImpulse = 9f;
+            float2 watchedImpulse = HitDir * 3f;
+            float2 fillerImpulse = HitDir * 1f;
+            float2 refusedImpulse = HitDir * 9f;
 
             SimConfig cfg = TestConfigs.OpenField();
             int capacity = cfg.Arena.MaxMobs;
@@ -440,17 +485,19 @@ namespace Ring.Simulation.Tests
                 "и отказ ничего не занял: счётчик остался на ёмкости");
             Assert.IsFalse(integrator.TryGetTilt(strangerId, out _, out _),
                 "отказанное тело не наклонено — иначе отказ был бы враньём");
-            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float watchedVel));
-            Assert.AreEqual(watchedImpulse, watchedVel, 0f,
+            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float2 watchedVel));
+            Assert.AreEqual(watchedImpulse.x, watchedVel.x, 0f,
                 "тела, уже стоявшие в таблице, отказом не тронуты");
+            Assert.AreEqual(watchedImpulse.y, watchedVel.y, 0f,
+                "и по второй оси отказ их не тронул");
 
             Assert.IsTrue(integrator.Apply(watchedId, MobType.Chaser, watchedImpulse),
                 "удар по УЖЕ занятому слоту принимается и при полной таблице: поиск занятого слота "
                 + "идёт до проверки ёмкости, потому что суммирование слота не требует");
             Assert.AreEqual(capacity, integrator.Count,
                 "и он не занял второго слота под тем же id");
-            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float summedVel));
-            Assert.AreEqual(watchedImpulse * 2f, summedVel, 1e-6f,
+            Assert.IsTrue(integrator.TryGetTilt(watchedId, out _, out float2 summedVel));
+            Assert.AreEqual(watchedImpulse.x * 2f, summedVel.x, 1e-6f,
                 "второй удар не сложился с первым: тело под огнём обязано качаться сильнее");
         }
 
@@ -480,8 +527,8 @@ namespace Ring.Simulation.Tests
 
             SimConfig cfg = TestConfigs.OpenField();
             var integrator = new MobTiltIntegrator(in cfg);
-            float impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot, in cfg.Chaser,
-                HitHeight, in cfg);
+            float2 impulse = MobTiltIntegrator.AngularImpulseFor(ShooterSlot,
+                in cfg.Chaser, HitHeight, HitDir, in cfg);
 
             Assert.IsTrue(integrator.Apply(listedId, MobType.Chaser, impulse), "удар не принят");
             Assert.IsTrue(integrator.Apply(unseenId, MobType.Chaser, impulse),
@@ -499,7 +546,7 @@ namespace Ring.Simulation.Tests
             Assert.DoesNotThrow(() => integrator.WriteInto(mobs, mobs.Length + 5),
                 "count шире массива обязан клэмпиться его длиной: обход за краем — исключение "
                 + "там, где ценой ошибки должно быть одно некачнувшееся тело");
-            Assert.AreNotEqual(0f, mobs[0].Tilt,
+            Assert.AreNotEqual(0f, math.length(mobs[0].Tilt),
                 "и тела ВНУТРИ массива всё-таки пропатчены: клэмп сужает обход, а не отменяет его");
         }
     }

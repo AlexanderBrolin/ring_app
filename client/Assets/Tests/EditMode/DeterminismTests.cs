@@ -2000,7 +2000,7 @@ namespace Ring.Simulation.Tests
             // entry, a pierced round) and never fire on this run.
             int collectorImpacts = 0;      // PlayerDamaged with ImpactSpeed > 0
             int mobImpacts = 0;            // ProjectileHit on a mob
-            float peakTilt = 0f;           // max |Tilt| over every mob and tick
+            float peakTilt = 0f;           // max tilt LENGTH over every mob and tick
             int downedEntries = 0;         // transitions INTO MobAiState.Downed
             int projectileRicochets = 0;   // ProjectileRicocheted
             int rewindInputs = 0;          // inputs this test fed with RewindTicks > 0
@@ -2088,7 +2088,14 @@ namespace Ring.Simulation.Tests
                 {
                     MobState mob = world.Mobs[m];
                     mobRadius[m] = world.MobConfigRefFor(mob.Type).Radius;
-                    peakTilt = math.max(peakTilt, math.abs(mob.Tilt));
+                    // BY LENGTH, NOT BY COMPONENT (app-94sk T5a): the tilt
+                    // is a `float2` now, and the quantity this premise weighs
+                    // against `TiltFallAngle` is the same "how far from
+                    // upright" `TiltSystem` decides the fall by. `math.abs`
+                    // would still compile here and would answer a `float2`,
+                    // which `math.max` would then fold per component — a
+                    // different number against a scalar threshold.
+                    peakTilt = math.max(peakTilt, math.length(mob.Tilt));
                     if (mob.Ai == MobAiState.Downed)
                     {
                         if (!downedBefore.Contains(mob.Id)) downedEntries++;

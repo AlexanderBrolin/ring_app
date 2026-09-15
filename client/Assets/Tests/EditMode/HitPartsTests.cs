@@ -703,7 +703,15 @@ namespace Ring.Simulation.Tests
             HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
 
-            HitZone Shoot(float tilt)
+            // ⛔ THE PARAMETER IS A `float2`, AND THAT IS NOT A TYPE TIDY-UP
+            // (app-94sk T5a). `m.Tilt = tilt` with a `float` would still
+            // COMPILE against the vectorized field — `Unity.Mathematics` has
+            // an implicit `float -> float2` — and would silently lean the body
+            // (t, t): at the call below that is length 1.1455 rad against a
+            // fall angle of 0.9, so "almost flat on the ground" would become
+            // "past the threshold" and the fixture would change its subject
+            // with nothing to report it.
+            HitZone Shoot(float2 tilt)
             {
                 var w = new SimulationWorld(7, cfg);
                 TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
@@ -718,8 +726,10 @@ namespace Ring.Simulation.Tests
                 return hit.Zone;
             }
 
-            HitZone upright = Shoot(0f);
-            HitZone leaning = Shoot(cfg.Chaser.TiltFallAngle * 0.9f);   // almost flat
+            HitZone upright = Shoot(float2.zero);
+            // 90% of the fall angle ON ONE AXIS -- the length is the angle, so
+            // this is the same "almost flat" the scalar used to state.
+            HitZone leaning = Shoot(new float2(cfg.Chaser.TiltFallAngle * 0.9f, 0f));
             Assert.AreEqual(upright, leaning, "зона поехала вслед за креном");
         }
 

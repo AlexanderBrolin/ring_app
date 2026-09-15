@@ -688,6 +688,18 @@ namespace Ring.Simulation.Core
         /// deliberately does NOT migrate is MobAiState itself: a fallen body
         /// neither stands up when the threshold drops nor falls retroactively
         /// when it rises (see the loop's own doc).
+        /// The hair of headroom ApplyConfig's tilt clamp scales into, so the
+        /// lean it produces reads back UNDER the fall angle through the square
+        /// root TiltSystem measures it with (app-94sk T5a). Four times the
+        /// float epsilon: two already close the gap in measurement, four is
+        /// the same answer with margin. NOT a balance number and therefore not
+        /// a ScriptableObject field (CRITICAL RULE 6 is about numbers the
+        /// owner tunes) — it is a property of float32, and it is named rather
+        /// than inlined for `Impact.RestEpsilon`'s reason: a bare literal in
+        /// the middle of a clamp is a magic number whatever its value. The
+        /// measurement behind it is at the clamp itself.
+        const float ClampFitsUnderCeiling = 1f - 4f * math.EPSILON;
+
         public void ApplyConfig(in SimConfig next)
         {
             if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero,
@@ -789,10 +801,15 @@ namespace Ring.Simulation.Core
             // (rule 2, the same reason SpawnMob resolves through it).
             //
             // TWO CLAMPS AND NO THIRD:
-            //   * Tilt into the new [-TiltFallAngle, TiltFallAngle]. Same
-            //     clamp-down-to-the-new-ceiling contract as every player
-            //     magnitude above, and it is signed, so the interval is
-            //     two-sided rather than [0, max].
+            //   * Tilt into the new fall angle. Same clamp-down-to-the-new-
+            //     ceiling contract as every player magnitude above, but the
+            //     SHAPE of the ceiling changed with app-94sk T5a: the tilt is
+            //     a vector, so the region is the DISC of radius
+            //     TiltFallAngle, not the signed interval
+            //     [-TiltFallAngle, TiltFallAngle] this line used to name. The
+            //     clamp scales the lean instead of clipping its components --
+            //     see the loop itself for why that distinction decides
+            //     whether a balance edit can fell a standing body.
             //   * StateTimer of an ALREADY DOWNED body into the new
             //     DownedSeconds -- otherwise a shortened window would leave a
             //     mob lying past an end it can never reach. Only the downed
@@ -812,7 +829,45 @@ namespace Ring.Simulation.Core
             {
                 MobState m = _mobs[i];
                 MobSimConfig mcfg = MobConfigFor(m.Type);
-                m.Tilt = math.clamp(m.Tilt, -mcfg.TiltFallAngle, mcfg.TiltFallAngle);
+                // ⛔ BY LENGTH, NOT PER COMPONENT (app-94sk T5a). The tilt is
+                // a `float2` now, and `math.clamp(m.Tilt, -angle, angle)`
+                // still COMPILES — `Unity.Mathematics` clamps componentwise
+                // through an implicit `float -> float2` — while meaning
+                // something this loop must never mean: a lean on both axes
+                // would survive at up to `angle * sqrt(2)`, so the very next
+                // tick's TiltSystem would FELL a body that a balance edit was
+                // only supposed to leave standing. That is the rule this whole
+                // pass is written for ("A balance edit must not resurrect or
+                // fell bodies", the note above). It would also TURN the lean:
+                // at this method's own witness numbers — a body at (1.2, 0.6)
+                // and a new angle of 0.4 — a componentwise clamp answers
+                // (0.4, 0.4), swinging the heading from 26.57° to 45° because
+                // a number moved in the inspector.
+                //
+                // SCALING PRESERVES THE HEADING, which is the other half of
+                // the claim: the clamp shortens a lean, it does not redirect
+                // it.
+                //
+                // ⛔⛔ AND THE HEADROOM IS NOT A FUDGE, IT IS THE PRICE OF
+                // DOING THIS IN float32 — MEASURED, NOT FEARED. The scalar
+                // clamp this replaced was EXACT: `math.clamp` returns the
+                // bound itself, and `abs(±angle) > angle` is false by
+                // construction. A scale is a division and two multiplies, and
+                // then TiltSystem measures the result with a SQUARE ROOT, so
+                // the length it reads back can land a few ulps ABOVE the
+                // ceiling — at which point the next tick fells the body this
+                // clamp exists to keep standing, and the guarantee degrades
+                // from "never" to "usually". Replica in float32, 200 000
+                // random directions per angle: WITHOUT the headroom 17.9% of
+                // directions read back over the ceiling (worst 1.79e-07 at
+                // angle 0.9, three ulps); a body at (0.5, 0.1) clamped to
+                // angle 0.4 reads back 0.40000004 and goes down. WITH it,
+                // zero out of 600 000 across angles 0.4 / 0.9 / 1.7. Two ulps
+                // already suffice; four is the same number with the margin
+                // this file gives every other measured bound.
+                float tiltLen = math.length(m.Tilt);
+                if (tiltLen > mcfg.TiltFallAngle)
+                    m.Tilt *= mcfg.TiltFallAngle * ClampFitsUnderCeiling / tiltLen;
                 if (m.Ai == MobAiState.Downed)
                     m.StateTimer = math.clamp(m.StateTimer, 0f, mcfg.DownedSeconds);
                 _mobs[i] = m;
@@ -1925,8 +1980,16 @@ namespace Ring.Simulation.Core
             // BEFORE the death check, on exactly the shove's own reasoning: a
             // body that dies on this blow shows its tilt to nobody, and the
             // slot it leaves behind is never walked by HashMob.
-            _mobs[index].TiltVel += Impact.AngularImpulse(hitHeight, target.CenterOfMassHeight,
-                dv, target.TiltGain);
+            //
+            // TIMES `dir` SINCE app-94sk T5a (spec §3.20): the moment is the
+            // same signed scalar it always was, and the shot's own heading is
+            // what turns it into the lean the body actually takes. The SIGN
+            // still does all the work it did -- a negative moment times `dir`
+            // points the lean the other way -- so there is still no branch
+            // here, and `dir` is the same unit heading the linear shove above
+            // is built from, read once for both halves of one blow.
+            _mobs[index].TiltVel += dir * Impact.AngularImpulse(hitHeight,
+                target.CenterOfMassHeight, dv, target.TiltGain);
             if (ownerIndex != ProjectileIds.NoOwner) IncrementShotsHit(ownerIndex, zone);
             if (_mobs[index].Hp <= 0f)
             {
@@ -2227,8 +2290,14 @@ namespace Ring.Simulation.Core
             // PlayerMovementSystem.UpdateDead already lets its Vel decay.
             // Branching on "is he still standing" would cost more than the
             // addition it saves.
-            p.TiltVel += Impact.AngularImpulse(hitHeight, _config.Hero.CenterOfMassHeight,
-                dv, _config.Hero.TiltGain);
+            //
+            // TIMES `dir` SINCE app-94sk T5a, for DamageMob's reasons exactly:
+            // the signed moment says how hard and which way along the shot,
+            // the shot's heading says where that is in the world, and the
+            // product is the lean. No branch, and the same `dir` the shove a
+            // line above is built from.
+            p.TiltVel += dir * Impact.AngularImpulse(hitHeight,
+                _config.Hero.CenterOfMassHeight, dv, _config.Hero.TiltGain);
             // Credit sits AFTER both guards on purpose: an absorbed or
             // posthumous round dealt no damage, moved no Hp and emitted no
             // PlayerDamaged, so counting it as a landed hit would inflate the
@@ -3381,6 +3450,13 @@ namespace Ring.Simulation.Core
             // field of this struct join the state without joining the digest.
             // ⚠ THIS IS WHAT MOVES THE THREE GOLDEN DIGESTS a fourth time in
             // this epic -- sanctioned, and re-pinned once at Т34, never here.
+            // BOTH COMPONENTS, THROUGH THE `float2` OVERLOAD (app-94sk T5a).
+            // `StateHash64.Add(ulong, float2)` folds x then y; a fold that
+            // took `.x` alone would leave two servers able to disagree about
+            // WHICH WAY a collector leans while agreeing on how far, and
+            // WorldLifecycleTests' reflective sweep cannot see that — its
+            // `Bump` moves a `float2` by (1, 0). `BothTiltComponentsReachTheHash`
+            // is the witness, and mutation M391 is the form it refuses.
             h = StateHash64.Add(h, p.Tilt);
             h = StateHash64.Add(h, p.TiltVel);
             // app-88jb Т24 (spec §3.6): the collector's rewind slot, LAST --
@@ -3452,6 +3528,8 @@ namespace Ring.Simulation.Core
             // resolution and still never rides the wire; the digest is about
             // what the SERVER must replay identically, not about what the
             // client is told.
+            // Both components since app-94sk T5a, on HashPlayer's own account
+            // above — the `float2` overload, not `.x` (mutation M391).
             h = StateHash64.Add(h, m.Tilt); h = StateHash64.Add(h, m.TiltVel);
             return h;
         }

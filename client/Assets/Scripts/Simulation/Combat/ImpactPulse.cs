@@ -19,7 +19,11 @@ namespace Ring.Simulation.Combat
     /// counts this arsenal reaches, two hits landing on one collector in one
     /// tick is ordinary rather than exotic, and a (direction, speed) PAIR
     /// cannot express two blows at once — it can only express the last one,
-    /// or a mean nobody asked for. A vector delta and a scalar moment add.
+    /// or a mean nobody asked for. BOTH MEMBERS ADD, and since app-94sk T5a
+    /// both are vectors (this sentence read "a vector delta and a scalar
+    /// moment" until the moment gained its direction) — so two blows landing
+    /// from opposite sides now cancel the lean as well as the shove, which a
+    /// signed magnitude could only have done for shots on one axis.
     ///
     /// NO `Any` FLAG (finding B2-M5): `Delta` and `TiltImpulse` both at zero
     /// already means "no shove happened", unambiguously and with nothing to
@@ -47,9 +51,23 @@ namespace Ring.Simulation.Combat
         /// second, already summed the same way and already through
         /// Impact.AngularImpulse. Signed: a hit above the center of mass
         /// tips the body along the shot, one below undercuts it.
-        public readonly float TiltImpulse;
+        ///
+        /// A VECTOR SINCE app-94sk T5a, exactly as PlayerState.TiltVel is --
+        /// LENGTH is the moment, DIRECTION is the blow's own heading, and the
+        /// sign that used to carry "along or against the shot" is now the
+        /// direction pointing one way or the other. IT HAD TO MOVE WITH THE
+        /// FIELD IT IS ADDED INTO (PlayerPrediction.Step: `TiltVel +=
+        /// pulse.TiltImpulse`); a scalar here would have made the predicting
+        /// client rebuild a lean with no direction while the server's had one,
+        /// which is a divergence rather than a cosmetic gap.
+        ///
+        /// AND THE SUMMING SURVIVED THE CHANGE UNTOUCHED (ImpactPulseLog.Add):
+        /// two blows in one tick still add, and adding vectors is what makes
+        /// two hits from OPPOSITE sides cancel the way the bodies they hit
+        /// would -- which a pair of magnitudes could not express at all.
+        public readonly float2 TiltImpulse;
 
-        public ImpactPulse(float2 delta, float tiltImpulse)
+        public ImpactPulse(float2 delta, float2 tiltImpulse)
         {
             Delta = delta;
             TiltImpulse = tiltImpulse;

@@ -798,7 +798,8 @@ namespace Ring.Simulation.Tests
             // to anything the idle input below could produce, so a Step that
             // crossed the two fields, or moved one of them for its own
             // reasons, has nowhere to hide.
-            var pulse = new Ring.Simulation.Combat.ImpactPulse(new float2(0.3f, 0f), 0.2f);
+            var pulse = new Ring.Simulation.Combat.ImpactPulse(new float2(0.3f, 0f),
+                new float2(0.2f, 0f));
             PlayerPrediction.Step(ref predicted, default, in cfg, in pulse,
                 System.ReadOnlySpan<PushableBody>.Empty, null);
 
@@ -806,7 +807,13 @@ namespace Ring.Simulation.Tests
             // tick leaves Vel and TiltVel at zero and everything read below
             // came from the pulse and from nothing else.
             Assert.AreEqual(0.3f, predicted.Vel.x, 1e-4f, "предсказанный толчок не лёг в Vel");
-            Assert.AreEqual(0.2f, predicted.TiltVel, 1e-4f, "предсказанный момент не лёг в TiltVel");
+            Assert.AreEqual(0.2f, predicted.TiltVel.x, 1e-4f, "предсказанный момент не лёг в TiltVel");
+            // THE OTHER COMPONENT IS ASKED FOR TOO (app-94sk T5a): the moment
+            // is a vector now, and a Step that applied only its length — or
+            // crossed the pulse's two members, which the magnitudes above are
+            // chosen to expose — would leave a heading here nobody sent.
+            Assert.AreEqual(0f, predicted.TiltVel.y, 1e-4f,
+                "предсказанный момент приобрёл вторую компоненту, которой в импульсе не было");
         }
 
         // -------------------------------------------- the classification sweep

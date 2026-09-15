@@ -293,25 +293,56 @@ namespace Ring.Simulation.Tests
             w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
             w.SetMobForTest(0, m);
 
+            // ⛔ THE SIGN IS A DIRECTION NOW, AND THE PROJECTION IS WHAT
+            // NAMES IT (app-94sk T5a). The moment lands as `dir * scalar`, so
+            // "tips ALONG the shot" is a POSITIVE component along `dir` and
+            // "undercuts" is a negative one. `math.length` is the wrong
+            // question here in a way no compiler can see: it is non-negative
+            // by construction, so the undercutting half would have no witness
+            // left at all. One named heading, used by both blows and both
+            // readings.
+            //
+            // ⛔⛔ THE HEADING IS OFF-AXIS, AND ASYMMETRIC, AND BOTH WORDS ARE
+            // LOAD-BEARING. Every other fixture in this suite shoots along
+            // +x, where `dir * scalar` and a bare `new float2(scalar, 0f)`
+            // are the same two numbers — so the multiplication that IS
+            // app-94sk T5a had no witness anywhere until this line stopped
+            // being `(1, 0)`. Asymmetric for the second half of it: on a 45°
+            // heading `dir.yx == dir`, so a blow that swapped the axes would
+            // pass too. `normalize((1, 2))` fails both mutants and stays a
+            // unit vector, which is what keeps the projections below equal to
+            // the signed moment itself.
+            float2 shotDir = math.normalize(new float2(1f, 2f));
             float com = cfg.Chaser.CenterOfMassHeight;
-            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Head, new float2(1f, 0f),
+            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Head, shotDir,
                 ownerIndex: 0, hitHeight: com + 0.5f,
                 projectileMass: cfg.Weapon.ProjectileMass,
                 projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
-            float high = w.Mobs[0].TiltVel;
+            float2 highVel = w.Mobs[0].TiltVel;
+            float high = math.dot(highVel, shotDir);
 
-            var reset = w.Mobs[0]; reset.TiltVel = 0f; reset.Tilt = 0f;
+            var reset = w.Mobs[0]; reset.TiltVel = float2.zero; reset.Tilt = float2.zero;
             w.SetMobForTest(0, reset);
-            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Legs, new float2(1f, 0f),
+            w.DamageMob(0, 1f, new float2(6f, 0f), HitZone.Legs, shotDir,
                 ownerIndex: 0, hitHeight: com - 0.5f,
                 projectileMass: cfg.Weapon.ProjectileMass,
                 projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
-            float low = w.Mobs[0].TiltVel;
+            float2 lowVel = w.Mobs[0].TiltVel;
+            float low = math.dot(lowVel, shotDir);
 
             Assert.Greater(high, 0f, "попадание ВЫШЕ центра масс не валит тело по ходу");
             Assert.Less(low, 0f, "попадание НИЖЕ центра масс не подсекает тело");
             Assert.AreEqual(-high, low, 1e-4f,
                 "плечо считается не от центра масс: симметричные высоты дали несимметричный момент");
+            // ⭐ AND THE MOMENT LIES ON THE SHOT LINE, both times — a claim
+            // that did not exist before the tilt was a vector, and the one
+            // that pins `dir *` rather than merely the sign it multiplies.
+            // Without it a blow that leaned a body sideways would satisfy
+            // everything above.
+            Assert.AreEqual(0f, math.length(highVel - shotDir * high), 1e-6f,
+                "момент удара выше центра масс ушёл с линии выстрела");
+            Assert.AreEqual(0f, math.length(lowVel - shotDir * low), 1e-6f,
+                "момент подсекающего удара ушёл с линии выстрела");
         }
 
         [Test]
@@ -325,13 +356,20 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(7, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
             var m = w.Mobs[0];
-            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = 0.3f; m.TiltVel = 0f;
+            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = new float2(0.3f, 0f); m.TiltVel = float2.zero;
             w.SetMobForTest(0, m);
 
             for (int i = 0; i < 300; i++) w.Tick(default);
 
-            Assert.AreEqual(0f, w.Mobs[0].Tilt, 0f, "крен не пришёл в ТОЧНЫЙ ноль за 10 секунд");
-            Assert.AreEqual(0f, w.Mobs[0].TiltVel, 0f, "угловая скорость не пришла в ТОЧНЫЙ ноль");
+            // BOTH COMPONENTS, EXACTLY (app-94sk T5a): the subject is the
+            // RestEpsilon snap, and a snap that zeroed one axis while leaving
+            // the other is precisely the failure `Impact.SpringStep`'s
+            // by-length test exists to refuse.
+            Assert.AreEqual(0f, w.Mobs[0].Tilt.x, 0f, "крен не пришёл в ТОЧНЫЙ ноль за 10 секунд");
+            Assert.AreEqual(0f, w.Mobs[0].Tilt.y, 0f, "вторая компонента крена не пришла в ТОЧНЫЙ ноль");
+            Assert.AreEqual(0f, w.Mobs[0].TiltVel.x, 0f, "угловая скорость не пришла в ТОЧНЫЙ ноль");
+            Assert.AreEqual(0f, w.Mobs[0].TiltVel.y, 0f,
+                "вторая компонента угловой скорости не пришла в ТОЧНЫЙ ноль");
         }
 
         [Test]
@@ -346,14 +384,19 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(7, cfg);
             w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
             var m = w.Mobs[0];
-            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = 0.3f; m.TiltVel = 0f;
+            m.Ai = MobAiState.Idle; m.Hp = 1e6f; m.Tilt = new float2(0.3f, 0f); m.TiltVel = float2.zero;
             w.SetMobForTest(0, m);
 
             bool crossed = false;
             for (int i = 0; i < 90 && !crossed; i++)
             {
                 w.Tick(default);
-                if (w.Mobs[0].Tilt < 0f) crossed = true;
+                // THE SIGN OF THE LEAN IS NOW A DIRECTION, and the body is
+                // leaned along +x above, so "it came back past upright" is
+                // "the x component went negative". A bare `< 0f` on a `float2`
+                // yields a `bool2`, which an `if` refuses -- the compiler
+                // catches this one rather than letting it slip.
+                if (w.Mobs[0].Tilt.x < 0f) crossed = true;
             }
             Assert.IsTrue(crossed, "крен не качнулся через ноль — режим не колебательный");
         }
@@ -398,7 +441,7 @@ namespace Ring.Simulation.Tests
             // seconds make the difference structural: with no reset the mob
             // stands up IMMEDIATELY.
             m.StateTimer = 5f;
-            m.Tilt = cfg.Gunner.TiltFallAngle + 0.05f; m.TiltVel = 0f;
+            m.Tilt = new float2(cfg.Gunner.TiltFallAngle + 0.05f, 0f); m.TiltVel = float2.zero;
             w.SetMobForTest(0, m);
 
             w.Tick(default);
@@ -430,6 +473,129 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
+        public void TiltOffTheAxis_FallsByItsLENGTH_NotByEitherComponent()
+        {
+            // ⛔⛔ app-94sk T5a, AND IT EXISTS BECAUSE A MUTATION SURVIVED, not
+            // because the plan asked for it. T5a turned `TiltSystem`'s
+            // threshold from `math.abs(scalar) > angle` into
+            // `math.length(vector) > angle`, and mutation M408 — the same test
+            // written `math.any(math.abs(m.Tilt) > angle)` — ran the WHOLE
+            // suite green (1977/1973/4, the four sanctioned reds and nothing
+            // else). Every other threshold fixture in this file leans its body
+            // on ONE axis, where `any(abs(·) > θ)` and `length(·) > θ` are the
+            // same question, so none of them could tell the two apart.
+            //
+            // THE INPUT THAT SEPARATES THEM, and it is a property rather than
+            // a literal: a lean of `0.8 * θ` on EACH axis. Neither component
+            // reaches the angle, so a per-component test leaves the body
+            // standing; the LENGTH is `0.8 * sqrt(2) = 1.131` times the angle,
+            // so the body is past it and must go down. The fraction is chosen
+            // to sit clear of both edges — 20% under the angle per component,
+            // 13% over it in length — rather than to skim either.
+            //
+            // ⚠ IT IS NOT A DUPLICATE OF `TiltAboveTheThreshold_…`: that one
+            // asks whether a body past the angle falls AND gets up, on one
+            // axis. This one asks WHAT "past the angle" MEANS for a vector,
+            // which is the decision T5a made and the only thing M408 moves.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(7, cfg);
+            w.SpawnMobForTest(MobType.Gunner, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+            float perAxis = 0.8f * cfg.Gunner.TiltFallAngle;
+            m.Tilt = new float2(perAxis, perAxis); m.TiltVel = float2.zero;
+            w.SetMobForTest(0, m);
+
+            // The premises, stated as numbers so the fixture cannot quietly
+            // stop separating the two rules if the angle ever moves.
+            Assert.Less(perAxis, cfg.Gunner.TiltFallAngle,
+                "fixture premise: neither component reaches the fall angle on its own, "
+                + "or a per-component rule would fell this body too and witness nothing");
+            Assert.Greater(math.length(m.Tilt), cfg.Gunner.TiltFallAngle,
+                "fixture premise: the LENGTH is past the fall angle — otherwise there is "
+                + "nothing for the correct rule to decide either");
+
+            w.Tick(default);
+            Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai,
+                "тело, наклонённое по двум осям за порог ПО ДЛИНЕ, не упало — порог спрашивают "
+                + "покомпонентно, и тогда упасть можно только вдоль оси");
+        }
+
+        [Test]
+        public void TheRestSnapIsByLength_SoAFadingAxisNeverTurnsTheLean()
+        {
+            // ⛔⛔ app-94sk T5a, and this one also exists because a mutation
+            // survived: M407 replaced `Impact.SpringStep`'s by-length snap
+            // with a per-component one and the whole suite stayed at
+            // 1977/1973/4. It is NOT an inert mutation — it moved the
+            // multiplayer golden digest — but the three digests are red by
+            // sanction Н44 until T-W1, and a red test witnesses nothing. That
+            // is worth saying plainly: while the digests are parked, anything
+            // whose only witness was the digest has no witness at all.
+            //
+            // THE INVARIANT IS EXACT, AND IT IS THE SPRING'S OWN. A linear
+            // spring is separable: released from `(a, b)` at rest, it walks
+            // `x(t) = a*f(t)`, `y(t) = b*f(t)` with ONE shared `f`, so the
+            // LEAN'S HEADING NEVER CHANGES — the body rocks back and forth
+            // along the line it was leaning on, and comes to rest on it. A
+            // per-component snap breaks exactly that: the small axis drops
+            // under `RestEpsilon` long before the large one and is zeroed
+            // alone, which does not settle the body, it TURNS it onto an axis
+            // on a tick nobody touched it.
+            //
+            // THE AMPLITUDES ARE THREE ORDERS APART SO THE MUTANT'S WINDOW IS
+            // STRUCTURAL, not marginal: at `b = a / 1000` the small axis is
+            // under the epsilon while the large one is still a thousand times
+            // above it. `Impact.SpringStep` is called DIRECTLY — it is a pure
+            // function, and the subject here is its arithmetic, not a world.
+            const float a = 1f;
+            const float b = 0.001f;
+            SimConfig cfg = TestConfigs.Open();
+            float dt = SimulationWorld.TickDt;
+            float2 tilt = new float2(a, b);
+            float2 tiltVel = float2.zero;
+
+            Assert.Greater(b, Impact.RestEpsilon,
+                "fixture premise: the small axis starts ABOVE the rest epsilon, or it would be "
+                + "snapped on the first step by any implementation at all");
+
+            // Three settle times — `Impact.PeakTilt`'s own bound, reused
+            // rather than restated, and wide enough that the pair reaches rest
+            // well inside it.
+            int steps = (int)math.ceil(3f * cfg.Chaser.TiltSettleSeconds / dt);
+            bool everSettled = false;
+            for (int i = 0; i < steps; i++)
+            {
+                Impact.SpringStep(ref tilt, ref tiltVel,
+                    cfg.Chaser.TiltDampingRatio, cfg.Chaser.TiltSettleSeconds, dt);
+
+                // THE CLAIM, EVERY STEP: the small axis is allowed to be
+                // exactly zero only on the step the WHOLE pair is. Under the
+                // per-component snap `tilt.y` is zeroed on STEP 12, where
+                // `tilt.x` still reads −0.0975 rad — a body leaning 5.59° that
+                // the snap has just straightened onto an axis. (Measured: a
+                // float32 replica of this loop, and the mutation run reports
+                // the same −0.097511276 from the assert below.)
+                if (tilt.y == 0f)
+                {
+                    Assert.AreEqual(0f, tilt.x, 0f,
+                        $"шаг {i}: малая ось обнулена в одиночку — снап покомпонентный, и он "
+                        + "ПОВЕРНУЛ крен вместо того, чтобы привести тело в покой");
+                    everSettled = true;
+                }
+            }
+
+            // And the pair does come to rest inside the window, exactly —
+            // without this the loop above is satisfied by a spring that never
+            // snapped at all.
+            Assert.IsTrue(everSettled,
+                "пружина не пришла в покой за три времени успокоения — цикл выше ничего не "
+                + "проверил");
+            Assert.AreEqual(0f, math.length(tilt), 0f, "крен не пришёл в ТОЧНЫЙ ноль");
+            Assert.AreEqual(0f, math.length(tiltVel), 0f, "угловая скорость не пришла в ТОЧНЫЙ ноль");
+        }
+
+        [Test]
         public void TiltExactlyAtTheThreshold_DoesNotKnockDown()
         {
             // The boundary is STRICT (`>`), and this is the witness for the
@@ -446,7 +612,7 @@ namespace Ring.Simulation.Tests
             // assertion below is NEGATIVE, so that changes nothing about what
             // it witnesses -- but the seam must not be read as a freeze.
             m.Hp = 1e6f; m.Ai = MobAiState.Idle;
-            m.Tilt = cfg.Gunner.TiltFallAngle; m.TiltVel = 0f;   // EXACTLY the threshold
+            m.Tilt = new float2(cfg.Gunner.TiltFallAngle, 0f); m.TiltVel = float2.zero;   // EXACTLY the threshold
             w.SetMobForTest(0, m);
             w.Tick(default);
             // THE WITNESS IS ALIVE ONLY UNDER THE "CHECK, THEN STEP" ORDER
@@ -573,7 +739,7 @@ namespace Ring.Simulation.Tests
             {
                 MobState m = w.Mobs[0];
                 m.Hp = 1e6f; m.Ai = MobAiState.Idle;
-                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                m.Tilt = float2.zero; m.TiltVel = float2.zero; m.StateTimer = 0f;
                 w.SetMobForTest(0, m);
                 w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
                     hitHeight: 0.5f * (part.RestBottom + part.RestTop),
@@ -643,13 +809,17 @@ namespace Ring.Simulation.Tests
             {
                 MobState m = w.Mobs[0];
                 m.Hp = 1e6f; m.Ai = MobAiState.Idle;
-                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                m.Tilt = float2.zero; m.TiltVel = float2.zero; m.StateTimer = 0f;
                 w.SetMobForTest(0, m);
                 w.DamageMob(0, 1f, mobPos, part.Zone, new float2(1f, 0f), ownerIndex: 0,
                     hitHeight: 0.5f * (part.RestBottom + part.RestTop),
                     projectileMass: cfg.Weapon.ProjectileMass,
                     projectileSpeed3D: cfg.Weapon.ProjectileSpeed);
-                return math.abs(w.Mobs[0].TiltVel);
+                // BY LENGTH: the subject is how hard the blow rocks the
+                // body, which is the moment's magnitude whichever way it
+                // points. `math.abs` would answer a `float2` and refuse to
+                // become this method's `float`.
+                return math.length(w.Mobs[0].TiltVel);
             }
 
             float legs = RockOf(TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Legs, "чейзер"));
@@ -806,7 +976,7 @@ namespace Ring.Simulation.Tests
                 MobState m = w.Mobs[0];
                 m.Pos = mobPos; m.Vel = float2.zero;
                 m.Hp = 1e6f; m.Ai = MobAiState.Idle;
-                m.Tilt = 0f; m.TiltVel = 0f; m.StateTimer = 0f;
+                m.Tilt = float2.zero; m.TiltVel = float2.zero; m.StateTimer = 0f;
                 w.SetMobForTest(0, m);
 
                 w.ClearEvents();

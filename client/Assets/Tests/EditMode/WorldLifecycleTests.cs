@@ -450,6 +450,56 @@ namespace Ring.Simulation.Tests
         static object BumpEnum(System.Enum e)
             => System.Enum.ToObject(e.GetType(), System.Convert.ToInt64(e) + 1L);
 
+        /// app-94sk T5a (spec §3.20), fixture 23б — THE SECOND COMPONENT OF
+        /// THE TILT REACHES THE DIGEST. Written by hand for the same class of
+        /// reason the backpack pass below is: the reflective sweep above
+        /// cannot ask this question, and it cannot in a way that is quieter
+        /// than a private field.
+        ///
+        /// ⛔⛔ THE SWEEP WOULD PASS A FOLD THAT FORGOT `.y`, AND THAT IS
+        /// CHECKED IN THE CODE RATHER THAN ASSUMED. `Bump` moves a `float2`
+        /// by `new float2(1f, 0f)` (see its own switch above) — the `.x`
+        /// component ONLY — so a `HashMob`/`HashPlayer` that folded
+        /// `Tilt.x` and dropped `Tilt.y` would answer a different digest for
+        /// every bump the sweep makes and be declared complete. That is
+        /// exactly the defect T5a could introduce and exactly the one the
+        /// reflective guard is blind to, which is why this fixture exists
+        /// beside it instead of trusting it.
+        ///
+        /// ⛔ THE PAIR IS "ZERO VERSUS (0, 0.3)", NOT "(0, 0.3) VERSUS
+        /// (0.3, 0)", and the choice is load-bearing (rule 696): under the
+        /// mutant that folds only `.x`, the second pair contributes 0 and
+        /// then 0.3 — two different digests — so `AreNotEqual` would hold and
+        /// the mutant would survive. Against a baseline of exact zero, a fold
+        /// that ignores `.y` returns the SAME digest and the assert bites.
+        ///
+        /// BOTH BODIES, BECAUSE THEY ARE TWO FOLDS. `HashMob` and
+        /// `HashPlayer` are separate methods with separate lines; a task that
+        /// vectorized one and forgot the other would leave a collector whose
+        /// lean two servers could disagree about, and nothing else in the
+        /// suite would say so.
+        [Test]
+        public void BothTiltComponentsReachTheHash()   // fixture 23б, mutation M391
+        {
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(31, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+
+            var m = w.Mobs[0]; m.Tilt = float2.zero; w.SetMobForTest(0, m);
+            ulong baseline = w.StateHash();
+
+            m = w.Mobs[0]; m.Tilt = new float2(0f, 0.3f); w.SetMobForTest(0, m);
+            Assert.AreNotEqual(baseline, w.StateHash(),
+                "вторая компонента крена не входит в хеш — свёртка сложила только .x");
+
+            // And mirrored for the collector: HashPlayer is its own fold.
+            var p = w.PlayerAt(0); p.Tilt = float2.zero; w.SetPlayerForTest(0, p);
+            ulong playerBaseline = w.StateHash();
+            p = w.PlayerAt(0); p.Tilt = new float2(0f, 0.3f); w.SetPlayerForTest(0, p);
+            Assert.AreNotEqual(playerBaseline, w.StateHash(),
+                "вторая компонента крена СБОРЩИКА не входит в хеш — HashPlayer сложил только .x");
+        }
+
         /// Т6. The backpacks are the one piece of canonical state the
         /// reflective sweep above CANNOT reach: Inventory is a class with
         /// private fields (spec Р232 — it owns a byte array, and living
