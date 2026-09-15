@@ -88,6 +88,12 @@ namespace Ring.Simulation.Tests
             // the length of the zone enum are pinned.
             // ⚠ THE SET, NOT THE ORDER: append-only forbids REUSING a number, not
             // rearranging the volumes that carry them.
+            // ⛔⛔ app-saqr (T4b): THE SETS ARE PER-ARCHETYPE NOW, and they have
+            // to be — the ids are LOCAL (spec §3.2, the Jedi Academy precedent
+            // in COMBAT-001 §3.7: one flat global table ran out of bits and the
+            // boss's parts were cut out of it). The gunner's 3..8 are his LEGS
+            // while the collector's 3..6 are ARMS, so one shared expectation
+            // would be a claim about a numbering that does not exist.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             SimConfig cfg = ConfigTests.BuildShipped(h, w, c, g, wv, a, vis);
             foreach ((string name, HitPart[] parts) in new[]
@@ -97,10 +103,20 @@ namespace Ring.Simulation.Tests
                 ("Director", cfg.Director.Parts),
             })
             {
+                // ⛔ THE EXPECTATION IS BUILT FROM THE LENGTH, NOT SPELLED OUT:
+                // what rule 7 forbids is a GAP or a REUSE, i.e. the ids of N
+                // volumes must be exactly 0..N-1. Literals would pin the COUNT
+                // a second time — fixture 44 already does that, and does it on
+                // the shipped layout rather than on whatever a caller put in
+                // the slot (`MakeDefaults` fills the gunner's with a fresh
+                // `MobConfig`, which is chaser-shaped by class).
+                var expected = new int[parts.Length];
+                for (int i = 0; i < parts.Length; i++) expected[i] = i;
+
                 var ids = new System.Collections.Generic.List<int>(parts.Length);
                 foreach (HitPart part in parts) ids.Add(part.PartId);
                 ids.Sort();
-                CollectionAssert.AreEqual(new[] { 0, 1, 2 }, ids,
+                CollectionAssert.AreEqual(expected, ids,
                     $"{name}: набор PartId сменился — id может только дописываться, " +
                     "иначе провод переименует уже названный объём");
             }
@@ -144,7 +160,12 @@ namespace Ring.Simulation.Tests
             // (finding C-I1).
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             var (elite, director) = ConfigTests.MakeShippedArchetypes();
-            h.MaxAimHeight = director.Parts[director.Parts.Length - 1].RestTop - 0.1f;
+            // ⛔ app-saqr (T4b): THE CROWN, NOT THE LAST VOLUME. Rule 14
+            // measures the ceiling against the TOP OF EVERY volume, and with
+            // fifteen of them laid out on real bones the tallest is a gun, not
+            // whatever happens to be last in the array. `HitParts.RestCrown` is
+            // the one home of that question, and the rule itself reads it.
+            h.MaxAimHeight = HitParts.RestCrown(director.Parts) - 0.1f;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis, elite, director));
             Assert.That(ex.Message, Does.Contain("Hero.MaxAimHeight"));
@@ -222,44 +243,59 @@ namespace Ring.Simulation.Tests
             // else about the fixture moves, so a red here is the rule and
             // nothing but the rule.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
-            h.MuzzleHeight = h.Parts[h.Parts.Length - 1].RestBottom;   // exactly the seam
+            // ⛔ app-saqr (T4b): the head BY ZONE — see the note on fixture 28а.
+            HitPart heroHead = TestWorlds.VolumeOfZone(h.Parts, HitZone.Head, "сборщик");
+            h.MuzzleHeight = heroHead.RestBottom;   // exactly the seam
             Assert.DoesNotThrow(() => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
         }
 
         [Test]
-        public void ShippedParts_HeadIsAboutAFifthOfTheColumn()
+        public void ShippedParts_HeadNeverReachesTheLowerThird()
         {
-            // ⭐ THE GUARD OVER THE PHASE'S MAIN NUMBER (finding C-C3): the head
-            // is obliged to take 18-26 % of the body's height. v1 gave 36-46 %
-            // and turned a shot to the chest into a headshot.
-            // ⚠ A GUARD, NOT A WITNESS (lesson 427): the columns are scaled
-            // WHOLE, so all five bodies already sit inside the band — 21.48 %
-            // (chaser), 22.86 % (collector and gunner), 22.91 % (elite),
-            // 22.92 % (director) — and this reads green on the shipped numbers. What it catches is the
-            // v1-shaped mistake — one Top raised on its own — whenever it is
-            // made, which is the only thing it was ever asked to catch.
-            // ⛔⛔ MEASURED ON THE BONES, NOT ON THE EXTENTS (app-94sk T2). A
-            // volume is a CAPSULE now, so its RestTop/RestBottom include two
-            // caps: on the chaser that alone turns a 21.5 % head into a 32.1 %
-            // one, and the band would have to be widened to admit a number that
-            // says nothing about anatomy. The bones are where the anatomy lives,
-            // and the measure on them reproduces the five percentages this test's
-            // own doc quotes — 21.48 / 22.86 / 22.86 / 22.91 / 22.92 — i.e. it is
-            // the SAME guard, asked of the source the geometry moved to.
+            // ⭐ THE GUARD OVER THE PHASE'S MAIN NUMBER (finding C-C3): v1 of
+            // this geometry raised ONE Top on its own, the head took 36-46 % of
+            // the body, and a shot to the chest became a headshot.
+            //
+            // ⛔⛔ app-saqr (T4b): THE MEASURE CHANGED BECAUSE THE GEOMETRY DID,
+            // and the old one is not merely inconvenient — it no longer exists.
+            // It read "the head's share of the column" off the DISTANCE BETWEEN
+            // ITS TWO BONES, which a column had and a capsule does not: the
+            // chaser's and the gunner's heads are DEGENERATE capsules (one bone,
+            // |a−b| = 0, share 0), while the elite's and the Director's Head
+            // zone IS their whole shell by spec §3.2/D-I8. A band of 18-26 %
+            // could only be met by a body shaped like the thing that was
+            // replaced.
+            // ⇒ WHAT SURVIVES IS THE SUBJECT: a head that grows DOWNWARD is a
+            // chest shot scoring as a headshot. So the head's own extent must
+            // stay out of the body's lower third — the same defect, asked of
+            // the capsule's real reach instead of a column's fractions.
+            // ⚠ THREE BODIES, NOT FIVE: the elite and the Director carry
+            // `HitZone.Head` on their SHELL (spec §3.2, finding D-I8 — the 1.7
+            // multiplier and `SpawnFullExplodeGibs` hang on the zone, and
+            // neither has an anatomical head), so "the head must sit high" is
+            // not a claim about them at all.
+            // ⚠ A GUARD, NOT A WITNESS (lesson 427): all three clear it on the
+            // shipped numbers — 1.19 / 1.71 / 1.88 m against thirds at
+            // 0.49 / 0.77 / 1.32 — and what it catches is the change that
+            // would not.
             SimConfig cfg = TestConfigs.Default();
-            foreach ((HitPart[] parts, PoseTable table) in new[]
+            foreach ((string name, HitPart[] parts) in new[]
             {
-                (cfg.Chaser.Parts, cfg.Chaser.Poses), (cfg.Gunner.Parts, cfg.Gunner.Poses),
-                (cfg.Elite.Parts, cfg.Elite.Poses), (cfg.Director.Parts, cfg.Director.Poses),
-                (cfg.Hero.Parts, cfg.Hero.Poses),
+                ("collector", cfg.Hero.Parts), ("chaser", cfg.Chaser.Parts),
+                ("gunner", cfg.Gunner.Parts),
             })
             {
-                HitPart head = parts[parts.Length - 1];
-                float a = table.Bones[head.BoneA].y, b = table.Bones[head.BoneB].y;
-                float crown = math.max(a, b);
-                float share = math.abs(a - b) / crown;
-                Assert.That(share, Is.InRange(0.18f, 0.26f),
-                    $"доля головы {share:F3} вне полосы жанра");
+                HitPart head = TestWorlds.VolumeOfZone(parts, HitZone.Head, name);
+                float top = float.NegativeInfinity, bottom = float.PositiveInfinity;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    top = math.max(top, parts[i].RestTop);
+                    bottom = math.min(bottom, parts[i].RestBottom);
+                }
+                float third = bottom + (top - bottom) / 3f;
+                Assert.Greater(head.RestBottom, third,
+                    $"{name}: объём головы опустился в нижнюю треть тела — выстрел в корпус " +
+                    "засчитается хедшотом, ровно та ошибка, которой этот сторож поставлен");
             }
         }
 
@@ -282,11 +318,22 @@ namespace Ring.Simulation.Tests
             // from the ray to the body's axis.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
             // The aim is offset sideways: wider than the head, narrower than
             // the shoulders.
-            float offset = 0.5f * (head.Radius + cfg.Gunner.Radius);
+            // ⛔⛔ app-saqr (T4b): THE BODY IS THE CHASER, AND A MEASUREMENT
+            // forced it. The fixture needs a lane OUTSIDE the head and INSIDE
+            // the body circle — that IS "the shoulder at head height" — and the
+            // gunner has none: his head is a cabin 1.19 m wide against a
+            // physical circle of 0.50, so the two bounds cross and no offset
+            // satisfies both. The chaser keeps the shape the fixture is about
+            // (a 0.25 m head inside a 0.50 m circle); the claim, the mutation
+            // it feeds and the ladder are the same on either body.
+            // ⚠ THE MIDDLE OF THE LANE, not of the two radii: each bound is
+            // grown by the round's own radius, and the lane is 0.25 m wide.
+            float offset = 0.5f * ((head.Radius + cfg.Weapon.ProjectileRadius)
+                + (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius));
             var shooter = float2.zero;
             var body = new float2(9f, 0f);
             var aim = new float2(9f, offset);
@@ -296,18 +343,30 @@ namespace Ring.Simulation.Tests
             float lateral = math.abs(ray.x * (body.y - shooter.y) - ray.y * (body.x - shooter.x));
             Assert.Greater(lateral, head.Radius + cfg.Weapon.ProjectileRadius,
                 "луч проходит внутри головы — тест ничего не проверяет");
-            Assert.Less(lateral, cfg.Gunner.Radius + cfg.Weapon.ProjectileRadius,
+            Assert.Less(lateral, cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
                 "луч не входит даже в круг ТЕЛА — кандидат не соберётся, и мутация "
                 + "«радиус части заменить радиусом тела» останется без точки приложения");
-            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, body));
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
             int before = w.MobCount;
 
             TestWorlds.FireAimed3D(w, shooter, muzzleH: 1f, targetXY: aim, targetH: headMid);
             TestWorlds.RunUntilProjectilesDie(w);
 
-            Assert.AreEqual(before, w.MobCount, "выстрел мимо головы на полуширине плеч убил ганнера");
-            Assert.IsFalse(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out _),
-                "плечо на высоте головы засчитано попаданием");
+            // ⛔⛔ app-saqr (T4b): THE CLAIM IS "NOT A HEADSHOT", NOT "NOT A HIT",
+            // and the difference is the layout itself. On the three bands this
+            // fixture was written against, a lane outside the head at head
+            // height met NOTHING — the body was a stack of coaxial circles. A
+            // chaser laid out on his own bones has an ARM out there (his
+            // forearm reaches 0.55 m off the axis at 1.51-1.91 m), so the round
+            // lands, and it SHOULD: it passed through a shoulder. What must not
+            // happen is the shoulder paying the head's 1.7, which is the defect
+            // this fixture was opened for and the mutation it feeds ("size a
+            // part by the body's radius" would swell the head over this lane).
+            Assert.AreEqual(before, w.MobCount, "выстрел мимо головы на полуширине плеч убил тело");
+            if (TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent shoulder))
+                Assert.AreNotEqual(HitZone.Head, shoulder.Zone,
+                    "плечо на высоте головы засчитано ХЕДШОТОМ — ровно тот дефект, "
+                    + "ради которого голова перестала нести полуширину плеч");
         }
 
         [Test]
@@ -333,7 +392,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             cfg.Chaser.MaxSpeed = 0f; cfg.Chaser.Accel = 0f;   // Ruling 71, see above
             var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
 
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
@@ -349,68 +408,68 @@ namespace Ring.Simulation.Tests
         public void HitExactlyOnTheSharedBone_BelongsToTheUpperPart()
         {
             // THE BOUNDARY TAKEN IS BODY/HEAD, NOT LEGS/BODY (review finding
-            // D-C7). On the legs(R 0.35)/body(R 0.50) seam the "boundary closed
-            // on both sides" mutation is indistinguishable: both parts become
-            // candidates, but the LARGER radius always yields the SMALLER t
-            // (rule C-M4, which this very task cites), so the body wins the
-            // min-scan either way and the zone reads Body for the mutant too.
-            // On the body(0.50)/head(0.17) seam the same rules give OPPOSITE
-            // answers: Head when correct, Body for the mutant.
-            // ⛔⛔ THE BOUNDARY IS A SHARED BONE NOW, NOT A SHARED NUMBER
-            // (app-94sk T2). While parts were bands, `head.RestBottom` WAS the
-            // seam — validation rule 2 made "top of the torso" and "bottom of the
-            // head" one number. A capsule's RestBottom is its lower CAP (1.95 on
-            // this chaser), which sits inside the torso and names no seam at all.
-            // What the two volumes genuinely share is the CHEST BONE, and that is
-            // what the shot is aimed at.
-            // ⛔ FROZEN BEFORE THE WORLD IS BUILT: the verdict here turns on
-            // WHICH tick-step the two entries fall in, and the window between
-            // them is 0.33 m against a step of 1.17 m. A chaser walking 0.173 m
-            // per tick would move that boundary under the fixture.
+            // D-C7): on the legs/body seam the "boundary closed on both sides"
+            // mutation is indistinguishable, because the larger radius always
+            // yields the smaller t and the torso wins the scan either way. On
+            // the body/head seam the same rules give OPPOSITE answers.
+            //
+            // ⛔⛔ app-saqr (T4b): THE SEAM IS AN OVERLAP NOW, NOT A SHARED BONE.
+            // T2 moved it from a shared NUMBER (rule 2 made "top of torso" and
+            // "bottom of head" one height) to a shared BONE; on real bones there
+            // is no third form to move to — the chaser's head is a sphere on his
+            // head bone and his chest spans Chest→Neck, and the two OVERLAP
+            // rather than touch. That overlap IS the boundary a round can be
+            // aimed at, and awarding it is exactly what the zone ladder is for.
+            // ⚠ THE PREMISE IS ASSERTED AS GEOMETRY: the aim point must lie
+            // inside BOTH capsules, or there is no boundary here to award.
+            // ⛔ AND THE SHOT IS LEVEL: the head sits INSIDE the chest capsule,
+            // so both volumes must be candidates on ONE tick-step — a climbing
+            // shot enters the chest 0.58 m earlier and the step can end between
+            // them, which reads Body on entirely correct code.
             SimConfig cfg = TestConfigs.Open();
             TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
-            HitPart torso = cfg.Chaser.Parts[1];
-            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
+            var body = new float2(6f, 0f);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
 
-            float seam = cfg.Chaser.Poses.Bones[head.BoneA].y;
-            // Premise AS A PROPERTY: the bone really is shared, or there is no
-            // boundary here to award to anybody.
-            Assert.AreEqual(seam, cfg.Chaser.Poses.Bones[torso.BoneB].y, 1e-6f,
-                "премисса фикстуры: у головы и корпуса обязана быть общая кость");
+            float3 headBone = cfg.Chaser.Poses.Bones[head.BoneA];
+            float seam = headBone.y;
+            Assert.Less(DistanceToSegmentInBodyFrame(in cfg.Chaser.Poses, in head, headBone),
+                head.Radius, "премисса: точка прицела внутри капсулы ГОЛОВЫ");
+            // ⛔ WHICH torso volume overlaps is asked of the GEOMETRY, not of
+            // `TryFindByZone`: that one answers "a volume of this zone" by the
+            // resolver's own ranking, and a body has SEVERAL torso volumes now
+            // (this chaser has six — torso, chest and four arm segments). The
+            // boundary is with whichever of them reaches the head, and on him
+            // that is the CHEST rather than the first in the array.
+            bool overlapped = false;
+            foreach (HitPart candidate in cfg.Chaser.Parts)
+            {
+                if (candidate.Zone != HitZone.Body) continue;
+                if (DistanceToSegmentInBodyFrame(in cfg.Chaser.Poses, in candidate, headBone)
+                    >= candidate.Radius) continue;
+                overlapped = true; break;
+            }
+            Assert.IsTrue(overlapped,
+                "премисса: та же точка внутри капсулы КОРПУСА — иначе границы нет");
+
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: seam,
-                targetXY: new float2(6f, 0f), targetH: seam);   // EXACTLY the shared bone
+                targetXY: body, targetH: seam);
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e));
-            // ⛔⛔ THE CLAIM SURVIVED THE MODEL; THE ROUTE TO IT DID NOT. Under
-            // bands the seam went to the upper part by a strict comparison — the
-            // torso's own `lo < part.RestTop` excluded it at exactly this height.
-            // Under capsules nothing is excluded: the torso is 0.50 m wide
-            // against the head's 0.17, so the round enters its flank 0.33 m
-            // earlier along the flight (x >= 5.38 against x >= 5.71, recomputed).
-            // Both entries fall in ONE tick-step of 1.17 m, the ladder arbitrates
-            // between them, and the head wins — the same verdict, reached by a
-            // rule instead of by a comparison.
-            // ⛔ WHICH IS WHY THE BODY IS FROZEN ABOVE: 0.33 m is a quarter of a
-            // step, and a chaser walking 0.173 m per tick would decide this
-            // fixture by WHERE THE TICK BOUNDARY FELL rather than by geometry.
-            // MEASURED, not argued: unfrozen it answers Body, frozen it answers
-            // Head.
             Assert.AreEqual(HitZone.Head, e.Zone, "граница отдана НИЖНЕЙ части");
-            // ⚠ AND THE HEAD IS GENUINELY REACHABLE AT THIS HEIGHT — asked of the
-            // resolver directly, on a step that spans both windows. Without this
-            // half the fixture would pass on a body whose head is simply missing.
-            float3 origin = new float3(6f, 0f, 0f);
-            bool onOneStep = HitVolumes.Resolve(cfg.Chaser.Parts, in cfg.Chaser.Poses, 0,
-                float2.zero, origin, 0f, 1f,
-                new float3(5.0f, 0f, seam), new float3(6.2f, 0f, seam),
-                cfg.Weapon.ProjectileRadius,
-                out HitZone oneStepZone, out _, out _, out _, out _);
-            Assert.IsTrue(onOneStep, "премисса: на общем шаге тело обязано быть задето");
-            Assert.AreEqual(HitZone.Head, oneStepZone,
-                "на ОДНОМ шаге лестница обязана отдать общую кость голове");
+        }
+
+        /// How far a point in the BODY frame sits from a volume's own segment,
+        /// in that same frame. ⚠ Body frame throughout: no `ToWorld` here, and
+        /// that is the point — a premise about the LAYOUT must not depend on
+        /// where the body was spawned.
+        static float DistanceToSegmentInBodyFrame(in PoseTable table, in HitPart part, float3 p)
+        {
+            float3 a = table.Bones[part.BoneA], b = table.Bones[part.BoneB];
+            return math.distance(p, Geometry.ClosestPointOnSegment(p, a, b, out _));
         }
 
         [Test]
@@ -447,7 +506,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             cfg.Gunner.MaxSpeed = 0f; cfg.Gunner.Accel = 0f;   // Ruling 70, see above
             var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
             const float shooterX = 0f, targetX = 9f, muzzleH = 1f;
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(targetX, 0f)));
@@ -493,7 +552,7 @@ namespace Ring.Simulation.Tests
             // as "zone Head".
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(9f, 0f)));
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle; w.SetMobForTest(0, m);
 
@@ -535,7 +594,20 @@ namespace Ring.Simulation.Tests
             // said where ONLY the knee is, and PartMidWorld is what says it.
             SimConfig cfg = TestConfigs.Open();
             var w = new SimulationWorld(7, cfg);
-            HitPart legs = cfg.Chaser.Parts[0];
+            // ⛔⛔ app-saqr (T4b): WHICH LEG IS A QUESTION ABOUT THE BODY NOW.
+            // `Parts[0]` was a leg while parts were a column sorted bottom-to-
+            // top; on real bones it is the torso. And "any leg" is not enough
+            // either: the fixture chaser used to carry a foot swung 0.9 m out of
+            // his circle BY HAND, so every leg point was clear of the torso,
+            // while his measured rest pose keeps his legs under him — his thigh
+            // sits 0.40 m off the axis against a torso capsule of 0.29 plus the
+            // round's 0.12. The point that IS nobody else's sits BELOW the
+            // torso, on a shin, and `TestConfigs.TryFindCleanVolume` is the one
+            // home of that search.
+            Assert.IsTrue(TestConfigs.TryFindCleanVolume(cfg.Chaser.Parts, in cfg.Chaser.Poses,
+                    HitZone.Legs, cfg.Weapon.ProjectileRadius, out HitPart legs),
+                "премисса фикстуры: у чейзера есть объём ноги, середина которого не накрыта " +
+                "ни одним объёмом другой зоны — иначе лестница зон отдаст удар корпусу");
             var body = new float2(6f, 0f);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle; w.SetMobForTest(0, m);
@@ -549,7 +621,7 @@ namespace Ring.Simulation.Tests
             // torso's RestBottom — that is a height, and a capsule is refused by
             // DISTANCE: this point sits 0.44 m below the pelvis and 0.45 m aside,
             // i.e. 0.63 m away from the torso segment against its 0.50 m radius.
-            HitPart torsoPart = cfg.Chaser.Parts[1];
+            HitPart torsoPart = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
             float3 tA = new float3(body.x, body.y, 0f)
                 + Chaser3D(in cfg.Chaser.Poses, torsoPart.BoneA);
             float3 tB = new float3(body.x, body.y, 0f)
@@ -616,26 +688,39 @@ namespace Ring.Simulation.Tests
         [Test]
         public void TiltedMob_KeepsItsUprightParts()
         {
-            // Spec test 50 (Р375): the parts do NOT rotate with the tilt --
-            // otherwise a toppled mob would be invulnerable to flat fire and
-            // its hit volume would change every tick. The witness: the same
-            // geometry connects with an upright body and with a tilted one.
+            // ⛔⛔ app-saqr (T4b): THE CLAIM IS ASKED AS A COMPARISON NOW, and
+            // that is what it always meant. "The parts do not follow the tilt"
+            // is a statement about TWO worlds — one upright, one leaning — and
+            // pinning a zone LITERAL made it a statement about which volume
+            // happens to win, which is a different question the layout can move
+            // for honest reasons. On real bones it did: the chaser's head is a
+            // 0.25 m sphere sitting INSIDE his 0.83 m chest capsule, so which of
+            // the two answers depends on where a 1.17 m tick-step falls, not on
+            // the tilt. The same shot into the same body, tilted and not, must
+            // still resolve the same way — and a resolver that leaned the
+            // volumes would fail that however the ladder broke the tie.
             SimConfig cfg = TestConfigs.Open();
-            var w = new SimulationWorld(7, cfg);
-            HitPart head = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
-            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
-            var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle;
-            m.Tilt = cfg.Chaser.TiltFallAngle * 0.9f;   // almost flat on the ground
-            w.SetMobForTest(0, m);
 
-            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,
-                targetXY: new float2(6f, 0f), targetH: headMid);
-            TestWorlds.RunUntilProjectilesDie(w);
+            HitZone Shoot(float tilt)
+            {
+                var w = new SimulationWorld(7, cfg);
+                TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
+                var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+                m.Tilt = tilt;
+                w.SetMobForTest(0, m);
+                TestWorlds.FireAimed3D(w, float2.zero, muzzleH: headMid,
+                    targetXY: new float2(6f, 0f), targetH: headMid);
+                TestWorlds.RunUntilProjectilesDie(w);
+                Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
+                    "накренённое тело перестало попадаться — части поехали за креном");
+                return hit.Zone;
+            }
 
-            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
-                "накренённое тело перестало попадаться — части поехали за креном");
-            Assert.AreEqual(HitZone.Head, e.Zone, "зона поехала вслед за креном");
+            HitZone upright = Shoot(0f);
+            HitZone leaning = Shoot(cfg.Chaser.TiltFallAngle * 0.9f);   // almost flat
+            Assert.AreEqual(upright, leaning, "зона поехала вслед за креном");
         }
 
         [Test]
@@ -665,63 +750,61 @@ namespace Ring.Simulation.Tests
             // play, the two multipliers differ, the legs circle is entered
             // inside the legs' own band and the torso circle is entered
             // BELOW the torso's band -- the exact window the defect lives in.
+            // ⛔⛔ app-saqr (T4b): THE BODY IS THE CHASER NOW, AND A MEASUREMENT
+            // forced the move. The fixture needs a lane where the LEGS and the
+            // TORSO are both reachable and the HEAD is not — that is the whole
+            // of "a dispute between legs and torso". The Director cannot offer
+            // one any more: his `HitZone.Head` is his SHELL (spec §3.2, finding
+            // D-I8 — the zone carries his 1.7 multiplier and his exploding
+            // death), a 2.76 m sphere that covers every lane his legs are in.
+            // The chaser keeps the shape the fixture is about: at 1.0 m his
+            // torso (0.52-1.65) and his thighs (0.44-1.34) both answer while
+            // his head (1.71-2.22) is out of reach entirely.
             SimConfig cfg = TestConfigs.Open();
-            cfg.Director.MaxSpeed = 0f; cfg.Director.Accel = 0f;   // frozen, probed below
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(7, cfg);
-            HitPart legs = cfg.Director.Parts[0];
-            HitPart torso = cfg.Director.Parts[1];
-            HitPart head = cfg.Director.Parts[cfg.Director.Parts.Length - 1];
-            var shooter = float2.zero;
-            var body = new float2(6.125f, 1f);
-            // The aim runs straight down +X, so the body's own y IS the
-            // lateral miss; the climb is 0.2 m per flat meter (FireAimed3D's
-            // contract: height is linear in flat distance).
-            var aim = new float2(10f, 0f);
-            const float muzzleH = 0.5f;
-            const float targetH = 2.5f;
-            TestWorlds.SpawnMobsAt(w, (MobType.Director, body));
+            HitPart torso = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
+            var body = new float2(6f, 0f);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
 
+            // The aim point: the middle of the TORSO's own segment, which the
+            // legs reach too. Asked of the geometry, not of a literal height.
+            TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in torso, body,
+                out float2 torsoPlan, out float torsoH);
+            Assert.Less(torsoH, head.RestBottom,
+                "премисса: высота прицела ниже головы — иначе свидетель перестал быть спором "
+                + "ног и корпуса");
+
+            // ⛔ THE LEG HAS TO OVERLAP THE AIM, AND THAT IS THE OPPOSITE OF A
+            // "clean" leg: this fixture is ABOUT the dispute, so it needs the
+            // leg volume that shares this height with the torso — the thigh,
+            // not the shin `TryFindCleanVolume` would hand back.
+            HitPart legs = default;
+            bool legFound = false;
+            foreach (HitPart candidate in cfg.Chaser.Parts)
+            {
+                if (candidate.Zone != HitZone.Legs) continue;
+                if (torsoH <= candidate.RestBottom || torsoH >= candidate.RestTop) continue;
+                legs = candidate; legFound = true; break;
+            }
+            Assert.IsTrue(legFound,
+                "премисса: на высоте прицела есть объём ноги — иначе Legs недостижим и спора нет");
             Assert.AreNotEqual(legs.DamageMult, torso.DamageMult,
                 "множители ног и корпуса совпадают — подмена зоны не видна ни событием, ни уроном");
-            float2 ray = math.normalize(aim - shooter);
-            float lateral = math.abs(ray.x * (body.y - shooter.y) - ray.y * (body.x - shooter.x));
-            float projR = cfg.Weapon.ProjectileRadius;
-            Assert.Less(lateral, legs.Radius + projR,
-                "луч не пересекает круг НОГ — Legs недостижим, и свидетель слеп");
-            Assert.Greater(lateral, head.Radius + projR,
-                "луч задевает круг головы — свидетель перестал быть спором ног и корпуса");
-            // Entry points along the ray and the heights the round holds
-            // there -- the window premises, asserted as geometry.
-            float sAxis = math.dot(body - shooter, ray);
-            float slope = (targetH - muzzleH) / math.length(aim - shooter);
-            float legsPad = legs.Radius + projR;
-            float torsoPad = torso.Radius + projR;
-            float sLegsIn = sAxis - math.sqrt(legsPad * legsPad - lateral * lateral);
-            float hLegsIn = muzzleH + slope * sLegsIn;
-            float sTorsoIn = sAxis - math.sqrt(torsoPad * torsoPad - lateral * lateral);
-            float hTorsoIn = muzzleH + slope * sTorsoIn;
-            // ⛔⛔ THE BAND PREMISES ARE GONE WITH THE BANDS (app-94sk T2), and
-            // so is the defect they framed. "Enters the circle below its band"
-            // described a body made of a CIRCLE and a BAND checked separately;
-            // a capsule is ONE shape, and SegmentCapsule returns the first entry
-            // into that shape, so awarding "the earliest circle entry" is not a
-            // mistake an implementation can make any more.
-            // ⇒ WHAT THIS FIXTURE WITNESSES NOW IS THE ANSWER THAT REPLACED IT:
-            // a round reaching both volumes is judged by the ZONE LADDER, and
-            // the torso outranks the legs — which is the opposite verdict, and
-            // deliberately so (the same ladder fixture 11 pins by calling the
-            // resolver directly; this is its world-side twin).
-            Assert.Greater(hTorsoIn, 0f, "премисса фикстуры: подъём луча обязан быть восходящим");
 
-            // The freeze is probed, not narrated: three idle ticks would move
-            // a live body, a frozen one must not. (After the blow the impact
-            // shove is free to move him -- the premise only has to hold until
-            // the round arrives.)
             TestWorlds.IdleTicks(w, 3);
             Assert.AreEqual(0f, math.distance(w.Mobs[0].Pos, body), 1e-6f,
                 "цель не заморожена — оба входа в круги уехали бы вместе с ней");
 
-            TestWorlds.FireAimed3D(w, shooter, muzzleH: muzzleH, targetXY: aim, targetH: targetH);
+            // ⛔ THE SHOT CLIMBS, and the tail of this fixture is why: it pins
+            // that the contact height lies ON THE ROUND'S OWN CLIMB and is NOT
+            // the middle of the part it struck. A level shot would satisfy the
+            // first by construction and fail the second, proving neither.
+            const float muzzleH = 0.5f;
+            float targetH = torsoH;
+            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: muzzleH,
+                targetXY: torsoPlan, targetH: targetH);
             TestWorlds.RunUntilProjectilesDie(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
@@ -736,7 +819,7 @@ namespace Ring.Simulation.Tests
             // CLIMB and is not the middle of the part it struck.
             Assert.That(e.Height, Is.InRange(muzzleH, targetH),
                 "высота контакта вне подъёма снаряда — взята не с шага");
-            TestConfigs.PartMidWorld(in cfg.Director.Poses, in torso, body, out _, out float torsoMid);
+            TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in torso, body, out _, out float torsoMid);
             Assert.Greater(math.abs(e.Height - torsoMid), 1e-3f,
                 "высота контакта равна середине части — контакт взят у объёма, а не у шага");
             Assert.AreEqual(cfg.Weapon.Damage * torso.DamageMult, e.Amount, 1e-3f,
@@ -912,6 +995,195 @@ namespace Ring.Simulation.Tests
             var ex2 = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h2, w2, c2, g2, wv2, a2, vis2));
             Assert.That(ex2.Message, Does.Contain("Hero.SlideMuzzleHeight"));
+        }
+
+        // ================= app-saqr (plan T4b): THE LAYOUT ITSELF ============
+
+        [Test]
+        public void EveryBodyCarriesTheLayoutItsSpecPromises()   // test 44, M401
+        {
+            // ⛔ THE COUNT IS THE ONE THING PINNED BY A LITERAL, and it is a
+            // CHARACTERIZATION PIN of exactly the kind
+            // `SimConfig_CarriesExactlyTwelveFields` is: it does not prove the
+            // layout right, it makes whoever changes it come here and decide.
+            // The numbers are spec §3.2's, and they are a consequence of the
+            // measured rigs rather than a wish — COMBAT-001 §2.2 derives each
+            // one from the bones that body actually has.
+            SimConfig cfg = TestConfigs.Default();
+            Assert.AreEqual(11, cfg.Hero.Parts.Length,
+                "collector: pelvis, chest, head, upper and lower arm x2, thigh and shin x2");
+            Assert.AreEqual(13, cfg.Chaser.Parts.Length,
+                "chaser: torso, chest, head, upper and lower arm x2, leg of 3 segments x2");
+            Assert.AreEqual(9, cfg.Gunner.Parts.Length,
+                "gunner: torso, chest, head, leg of 3 segments x2 — he has no arms at all");
+            Assert.AreEqual(13, cfg.Elite.Parts.Length,
+                "elite: body, 2 guns, leg of 4 segments plus a foot x2");
+            Assert.AreEqual(15, cfg.Director.Parts.Length,
+                "director: body, 2 guns, leg of 3 segments x4");
+        }
+
+        [Test]
+        public void TheLegsLeaveAGapAShotCanPassThrough()   // test 45, M402
+        {
+            // ⭐⭐ THIS IS MILESTONE ITEM 1, CHECKED BY MACHINE RATHER THAN BY
+            // EYE: "the round passes BETWEEN THE LEGS". A body whose legs are
+            // one capsule on its own axis cannot honour it, and nothing else in
+            // the suite would notice — every other fixture shoots AT a volume.
+            //
+            // ⛔ THE GAP IS MEASURED BETWEEN LEGS, NOT BETWEEN SEGMENTS: the
+            // segments of ONE leg share bones and touch by construction, so a
+            // naive pairwise minimum would be negative on correct data. Which
+            // segments form one leg is read off the bones they share
+            // (`LegsApart` below), never off names — the table carries none.
+            //
+            // ⛔⛔ AND IT IS THE WIDEST GAP BETWEEN TWO LEGS, NOT THE NARROWEST,
+            // WHICH IS A CORRECTION THE MEASUREMENT FORCED. Legs MEET at the
+            // body — the Director's front and rear hips sit 0.91 m apart and
+            // his thighs are 0.74 m thick, so up there the "gap" is −0.57 m on
+            // a perfectly correct layout, and it is anatomy rather than a
+            // defect. What milestone item 1 claims is that a path BETWEEN the
+            // legs exists, not that one exists at every height. ⚠ The mutation
+            // is still caught: legs collapsed onto one axis (M402) have no gap
+            // anywhere, so the widest is negative too.
+            SimConfig cfg = TestConfigs.Default();
+            foreach (var body in new[]
+                     {
+                         ("Chaser", cfg.Chaser.Parts, cfg.Chaser.Poses),
+                         ("Gunner", cfg.Gunner.Parts, cfg.Gunner.Poses),
+                         ("Director", cfg.Director.Parts, cfg.Director.Poses),
+                     })
+            {
+                HitPart[] legs = System.Array.FindAll(body.Item2, x => x.Zone == HitZone.Legs);
+                Assert.GreaterOrEqual(legs.Length, 2, $"{body.Item1}: premise — more than one leg");
+                float gap = LegsApart(legs, body.Item3, row: 0);
+                Assert.Greater(gap, 0f,
+                    $"{body.Item1}: its legs close up — «the round passes between the legs» "
+                    + "is unreachable on this layout");
+            }
+        }
+
+        [Test]
+        public void TheGunnerHasNoArmVolumes()   // test 46, GUARD (lesson 427), M403
+        {
+            // ⛔ A GUARD, NOT A WITNESS, and it is named as one: it is green on
+            // the three-band layout this task replaces, because a three-band
+            // body has no arms either. Its witness is mutation M403 ("arms
+            // handed to the gunner too").
+            //
+            // ⛔⛔ THE PROPERTY IS GEOMETRIC, NOT A `PartId` RANGE. A range
+            // cannot express this at all: ids are LOCAL to an archetype, and
+            // the gunner's 3..8 are his LEGS — so any range covering the
+            // collector's arms would call the gunner's legs arms and this
+            // fixture would be red on correct code (review finding A-C2/D-C5).
+            // What actually distinguishes a body without arms is where its
+            // torso volumes sit: an arm IS a torso-zone volume swung out as far
+            // as a leg. So: every Body-zone volume of the gunner stays closer
+            // to his own axis than ANY of his legs.
+            //
+            // ⚠ THE PREMISE MAKES IT NON-TAUTOLOGICAL: the chaser, who HAS
+            // arms, violates the very same property — checked here, or a
+            // property true of every body would witness nothing (lesson 428).
+            SimConfig cfg = TestConfigs.Default();
+            Assert.Less(WidestTorsoReach(cfg.Gunner.Parts, cfg.Gunner.Poses),
+                NearestLegReach(cfg.Gunner.Parts, cfg.Gunner.Poses),
+                "the gunner was given arms — a torso volume of his reaches out as far as a leg, "
+                + "and his rig has no arm bones at all (spec §3.2)");
+            Assert.Greater(WidestTorsoReach(cfg.Chaser.Parts, cfg.Chaser.Poses),
+                NearestLegReach(cfg.Chaser.Parts, cfg.Chaser.Poses),
+                "premise: the chaser HAS arms, so the property above must fail on him — "
+                + "otherwise it holds of every body and witnesses nothing");
+        }
+
+        /// The WIDEST gap in the body's PLAN between two DIFFERENT legs, the
+        /// capsule radii taken off — see fixture 45 for why the widest and not
+        /// the narrowest. ⛔ WHICH VOLUMES ARE ONE LEG IS DERIVED,
+        /// NOT DECLARED: two segments belong to the same leg when they share a
+        /// bone, and sharing is transitive — a knee joins thigh to shin, the
+        /// shin joins the foot. That makes the grouping work unchanged for the
+        /// Director's FOUR legs, which is what milestone item 8 measures.
+        /// ⚠ THE PLAN IS `(x, z)`: `.y` is the height in the body frame
+        /// (`HitVolumes.ToWorld`), so a gap measured with it would be the
+        /// distance between a knee and an ankle.
+        static float LegsApart(HitPart[] legs, in PoseTable t, int row)
+        {
+            int stride = t.BoneCount;
+            int rowBase = row * stride;
+
+            // Union-find over the segments, joined by a shared bone.
+            var group = new int[legs.Length];
+            for (int i = 0; i < legs.Length; i++) group[i] = i;
+            for (int i = 0; i < legs.Length; i++)
+                for (int j = 0; j < i; j++)
+                {
+                    if (!SharesABone(in legs[i], in legs[j])) continue;
+                    int gi = Root(group, i), gj = Root(group, j);
+                    if (gi != gj) group[gi] = gj;
+                }
+
+            float gap = float.NegativeInfinity;
+            for (int i = 0; i < legs.Length; i++)
+                for (int j = 0; j < i; j++)
+                {
+                    if (Root(group, i) == Root(group, j)) continue;
+                    float between = SegmentsApart(
+                        Plan(t.Bones[rowBase + legs[i].BoneA]), Plan(t.Bones[rowBase + legs[i].BoneB]),
+                        Plan(t.Bones[rowBase + legs[j].BoneA]), Plan(t.Bones[rowBase + legs[j].BoneB]))
+                        - legs[i].Radius - legs[j].Radius;
+                    if (between > gap) gap = between;
+                }
+            return gap;
+
+            static int Root(int[] g, int i)
+            {
+                while (g[i] != i) i = g[i];
+                return i;
+            }
+        }
+
+        static bool SharesABone(in HitPart a, in HitPart b) =>
+            a.BoneA == b.BoneA || a.BoneA == b.BoneB || a.BoneB == b.BoneA || a.BoneB == b.BoneB;
+
+        static float2 Plan(float3 bone) => new float2(bone.x, bone.z);
+
+        /// The distance between two segments in the plan. ⛔ FOUR POINT-TO-
+        /// SEGMENT ANSWERS, which is the minimum for a pair of segments that do
+        /// not cross — and legs that DO cross are what this measurement exists
+        /// to refuse, so the crossing case reading zero rather than negative
+        /// costs nothing: the caller subtracts two radii from it and a crossed
+        /// pair is refused either way.
+        /// ⚠ `Geometry.ClosestPointOnSegment` is the project's own primitive
+        /// for this half, reused rather than re-derived.
+        static float SegmentsApart(float2 a0, float2 a1, float2 b0, float2 b1)
+        {
+            float d = math.min(
+                math.min(PointToSegment(a0, b0, b1), PointToSegment(a1, b0, b1)),
+                math.min(PointToSegment(b0, a0, a1), PointToSegment(b1, a0, a1)));
+            return d;
+
+            static float PointToSegment(float2 p, float2 a, float2 b) =>
+                math.distance(p, Geometry.ClosestPointOnSegment(p, a, b, out _));
+        }
+
+        /// How far from the body's own axis the furthest TORSO-zone volume
+        /// reaches, and how far the NEAREST leg does — the pair fixture 46
+        /// compares. Rest row, because that is the pose a rig is authored in.
+        static float WidestTorsoReach(HitPart[] parts, in PoseTable t) =>
+            ExtremeReach(parts, in t, HitZone.Body, widest: true);
+
+        static float NearestLegReach(HitPart[] parts, in PoseTable t) =>
+            ExtremeReach(parts, in t, HitZone.Legs, widest: false);
+
+        static float ExtremeReach(HitPart[] parts, in PoseTable t, HitZone zone, bool widest)
+        {
+            float best = widest ? 0f : float.PositiveInfinity;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Zone != zone) continue;
+                float reach = math.max(math.length(Plan(t.Bones[parts[i].BoneA])),
+                                       math.length(Plan(t.Bones[parts[i].BoneB])));
+                best = widest ? math.max(best, reach) : math.min(best, reach);
+            }
+            return best;
         }
     }
 }

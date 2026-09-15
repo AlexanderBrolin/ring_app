@@ -2293,11 +2293,13 @@ namespace Ring.Simulation.Tests
             // round ended, so the assertions are the round surviving its own
             // first step and the contact abscissa of the blow.
             //   THAT ABSCISSA IS ABSOLUTE, unlike every distance above: the
-            // event carries a world point, so correct code puts it at
-            // LateMobX - (Chaser.Parts[1].Radius + ProjectileRadius) = 1.68 m
-            // and the mutant at -0.62 m, two and a third meters apart against a
-            // tolerance of 0.03. The part is the body belt because the shot is
-            // level with the collector's own muzzle height (1.0 m, inside
+            // event carries a world point, so correct code puts it on the near
+            // side of the recorded body — measured, 1.3996 m against a stand of
+            // 2.30 m — and the mutant at -0.62 m, two meters apart. ⚠ The band
+            // it is asked against, and why it is a band rather than a number
+            // since T4b, is spelled out at the assertion itself. The volume met
+            // is a torso one because the shot is level with the collector's own
+            // muzzle height (1.0 m, inside
             // [0.88, 2.12)), and for a chaser that belt's radius is the body
             // radius itself, so the part's entry and the gather's entry are the
             // same point.
@@ -2365,9 +2367,25 @@ namespace Ring.Simulation.Tests
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
                 "попадания нет вовсе — раунд не дошёл до моба, и фикстура мерит не свой предмет");
-            Assert.AreEqual(LateMobX - (cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius),
-                hit.Pos.x, 0.03f,
-                "контакт стоит не на входе в круг части записанного моба — раунд ударил " +
+            // ⛔⛔ app-saqr (T4b): THE ENTRY IS A PROPERTY NOW, NOT AN IDENTITY.
+            // "MobTargetX - (part radius + round radius)" was exact while a
+            // volume was a circle on the body's own axis; a capsule's axis is
+            // OFFSET and its cross-section at a given height is smaller than its
+            // radius, so the two numbers part company — measured on the chaser at
+            // muzzle height, the round enters 0.9004 m short of his axis against
+            // the 0.9547 m the old expression predicts, five centimeters outside
+            // a tolerance of three. Re-deriving that cross-section here would be
+            // re-deriving the solver inside its own witness.
+            // ⇒ WHAT THE FIXTURE MEANS IS STATED INSTEAD, and it refuses BOTH
+            // mutants by construction: the contact stands on the NEAR SIDE of the
+            // RECORDED body, between the reach of its widest volume and its own
+            // axis. A phantom at the origin puts it meters short of that band,
+            // and a round resolving one step late puts it a whole step past the
+            // axis — the two failures this assertion has always been about.
+            Assert.That(hit.Pos.x,
+                Is.InRange(LateMobX - (cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius),
+                    LateMobX),
+                "контакт стоит не на ближней стороне записанного моба — раунд ударил " +
                 "фантома в начале координат вместо тела, которое там записано");
             Assert.Less(w.Mobs[0].Hp, hpBefore,
                 "моб, родившийся внутри окна отмотки, не получил урона по строке того тика, " +
@@ -2878,16 +2896,33 @@ namespace Ring.Simulation.Tests
             // step that STARTS inside the target circle answers t = 0, so a
             // round that missed the body on the step it should have struck
             // simply resolves on the NEXT one, and Hp cannot tell the two
-            // apart. The contact abscissa can: the blow belongs at the entry
-            // into the winning PART's circle, MobTargetX - (part radius + round
-            // radius), and a phantom origin pushes it a whole step downrange.
-            // ⚠ The part is the body belt, because the shot is level with the
-            // collector's own muzzle height and that height falls inside it.
+            // apart. The contact abscissa can: the blow belongs on the NEAR
+            // SIDE of the target, and a phantom origin pushes it a whole step
+            // downrange — see the assertion for the band and for why T4b turned
+            // the old exact number into one.
+            // ⚠ The volume met is a torso one, because the shot is level with
+            // the collector's own muzzle height and that height falls inside it.
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
                 "события попадания нет вовсе — фикстура перестала мерить свой предмет");
-            Assert.AreEqual(MobTargetX - (cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius),
-                hit.Pos.x, 0.03f,
-                "контакт стоит не на входе в круг части: пустая история отвечает не текущей " +
+            // ⛔⛔ app-saqr (T4b): THE ENTRY IS A PROPERTY NOW, NOT AN IDENTITY.
+            // "MobTargetX - (part radius + round radius)" was exact while a
+            // volume was a circle on the body's own axis; a capsule's axis is
+            // OFFSET and its cross-section at a given height is smaller than its
+            // radius, so the two numbers part company — measured on the chaser at
+            // muzzle height, the round enters 0.9004 m short of his axis against
+            // the 0.9547 m the old expression predicts, five centimeters outside
+            // a tolerance of three. Re-deriving that cross-section here would be
+            // re-deriving the solver inside its own witness.
+            // ⇒ WHAT THE FIXTURE MEANS IS STATED INSTEAD, and it refuses BOTH
+            // mutants by construction: the contact stands on the NEAR SIDE of the
+            // RECORDED body, between the reach of its widest volume and its own
+            // axis. A phantom at the origin puts it meters short of that band,
+            // and a round resolving one step late puts it a whole step past the
+            // axis — the two failures this assertion has always been about.
+            Assert.That(hit.Pos.x,
+                Is.InRange(MobTargetX - (cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius),
+                    MobTargetX),
+                "контакт стоит не на ближней стороне цели: пустая история отвечает не текущей " +
                 "позицией, и снаряд дошёл до цели на шаг позже, чем должен был");
         }
 
@@ -2960,11 +2995,11 @@ namespace Ring.Simulation.Tests
             // resolves onto mob INDEX 0 -- the phantom IS that mob, read at a
             // poisoned fallback -- so SimulationWorld.DamageMob is called on the
             // real body and its Hp drops under both codes. The CONTACT ABSCISSA
-            // separates them: TickZeroTargetX - (Chaser.Parts[1].Radius +
-            // Weapon.ProjectileRadius) = 0.08 m against the phantom's -0.62 m.
-            // The part is the body belt because the shot is level with the
-            // collector's own muzzle height, 1.0 m, which falls inside
-            // [0.88, 2.12).
+            // separates them: on correct code it stands on the near side of the
+            // LIVE stand, and under the mutant near the origin — see the
+            // assertion itself for the band and for why T4b turned the old
+            // exact number into one. The volume met is a torso one because the
+            // shot is level with the collector's own muzzle height, 1.0 m.
             //
             // ⚠ AND NO TICK RUNS AFTER THE SHOT, which is how "the hit happened
             // on the step that asked tick 0" is asserted rather than declared:
@@ -3045,10 +3080,26 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
                 "попадания нет вовсе — раунд не встретил цель на том самом шаге, который " +
                 "спрашивает нулевой тик, и фикстура мерит не свой предмет");
-            Assert.AreEqual(TickZeroTargetX
-                    - (cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius),
-                hit.Pos.x, 0.03f,
-                "контакт стоит не на входе в круг части у ЖИВОГО стенда цели: за тик без " +
+            // ⛔⛔ app-saqr (T4b): THE ENTRY IS A PROPERTY NOW, NOT AN IDENTITY.
+            // "MobTargetX - (part radius + round radius)" was exact while a
+            // volume was a circle on the body's own axis; a capsule's axis is
+            // OFFSET and its cross-section at a given height is smaller than its
+            // radius, so the two numbers part company — measured on the chaser at
+            // muzzle height, the round enters 0.9004 m short of his axis against
+            // the 0.9547 m the old expression predicts, five centimeters outside
+            // a tolerance of three. Re-deriving that cross-section here would be
+            // re-deriving the solver inside its own witness.
+            // ⇒ WHAT THE FIXTURE MEANS IS STATED INSTEAD, and it refuses BOTH
+            // mutants by construction: the contact stands on the NEAR SIDE of the
+            // RECORDED body, between the reach of its widest volume and its own
+            // axis. A phantom at the origin puts it meters short of that band,
+            // and a round resolving one step late puts it a whole step past the
+            // axis — the two failures this assertion has always been about.
+            Assert.That(hit.Pos.x,
+                Is.InRange(TickZeroTargetX
+                        - (cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius),
+                    TickZeroTargetX),
+                "контакт стоит не на ближней стороне ЖИВОГО стенда цели: за тик без " +
                 "строки отмотка ответила началом координат вместо позиции, которую ей " +
                 "передали");
             Assert.Less(w.Mobs[0].Hp, hpBefore,

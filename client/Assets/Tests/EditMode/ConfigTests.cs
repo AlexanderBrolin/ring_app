@@ -33,6 +33,17 @@ namespace Ring.Simulation.Tests
             // rule 16 reads the crown of the SLIDE clip through
             // ClipFirstRow[SlideClipIndex], and on a one-clip table that index
             // is the row-count sentinel — the read would run past the bones.
+            // ⛔⛔ app-saqr (T4b): A TABLE MUST MATCH THE LAYOUT THAT ADDRESSES
+            // IT, and that is what decides which one goes here — not the slot's
+            // name. While every fixture table was a four-bone column they were
+            // interchangeable; now a table IS a rig (25 / 21 / 15 / 16 / 20
+            // columns) and a `HitPart` names bones BY INDEX. A freshly created
+            // `MobConfig` carries the CHASER's thirteen volumes — that is the
+            // class's own shape — so the gunner slot below gets the CHASER's
+            // table: his indices reach bone 18, which the gunner's own
+            // fifteen-column rig does not have, and validation rule 6 would
+            // refuse it by name. A gunner-shaped gunner is what
+            // `MakeShippedArchetypes` builds, through `SeedMob`.
             hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
             chaser.Poses = FixtureTable(TestConfigs.ChaserRestPose());
             gunner.Poses = FixtureTable(TestConfigs.ChaserRestPose());
@@ -105,6 +116,12 @@ namespace Ring.Simulation.Tests
             // drive rule 12 sets `Poses` to null AFTER this method has run, or
             // names the empty table itself; `Validate_ABodyWithNoPoseTable_
             // Throws` in HitPartsTests is that witness.
+            // ⛔ app-saqr (T4b): THE CHASER'S TABLE IS THE DEFAULT FOR EVERY MOB
+            // SLOT because a section a test built for itself is a fresh
+            // `MobConfig`, i.e. CHASER-SHAPED — see `MakeDefaults`' own note for
+            // why matching the layout matters more than matching the name. The
+            // shipped elite and Director arrive from `MakeShippedArchetypes`
+            // with their own tables already on them, so `??=` leaves those be.
             hero.Poses ??= FixtureTable(TestConfigs.HeroRestAndSlidePose());
             chaser.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
             gunner.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
@@ -2672,14 +2689,21 @@ namespace Ring.Simulation.Tests
 
             AssertMobEqual(expected.Elite, cfg.Elite);
             AssertMobEqual(expected.Director, cfg.Director);
-            // app-94sk T2: the same named exception as in
-            // Build_DefaultAssets_MatchesTestConfigsBaseline — the bootstrap
-            // seeds the placeholder (each archetype's own body radius) and the
-            // fixture computes the wider number from its own pose table.
-            Assert.AreEqual(cfg.Elite.Radius, cfg.Elite.GatherRadius, Eps,
-                "Elite: bootstrap must seed the placeholder GatherRadius until the baker (T4)");
-            Assert.AreEqual(cfg.Director.Radius, cfg.Director.GatherRadius, Eps,
-                "Director: bootstrap must seed the placeholder GatherRadius until the baker (T4)");
+            // ⛔⛔ app-saqr (T4b): THE PLACEHOLDER IS GONE, AND WITH IT THE
+            // EXCEPTION. T2 seeded each archetype's own BODY RADIUS here and
+            // said in as many words that it stood in "until the baker"; the
+            // baker has run and the layout it feeds is on real bones, so the
+            // seed is now rule 9's own number — the reach of THIS body's
+            // volumes over its own table. It is asserted as that rule rather
+            // than as a literal: a seed below it would be refused by
+            // `SimConfigBuilder` anyway, and a seed above it would silently
+            // widen the broad phase.
+            Assert.GreaterOrEqual(cfg.Elite.GatherRadius,
+                TestConfigs.GatherReachOf(in cfg.Elite.Poses, cfg.Elite.Parts),
+                "Elite: сид GatherRadius меньше охвата собственных объёмов (правило 9)");
+            Assert.GreaterOrEqual(cfg.Director.GatherRadius,
+                TestConfigs.GatherReachOf(in cfg.Director.Poses, cfg.Director.Parts),
+                "Director: сид GatherRadius меньше охвата собственных объёмов (правило 9)");
             // ⚠ ONLY THE CHASER'S FIXTURE SKELETON SWINGS A BONE OUT (that is what
             // fixtures 4/4a are for), so for these two the computed number lands
             // exactly ON the body circle. What is asserted is the RULE — the

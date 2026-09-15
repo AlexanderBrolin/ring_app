@@ -200,6 +200,539 @@ namespace Ring.Editor
             }
         }
 
+        /// bd `app-saqr` (plan T4b step 1): ⛔ THE INSTRUMENT COMES BEFORE THE
+        /// NUMBERS. The layout of 11/13/9/13/15 volumes needs two things per
+        /// bone that no committed file carries — WHICH COLUMN of the baked
+        /// table a named bone is, and HOW THICK the mesh is around it — and
+        /// neither may be guessed. Spec §3.2 refused COMBAT-001's own decile
+        /// profile as a source of radii for exactly this reason: the collector
+        /// prefab holds a T-pose, so its 8th and 9th deciles measure ARM SPAN
+        /// (0.95 / 1.19 m) rather than any body part's width, and a layout
+        /// written off them would hang a 1.19 m capsule on a forearm.
+        ///
+        /// ⛔ IT PRINTS AND DOES NOT WRITE. The layout is a decision — which
+        /// bones carry a volume, which zone it is, what its multiplier is — and
+        /// this only hands the decision its measurements. Same shape as
+        /// `SkeletonAudit`, which is the project's convention for a tool whose
+        /// output a human reads.
+        ///
+        /// ⛔⛔ ONE INSTANCE, ONE POSE, ONE FRAME FOR BOTH ANSWERS. Positions
+        /// and radii are taken from THE SAME instantiated prefab, in the SAME
+        /// rest pose, in the SAME `measureOrigin` space the baker writes its
+        /// table in — otherwise a radius measured in the FBX's own frame would
+        /// be off by that prefab's scale override, which on the gunner is 0.76
+        /// and looks entirely plausible (the cost fixture 28 pins).
+        ///
+        /// ⛔ THE INDICES ARE THE BAKED TABLE'S, i.e. AFTER the body filter:
+        /// the table carries body bones only (decision Р-A), so a `BoneA` is a
+        /// column of THAT list, not of the renderer's. The report prints both
+        /// counts so the difference cannot be mistaken for a rig change.
+        [MenuItem("Ring/Audit/Pose Candidates")]
+        public static void PrintCandidates()
+        {
+            var report = new System.Text.StringBuilder();
+            report.AppendLine("=== POSE CANDIDATES (bd app-saqr, plan T4b step 1) ===");
+            report.AppendLine("  index — the bone's COLUMN in the baked table, i.e. a HitPart's "
+                + "BoneA/BoneB");
+            report.AppendLine("  y / plan — its position in the REST pose, in the body's own frame");
+            report.AppendLine("  r — the mesh's half-thickness around it: the furthest vertex this "
+                + "bone owns,");
+            report.AppendLine("      measured from the SEGMENT to its single child where it has "
+                + "one, and from");
+            report.AppendLine("      the bone's own point where it has none or several (a "
+                + "capsule's radius and a");
+            report.AppendLine("      sphere's radius are not the same question)");
+
+            foreach (AnimatorCatalog.BodyEntry body in AnimatorCatalog.Bodies)
+            {
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(body.PrefabPath);
+                if (prefab == null)
+                    throw new System.ArgumentException(
+                        $"{body.Kind}: prefab missing at {body.PrefabPath}");
+
+                ReportCandidates(report, body, prefab);
+            }
+
+            Debug.Log(report.ToString());
+        }
+
+        static void ReportCandidates(System.Text.StringBuilder report,
+            AnimatorCatalog.BodyEntry body, GameObject prefab)
+        {
+            GameObject instance = Object.Instantiate(prefab);
+            try
+            {
+                instance.transform.position = Vector3.zero;
+                instance.transform.rotation = Quaternion.identity;
+
+                List<Transform> allBones = PoseSampling.CollectBones(instance);
+                var bones = new List<Transform>();
+                foreach (Transform b in allBones)
+                    if (PoseSampling.IsBodyBone(b.name)) bones.Add(b);
+
+                Animator animator = instance.GetComponentInChildren<Animator>(true);
+                AnimationClip rest = AnimatorCatalog.IdleClipOf(animator);
+                GameObject sampleTarget = animator != null ? animator.gameObject : instance;
+
+                var row = new float3[bones.Count];
+                List<float3>[] flesh;
+                AnimationMode.StartAnimationMode();
+                try
+                {
+                    PoseSampling.SamplePose(sampleTarget, instance.transform, bones, rest, 0f, row);
+                    flesh = CollectFlesh(instance, bones);
+                }
+                finally
+                {
+                    AnimationMode.StopAnimationMode();
+                }
+
+                report.AppendLine();
+                report.AppendLine($"########## {body.Kind} — {body.PrefabPath}");
+                report.AppendLine($"  skinning bones {allBones.Count}, BODY bones {bones.Count} "
+                    + $"(the table's columns), rest clip {(rest == null ? "none" : rest.name)}");
+
+                int[] parentOf = ParentColumns(bones);
+                int[] childCount = new int[bones.Count];
+                int[] oneChild = new int[bones.Count];
+                for (int i = 0; i < bones.Count; i++) oneChild[i] = -1;
+                for (int i = 0; i < bones.Count; i++)
+                    if (parentOf[i] >= 0) { childCount[parentOf[i]]++; oneChild[parentOf[i]] = i; }
+
+                for (int i = 0; i < bones.Count; i++)
+                {
+                    bool hasAxis = childCount[i] == 1;
+                    float r = hasAxis
+                        ? FurthestFrom(flesh[i], row[i], row[oneChild[i]])
+                        : FurthestFrom(flesh[i], row[i], row[i]);
+                    string parent = parentOf[i] < 0 ? "root" : parentOf[i].ToString();
+                    report.AppendLine(
+                        $"  [{i,2}] {bones[i].name,-22} y={row[i].y,8:F4}  "
+                        + $"plan=({row[i].x,7:F4},{row[i].z,7:F4})  r={r,6:F4} "
+                        + $"{(hasAxis ? "axis" : "point")}  parent={parent,-4} "
+                        + $"children={childCount[i]}  verts={flesh[i].Count}");
+                }
+
+                ReportPairRadii(report, body, bones, row, parentOf, flesh);
+                ReportSlideRow(report, instance, sampleTarget, animator, bones);
+            }
+            finally
+            {
+                Object.DestroyImmediate(instance);
+            }
+        }
+
+        /// Which baked column is each bone's NEAREST BAKED ANCESTOR — the same
+        /// walk `ReadUpperLayerMask` makes for the aim mask, and for the same
+        /// reason: a bone the filter dropped (a finger, an IK target) still has
+        /// children and vertices, and they belong to the body bone above it.
+        static int[] ParentColumns(List<Transform> bones)
+        {
+            var columnOf = new Dictionary<Transform, int>(bones.Count);
+            for (int i = 0; i < bones.Count; i++) columnOf[bones[i]] = i;
+
+            var parentOf = new int[bones.Count];
+            for (int i = 0; i < bones.Count; i++)
+            {
+                Transform walk = bones[i].parent;
+                while (walk != null && !columnOf.ContainsKey(walk)) walk = walk.parent;
+                parentOf[i] = walk == null ? -1 : columnOf[walk];
+            }
+            return parentOf;
+        }
+
+        /// ⛔⛔ THE SECOND HALF OF THE INSTRUMENT, AND THE HALF THE LAYOUT
+        /// ACTUALLY NEEDS: a volume hangs on a PAIR of bones, and a pair's
+        /// radius is not any single bone's. Three of the collector's eleven
+        /// span more than one bone — the pelvis runs `pelvis`→`spine_02` across
+        /// `spine_01`, the chest `spine_02`→`neck_01` across `spine_03`, and
+        /// the head `neck_01`→`Head` — so the per-bone column above would size
+        /// them off one link of a chain and miss the flesh on the rest.
+        ///
+        /// ⛔ WHICH FLESH IS WHOSE IS DECIDED BY THE LAYOUT, NOT BY THE RIG.
+        /// A bone's vertices belong to the volume whose chain contains it, and
+        /// the chain of `(A, B)` is `[A .. B)` — B excluded, because B is the
+        /// next volume's own A and its flesh is that one's. The exception is a
+        /// B NO VOLUME STARTS FROM: a head, a hand, a foot. Nothing downstream
+        /// would ever account for those, so the volume that ends there takes
+        /// them. Bones outside every chain (a toe leaf, a knuckle) fall to
+        /// their nearest charged ancestor by the same walk.
+        ///
+        /// ⚠ THE LAYOUT COMES FROM THE C# DEFAULTS, WHICH IS THE ONE HOME IT
+        /// HAS AT MEASURING TIME: the `.asset` files are written FROM those
+        /// defaults by the bootstrap, so reading them back would measure the
+        /// delivery rather than the decision — and would have to run after it,
+        /// which is one delivery too late to choose a radius.
+        static void ReportPairRadii(System.Text.StringBuilder report,
+            AnimatorCatalog.BodyEntry body, List<Transform> bones, float3[] restRow,
+            int[] parentOf, List<float3>[] flesh)
+        {
+            HitPart[] parts = StageOneSceneBootstrap.PartsDefaultsOf(body.Kind);
+            report.AppendLine($"  --- PAIR RADII, {parts.Length} volumes as the C# defaults lay "
+                + "them out (measured, not chosen):");
+
+            // Who charges which bone (this method's doc).
+            var chargedTo = new int[bones.Count];
+            for (int i = 0; i < bones.Count; i++) chargedTo[i] = -1;
+            for (int p = 0; p < parts.Length; p++)
+            {
+                if (parts[p].BoneA >= bones.Count || parts[p].BoneB >= bones.Count) continue;
+                bool endStartsAnother = false;
+                for (int q = 0; q < parts.Length; q++)
+                    if (q != p && parts[q].BoneA == parts[p].BoneB) endStartsAnother = true;
+
+                int walk = parts[p].BoneB;
+                if (endStartsAnother) walk = parentOf[walk];
+                while (walk >= 0)
+                {
+                    if (chargedTo[walk] < 0) chargedTo[walk] = p;
+                    if (walk == parts[p].BoneA) break;
+                    walk = parentOf[walk];
+                }
+            }
+            for (int i = 0; i < bones.Count; i++)
+            {
+                if (chargedTo[i] >= 0) continue;
+                int walk = parentOf[i];
+                while (walk >= 0 && chargedTo[walk] < 0) walk = parentOf[walk];
+                if (walk >= 0) chargedTo[i] = chargedTo[walk];
+            }
+
+            var perPart = new float[parts.Length];
+            var p95 = new float[parts.Length];
+            var counted = new int[parts.Length];
+            for (int p = 0; p < parts.Length; p++)
+            {
+                if (parts[p].BoneA >= bones.Count || parts[p].BoneB >= bones.Count) continue;
+                var own = new List<float>();
+                float core = 0f;
+                for (int i = 0; i < bones.Count; i++)
+                {
+                    if (chargedTo[i] != p) continue;
+                    foreach (float3 v in flesh[i])
+                    {
+                        own.Add(DistanceToSegment(v, restRow[parts[p].BoneA], restRow[parts[p].BoneB]));
+                        // ⛔ THE CORE EXCLUDES THE END BONE'S OWN FLESH — see
+                        // the recommendation rule below for what that is for.
+                        if (i != parts[p].BoneB)
+                            core = math.max(core, DistanceToSegment(
+                                v, restRow[parts[p].BoneA], restRow[parts[p].BoneB]));
+                    }
+                }
+                counted[p] = own.Count;
+                if (own.Count == 0) continue;
+                own.Sort();
+                perPart[p] = own[own.Count - 1];
+                p95[p] = core;
+            }
+
+            // ⛔ A VOLUME WITH NO FLESH OF ITS OWN TAKES ITS NEIGHBOR'S RADIUS,
+            // and that neighbor is named rather than guessed: the volume that
+            // STARTS where this one ends. The case is real and it is two
+            // bodies' legs — the elite's and the Director's first leg segment
+            // hangs on a `Shoulder` bone that SKINS NOTHING (zero vertices; it
+            // is a rig attachment), so measured strictly it comes out at radius
+            // ZERO, which validation refuses outright (`ReqPositive`).
+            // ⚠ NOT "all the vertices of the end bone" — that was tried and
+            // measured: it gave 1.61 m on the elite, because the thigh's flesh
+            // runs the whole length of the NEXT segment while this one is a
+            // stub. A limb's attachment is as thick as the limb, which is what
+            // the neighbor's radius says.
+            for (int p = 0; p < parts.Length; p++)
+            {
+                if (counted[p] > 0) continue;
+                for (int q = 0; q < parts.Length; q++)
+                {
+                    if (q == p || parts[q].BoneA != parts[p].BoneB || counted[q] <= 0) continue;
+                    perPart[p] = perPart[q];
+                    p95[p] = p95[q];
+                    counted[p] = -counted[q];       // negative = inherited
+                    break;
+                }
+            }
+
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            for (int p = 0; p < parts.Length; p++)
+            {
+                int a = parts[p].BoneA, b = parts[p].BoneB;
+                string names = a < bones.Count && b < bones.Count
+                    ? $"{bones[a].name}→{bones[b].name}"
+                    : "OUT OF RANGE";
+                report.AppendLine(
+                    $"  part {p,2} id {parts[p].PartId,2} {parts[p].Zone,-5} bones ({a,2},{b,2}) "
+                    + $"{names,-34} r MEASURED {perPart[p],6:F4} (core {p95[p],6:F4} -> USE {Recommend(perPart[p], p95[p]),6:F4}) "
+                    + $"vs written {parts[p].Radius,6:F4}  verts={counted[p]}");
+                if (a < bones.Count && b < bones.Count)
+                {
+                    float loY = float.MaxValue, hiY = float.MinValue, hiPlan = 0f;
+                    for (int i = 0; i < bones.Count; i++)
+                    {
+                        if (chargedTo[i] != p) continue;
+                        foreach (float3 v in flesh[i])
+                        {
+                            loY = math.min(loY, v.y);
+                            hiY = math.max(hiY, v.y);
+                            hiPlan = math.max(hiPlan, math.length(new float2(v.x, v.z)));
+                        }
+                    }
+                    if (loY <= hiY)
+                        report.AppendLine($"           flesh y {loY,7:F3}..{hiY,7:F3}, plan reach "
+                            + $"{hiPlan,6:F3}  |  bones y {restRow[a].y,6:F3}/{restRow[b].y,6:F3}, "
+                            + $"plan {math.length(new float2(restRow[a].x, restRow[a].z)),6:F3}"
+                            + $"/{math.length(new float2(restRow[b].x, restRow[b].z)),6:F3}");
+                }
+            }
+
+            // ⛔ THE READY-TO-PASTE FORM, AND IT IS STILL PRINTING RATHER THAN
+            // WRITING: the layout — which bones, which zone, which multiplier —
+            // is decided by hand above and only the two MEASURED numbers and
+            // the two DERIVED ones are filled in here. Their arithmetic is
+            // `min/max(bone) ∓ radius`, the one definition `HitPart`'s doc
+            // carries and validation rule 13 checks, so doing it by hand in a
+            // report and again in the code is two chances to differ by a digit.
+            // ⚠ INVARIANT CULTURE: this machine prints a decimal COMMA, and a
+            // comma inside a `new HitPart { … }` would silently become an
+            // argument separator.
+            report.AppendLine("  --- AS C# (radius measured, extents derived — rule 13):");
+            for (int p = 0; p < parts.Length; p++)
+            {
+                int a = parts[p].BoneA, b = parts[p].BoneB;
+                if (a >= bones.Count || b >= bones.Count) continue;
+                float r = Recommend(perPart[p], p95[p]);
+                float bottom = math.min(restRow[a].y, restRow[b].y) - r;
+                float top = math.max(restRow[a].y, restRow[b].y) + r;
+                report.AppendLine(string.Format(inv,
+                    "            new HitPart {{ BoneA = {0}, BoneB = {1}, Radius = {2:F4}f, "
+                    + "RestBottom = {3:F4}f, RestTop = {4:F4}f,\n"
+                    + "                Zone = HitZone.{5}, DamageMult = {6:F2}f, PartId = {7} }},",
+                    a, b, r, bottom, top, parts[p].Zone, parts[p].DamageMult,
+                    parts[p].PartId));
+            }
+        }
+
+        /// ⛔ THE SLIDE ROW TOO, WHERE THE BODY HAS ONE — the collector, and
+        /// only him. Validation rule 16 judges the SLIDE's crown by the table,
+        /// so a fixture table without a slide row cannot carry a body the rule
+        /// applies to, and a slide row invented by hand would be the one number
+        /// in the fixture nobody measured. Row 0 of clip 1, which is where the
+        /// baker's clip-order contract puts the slide loop.
+        static void ReportSlideRow(System.Text.StringBuilder report, GameObject instance,
+            GameObject sampleTarget, Animator animator, List<Transform> bones)
+        {
+            AnimationClip slide = null;
+            foreach (AnimationClip c in PoseSampling.CollectClips(animator))
+                if (AnimatorCatalog.TakeOf(c.name) == SlideLoopTake) { slide = c; break; }
+            if (slide == null) return;
+
+            var row = new float3[bones.Count];
+            AnimationMode.StartAnimationMode();
+            try
+            {
+                PoseSampling.SamplePose(sampleTarget, instance.transform, bones, slide, 0f, row);
+            }
+            finally
+            {
+                AnimationMode.StopAnimationMode();
+            }
+
+            report.AppendLine($"  --- SLIDE ROW ({slide.name}), the pose rule 16 measures:");
+            for (int i = 0; i < bones.Count; i++)
+                report.AppendLine(
+                    $"  [{i,2}] {bones[i].name,-22} y={row[i].y,8:F4}  "
+                    + $"plan=({row[i].x,7:F4},{row[i].z,7:F4})");
+        }
+
+        /// ⛔⛔ WHICH OF THE TWO MEASUREMENTS BECOMES THE RADIUS, DECIDED BY A
+        /// NUMBER RATHER THAN BY EYE. Containment (`full`) is the honest answer
+        /// — a capsule that holds all of its volume's flesh — and on four of
+        /// the five bodies it is what gets used. It fails on ONE shape: flesh
+        /// that hangs PAST a limb's last bone, which a capsule can only swallow
+        /// by growing sideways. The Director's paw runs 1.6 m beyond his last
+        /// leg bone, and containment sized that segment at 2.64 m: HIS FOUR
+        /// LEGS THEN MERGE (fixture 45 measured the gap at −2.23 m) and
+        /// milestone item 1, "the round passes between the legs", becomes
+        /// unreachable — the thing this whole pass exists for.
+        ///
+        /// ⇒ BOTH ARE PRINTED AND NEITHER IS CHOSEN HERE. ⛔ A RATIO THRESHOLD
+        /// WAS TRIED AND MEASURED AWAY: at "core wins above 3x" the chaser's
+        /// CHEST came out at 3.12 and lost its neck block — a piece of torso
+        /// nothing else would have covered — while the two cases that actually
+        /// need the core sit at 5.0 and 5.6. The band is not empty, so there is
+        /// no cut that separates them, and pretending otherwise would hide a
+        /// judgement inside a constant. The layout carries containment for
+        /// every volume EXCEPT the two it names, and each of those names the
+        /// measurement that forced it (fixture 45's −2.23 m gap on the
+        /// Director, a chaser forearm wider than his own torso).
+        static float Recommend(float full, float core)
+        {
+            _ = core;
+            return full;
+        }
+
+        /// The PERPENDICULAR distance to the segment's infinite axis — the
+        /// LIMB'S THICKNESS rather than the flesh's containment.
+        ///
+        /// ⛔⛔ THE TWO ARE DIFFERENT NUMBERS AND THE DIFFERENCE IS MEASURED:
+        /// where a rig stops a limb short of its own mesh — the Director's paw
+        /// runs 1.6 m past his last leg bone — the containment radius has to
+        /// grow to 2.64 m to swallow the overhang, and at that width HIS FOUR
+        /// LEGS MERGE INTO ONE MASS (fixture 45 measured the gap at −2.23 m).
+        /// A body whose legs have no gap cannot honour milestone item 1, "the
+        /// round passes between the legs", which is the whole reason this pass
+        /// exists. Thickness answers instead what the limb IS as wide as, and
+        /// the capsule's own end caps take the overhang from there.
+        static float DistanceToAxis(float3 p, float3 a, float3 b)
+        {
+            float3 ab = b - a;
+            float len2 = math.lengthsq(ab);
+            if (len2 <= 1e-12f) return math.distance(p, a);   // a point has no axis
+            float t = math.dot(p - a, ab) / len2;             // ⚠ NOT saturated
+            return math.distance(p, a + t * ab);
+        }
+
+        /// The furthest vertex of a set from a segment — the radius a capsule
+        /// on that segment must have to contain the flesh.
+        static float FurthestFrom(List<float3> points, float3 a, float3 b)
+        {
+            float widest = 0f;
+            for (int i = 0; i < points.Count; i++)
+            {
+                float d = DistanceToSegment(points[i], a, b);
+                if (d > widest) widest = d;
+            }
+            return widest;
+        }
+
+        /// Every skinned vertex, IN THE POSE THE CALLER LEFT THE INSTANCE IN,
+        /// grouped by the baked column that owns it.
+        ///
+        /// ⛔ A VERTEX BELONGS TO ITS HEAVIEST BONE, not to all four it is
+        /// weighted to: a radius is "how far does this bone's own flesh reach",
+        /// and a vertex the bone merely influences by 0.1 is somebody else's
+        /// flesh. Where the heaviest bone was dropped by the body filter the
+        /// vertex is charged to its nearest baked ancestor — a knuckle's
+        /// vertices are the hand's thickness, and nothing else would account
+        /// for them at all.
+        ///
+        /// ⚠ SKINNED HERE RATHER THAN READ OFF THE RENDERER: `BakeMesh` returns
+        /// the deformed mesh but not which bone owns which vertex, so the
+        /// ownership walk would be lost.
+        ///
+        /// ⛔⛔ THE SKINNING IS THE FULL LINEAR BLEND, ALL FOUR INFLUENCES —
+        /// ownership is decided by the heaviest bone, but the POSITION is not.
+        /// The shortcut was tried and measured: deforming each vertex by its
+        /// heaviest bone alone put the Director's shin flesh 2.64 m off its own
+        /// segment, because his legs are folded in the rest pose and a vertex
+        /// weighted half to the knee lands nowhere near either bone when only
+        /// one of them moves it. On a straight limb the two agree; on a bent
+        /// one they do not, and a radius is exactly the quantity that
+        /// disagreement inflates.
+        static List<float3>[] CollectFlesh(GameObject instance, List<Transform> bones)
+        {
+            var flesh = new List<float3>[bones.Count];
+            for (int i = 0; i < bones.Count; i++) flesh[i] = new List<float3>();
+
+            var columnOf = new Dictionary<Transform, int>(bones.Count);
+            for (int i = 0; i < bones.Count; i++) columnOf[bones[i]] = i;
+
+            Transform origin = instance.transform;
+            foreach (SkinnedMeshRenderer smr in
+                     instance.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+            {
+                // ⚠ `isReadable` IS NOT CHECKED, AND THAT IS DELIBERATE: the
+                // shipped FBXs import with it off (`isReadable: 0` in every
+                // `.meta`), and a guard on it would skip every mesh and report
+                // a radius of zero for every bone — silently. Mesh data is
+                // always accessible in the EDITOR, which is the only place this
+                // tool runs; the vertex counts in the report are what says
+                // whether any arrived.
+                Mesh mesh = smr == null ? null : smr.sharedMesh;
+                if (mesh == null || smr.bones == null) continue;
+
+                Vector3[] vertices = mesh.vertices;
+                Matrix4x4[] binds = mesh.bindposes;
+                BoneWeight[] weights = mesh.boneWeights;
+                if (weights.Length != vertices.Length || binds.Length == 0) continue;
+
+                for (int v = 0; v < vertices.Length; v++)
+                {
+                    int owner = HeaviestBone(in weights[v]);
+                    if (owner < 0 || owner >= smr.bones.Length) continue;
+
+                    Transform t = smr.bones[owner];
+                    if (t == null) continue;
+
+                    // ⛔⛔ FLESH THE BODY FILTER DROPPED IS DROPPED HERE TOO,
+                    // NOT CHARGED UPWARDS, and the cost of the other choice was
+                    // MEASURED before this line was written: with a finger's
+                    // vertices charged to the hand above it, the collector's
+                    // forearm came out at RADIUS 0.1436 against 0.1306 and the
+                    // chaser's at 0.59 — twice as wide as his own torso —
+                    // because a spread hand reaches that far from the forearm's
+                    // axis. That is precisely the failure spec §3.2 refuses
+                    // COMBAT-001's decile profile for, arrived at by a
+                    // different road. A bone that carries no hit volume
+                    // contributes no thickness to one.
+                    if (!columnOf.TryGetValue(t, out int column)) continue;
+
+                    Vector3 world = Skin(in weights[v], smr.bones, binds, vertices[v]);
+                    Vector3 local = origin.InverseTransformPoint(world);
+                    flesh[column].Add(new float3(local.x, local.y, local.z));
+                }
+            }
+
+            return flesh;
+        }
+
+        /// One vertex through the standard linear blend: every influence's bone
+        /// matrix times its bind pose, weighted. ⚠ The weights Unity hands back
+        /// are normalized, so they are used as they come.
+        static Vector3 Skin(in BoneWeight w, Transform[] bones, Matrix4x4[] binds, Vector3 v)
+        {
+            Vector3 p = Vector3.zero;
+            p += Influence(w.boneIndex0, w.weight0, bones, binds, v);
+            p += Influence(w.boneIndex1, w.weight1, bones, binds, v);
+            p += Influence(w.boneIndex2, w.weight2, bones, binds, v);
+            p += Influence(w.boneIndex3, w.weight3, bones, binds, v);
+            return p;
+
+            static Vector3 Influence(int index, float weight, Transform[] bones,
+                Matrix4x4[] binds, Vector3 vertex)
+            {
+                if (weight <= 0f || index < 0 || index >= bones.Length || index >= binds.Length)
+                    return Vector3.zero;
+                Transform b = bones[index];
+                if (b == null) return Vector3.zero;
+                return weight * b.localToWorldMatrix.MultiplyPoint3x4(
+                    binds[index].MultiplyPoint3x4(vertex));
+            }
+        }
+
+        static int HeaviestBone(in BoneWeight w)
+        {
+            int bone = w.boneIndex0;
+            float best = w.weight0;
+            if (w.weight1 > best) { best = w.weight1; bone = w.boneIndex1; }
+            if (w.weight2 > best) { best = w.weight2; bone = w.boneIndex2; }
+            if (w.weight3 > best) { bone = w.boneIndex3; }
+            return bone;
+        }
+
+        /// ⚠ CLAMPED TO THE SEGMENT, not to its infinite line: a vertex past a
+        /// bone's end is at the distance of the CAP, which is what a capsule
+        /// actually covers there. ⛔ ITS TWIN `DistanceToAxis` BELOW IS NOT THE
+        /// SAME QUESTION and both are printed, because the two answers part
+        /// company exactly where a rig ends a limb early — see the report's own
+        /// `r` vs `thick` columns.
+        static float DistanceToSegment(float3 p, float3 a, float3 b)
+        {
+            float3 ab = b - a;
+            float len2 = math.lengthsq(ab);
+            if (len2 <= 1e-12f) return math.distance(p, a);
+            float t = math.saturate(math.dot(p - a, ab) / len2);
+            return math.distance(p, a + t * ab);
+        }
+
         /// THE BONE-AXIS REACH of a baked table: the furthest any bone gets
         /// from the body's own vertical axis, over every row EXCEPT the last
         /// clip's — the death take, by the ordering contract above.

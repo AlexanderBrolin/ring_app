@@ -60,7 +60,26 @@ namespace Ring.Simulation.Tests
         /// be asking for a headshot while shooting the chest. Read off the part,
         /// the aim is 2.41 m for a chaser and 3.72 m for a gunner -- inside the
         /// head belts [2.12, 2.70] and [3.24, 4.20] the bodies actually carry.
-        static float HeadBandOf(HitPart[] parts) => MidOf(parts[parts.Length - 1]);
+        /// ⛔ app-saqr (T4b): THE HEAD IS FOUND BY ZONE, NOT BY POSITION.
+        /// `parts[Length-1]` was the head while a body was an ordered column
+        /// bottom-to-top; laid out on real bones the last volume is a limb.
+        static float HeadBandOf(HitPart[] parts)
+        {
+            return MidOf(TestWorlds.VolumeOfZone(parts, HitZone.Head));
+        }
+
+        /// The same question for the LEGS, and it is NOT just "any volume of
+        /// that zone": a fixture that shoots the legs needs a leg point NOBODY
+        /// ELSE owns, or the zone ladder hands the blow to the torso and the
+        /// test reads a defect where there is none. `TestConfigs`' own
+        /// `TryFindCleanVolume` is where that question lives.
+        static HitPart ALegOf(HitPart[] parts, in PoseTable table, float projectileRadius)
+        {
+            Assert.IsTrue(TestConfigs.TryFindCleanVolume(parts, in table, HitZone.Legs,
+                    projectileRadius, out HitPart leg),
+                "премисса: у тела есть объём ноги, середина которого не накрыта другой зоной");
+            return leg;
+        }
 
         /// The middle of ANY part's belt. `HeadBandOf` above is this expression
         /// applied to the crown; app-8dv gave the torso a second call site, and
@@ -79,7 +98,11 @@ namespace Ring.Simulation.Tests
             // expressed RELATIVE to the ceiling, so the crown moving from 1.85
             // to 2.70 moves nothing the test claims.
             float top = HitParts.RestCrown(c.Parts);
-            HitPart torso = c.Parts[c.Parts.Length - 2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — `Parts[Length-2]`
+            // was the torso while a body was an ordered column bottom-to-top;
+            // on real bones that slot is a shin, and "a flat pass at body
+            // height" would be a flat pass at ankle height.
+            HitPart torso = TestWorlds.VolumeOfZone(c.Parts, HitZone.Body, "чейзер");
             float bodyHeight = MidOf(torso);
             // a flat pass at body height
             Assert.IsTrue(HitZones.Overlaps(bodyHeight, bodyHeight, r, top));
@@ -114,7 +137,7 @@ namespace Ring.Simulation.Tests
             // app-88jb T14: the multiplier premise is read off the HEAD PART,
             // the same place the hit itself is now resolved from -- one source
             // for the aim and for the number it is expected to produce.
-            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart gunnerHead = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             // the balance premise this fixture rests on, asserted not assumed
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp);
 
@@ -138,7 +161,7 @@ namespace Ring.Simulation.Tests
         {
             var cfg = Range();
             // app-88jb T14: off the head PART, as GunnerHeadshot_IsOneshot above.
-            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart chaserHead = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headshot = cfg.Weapon.Damage * chaserHead.DamageMult;
             Assert.Less(headshot, cfg.Chaser.MaxHp);                 // one is not enough
             Assert.GreaterOrEqual(2f * headshot, cfg.Chaser.MaxHp);   // two are
@@ -173,7 +196,8 @@ namespace Ring.Simulation.Tests
             // torso capsule's own bottom cap reaches down past that height, so
             // the zone ladder rightly answers Body there. The legs are aimed at
             // where they ARE — the chaser's leg runs out to a foot swung aside.
-            HitPart chaserLegs = cfg.Chaser.Parts[0];
+            HitPart chaserLegs = ALegOf(cfg.Chaser.Parts, in cfg.Chaser.Poses,
+                cfg.Weapon.ProjectileRadius);
             TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in chaserLegs,
                 new float2(TargetX, 0f), out float2 legPlan, out float legH);
             // ⛔ THE SHOT RUNS PARALLEL TO THE BODY AXIS AT THE LEG'S OWN OFFSET.
@@ -234,7 +258,7 @@ namespace Ring.Simulation.Tests
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(TargetX, 0f)));
             // app-88jb T14: aim AND expectation both off the head PART.
-            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart chaserHead = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headBand = HeadBandOf(cfg.Chaser.Parts);
             TestWorlds.FireAimed3D(w, float2.zero, headBand, new float2(TargetX, 0f), headBand);
 
@@ -318,18 +342,18 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(w);
 
             SimEvent damaged = Blow(w, SimEventKind.PlayerDamaged);
-            // ⛔⛔ THE ZONE IS Body NOW, AND THAT IS THE MODEL RATHER THAN A
-            // RELAXED EXPECTATION (app-94sk T2). What this fixture is FOR — that
+            // ⛔⛔ THE ZONE IS Legs AGAIN, AND THE SECOND LOOK T2 ASKED FOR IS
+            // THIS ONE (app-saqr, T4b). T2 recorded the expectation as Body and
+            // said in as many words that it was owed a re-check here, because
+            // the reason it read Body was a PLACEHOLDER: the torso capsule
+            // carried the whole body circle (0.45) on a bone at 0.55, so its
+            // lower cap reached down to 0.10 and swallowed a shot at 0.30.
+            // Measured, his pelvis volume is 0.1559 wide on bones at 0.877 and
+            // 1.138, i.e. it reaches 0.72 and no lower; at 0.30 only a SHIN is
+            // there. What the fixture is FOR is unchanged and still asserted —
             // a sliding collector IS hit below his profile, where a standing one
-            // would have been missed — is asserted and unchanged. WHICH volume
-            // answers moved because a capsule has caps: the torso's runs from the
-            // pelvis bone down by its own radius (0.55 - 0.45 = 0.10), so at 0.30
-            // both volumes are met and the ladder gives it to the torso.
-            // ⚠ The placeholder radii are the reason it reaches so low — the
-            // torso's is still the whole BODY circle — and T4b is the task that
-            // measures the real ones. This expectation is owed a second look
-            // there, and that is said here so it is not taken for settled.
-            Assert.AreEqual(HitZone.Body, damaged.Zone,
+            // would have been missed.
+            Assert.AreEqual(HitZone.Legs, damaged.Zone,
                 "попадание под профилем скольжения не прочитано по объёмам");
             Assert.Less(w.Player.Hp, cfg.Hero.MaxHp);
         }
@@ -347,7 +371,7 @@ namespace Ring.Simulation.Tests
             // about this shot -- HeadshotKills stays 0 because nothing died,
             // and there was no other place for the hit to be recorded.
             var cfg = Range();
-            HitPart chaserHead = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 1];
+            HitPart chaserHead = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             // The balance premise this fixture rests on, asserted as a PROPERTY
             // rather than trusted: one head hit must leave this mob alive, or
             // the test would be measuring a kill and not a hit.
@@ -378,7 +402,7 @@ namespace Ring.Simulation.Tests
             // every implementation and M267 outlives its own witness. The
             // shortest scenario is the gunner, who dies to a single head hit.
             var cfg = Range();
-            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart gunnerHead = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "премисса: хедшот обязан убивать ганнера с одного выстрела");
 
@@ -416,7 +440,10 @@ namespace Ring.Simulation.Tests
             var cfg = Range();
             var w = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(FlightX, 0f)));
-            HitPart chaserTorso = cfg.Chaser.Parts[cfg.Chaser.Parts.Length - 2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — see the note on
+            // `HeadBandOf` above; the index held the torso only while the
+            // volumes were a sorted column.
+            HitPart chaserTorso = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
             float bodyBand = MidOf(chaserTorso);
             // Premise: the mob has to outlive BOTH rounds, or the second one has
             // no target left to land on.

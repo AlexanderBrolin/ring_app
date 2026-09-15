@@ -85,9 +85,146 @@ namespace Ring.Simulation.Tests
             return t;
         }
 
-        /// The chaser's own column, with the foot swung out of his circle.
-        public static PoseTable ChaserRestPose()
-            => ColumnPose(0.88f, 2.12f, 2.70f, footLateral: 0.9f);
+        /// ⛔⛔ app-saqr (T4b): THE FIVE FIXTURE TABLES ARE THE REAL RIGS NOW,
+        /// COLUMN FOR COLUMN. They have to be: a `HitPart` addresses a bone BY
+        /// INDEX, and the layout the game ships names indices of the BAKED
+        /// table (25 / 21 / 15 / 16 / 20 body bones). A fixture table of four
+        /// invented bones could not carry that layout at all — validation rule
+        /// 6 refuses any `BoneA`/`BoneB` past its width — so the alternative
+        /// would be a SECOND layout for tests, which is a second home for the
+        /// one decision this whole task exists to make.
+        ///
+        /// ⛔ THE NUMBERS ARE THE INSTRUMENT'S, NOT INVENTED: every row is a
+        /// rest-pose position printed by `Ring/Audit/Pose Candidates`, rounded
+        /// to four decimals — the same tool, the same instance and the same
+        /// frame the baker writes its `.posetable` in. The extents in
+        /// `HeroConfig.Parts` and friends are derived from THESE rounded rows,
+        /// so validation rule 13 compares numbers that were computed together
+        /// rather than two roundings of one quantity (`RestExtentEps` is 1e-4,
+        /// which a pair of independent roundings can spend entirely).
+        ///
+        /// ⚠ ONE PHASE PER BODY, not the whole baked table: a fixture needs a
+        /// rest pose to check extents against, not 180-574 rows of animation.
+        /// The collector gets a second row — his SLIDE — because validation
+        /// rule 16 measures the slide's crown and addresses it through
+        /// `ClipFirstRow[SlideClipIndex]`.
+        public static PoseTable ChaserRestPose() => Sealed(new PoseTable
+        {
+            BoneCount = 21,
+            ClipFirstRow = new[] { 0, 1 },
+            Bones = new[]
+            {
+                new float3(0.0069f, 1.0776f, 0.3627f),   // 0: Body
+                new float3(-0.0027f, 0.9390f, 0.0796f),   // 1: Torso
+                new float3(-0.0182f, 1.3567f, -0.0774f),   // 2: Chest
+                new float3(-0.0275f, 1.7877f, -0.0851f),   // 3: Neck
+                new float3(-0.0289f, 1.9669f, -0.0333f),   // 4: Head
+                new float3(-0.1749f, 1.8306f, -0.0734f),   // 5: Shoulder.L
+                new float3(-0.3123f, 1.9147f, -0.0704f),   // 6: UpperArm.L
+                new float3(-0.5471f, 1.5142f, -0.0464f),   // 7: LowerArm.L
+                new float3(0.1185f, 1.8366f, -0.0862f),   // 8: Shoulder.R
+                new float3(0.2521f, 1.9264f, -0.0951f),   // 9: UpperArm.R
+                new float3(0.5044f, 1.5360f, -0.0924f),   // 10: LowerArm.R
+                new float3(-0.3954f, 1.0625f, -0.0509f),   // 11: UpperLeg.L
+                new float3(-0.3766f, 0.7120f, 0.4091f),   // 12: MidLeg.L
+                new float3(-0.4071f, 0.4913f, -0.2266f),   // 13: LowerLeg.L
+                new float3(-0.3840f, 0.0381f, 0.3431f),   // 14: FootBack.L
+                new float3(0.3717f, 1.0784f, -0.0845f),   // 15: UpperLeg.R
+                new float3(0.3907f, 0.7398f, 0.3843f),   // 16: MidLeg.R
+                new float3(0.3605f, 0.4791f, -0.2360f),   // 17: LowerLeg.R
+                new float3(0.3840f, 0.0381f, 0.3431f),   // 18: FootBack.R
+                new float3(-0.3840f, 0.0381f, 0.3431f),   // 19: Foot.L
+                new float3(0.3840f, 0.0381f, 0.3431f),   // 20: Foot.R
+            },
+            BlendThresholds = new[] { 0f },
+        });
+        /// One phase of this body's real rig — see `ChaserRestPose` above for
+        /// where the numbers come from and why a fixture carries the real
+        /// columns rather than invented ones.
+        public static PoseTable GunnerRestPose() => Sealed(new PoseTable
+        {
+            BoneCount = 15,
+            ClipFirstRow = new[] { 0, 1 },
+            Bones = new[]
+            {
+                new float3(0.0130f, 2.0474f, 0.6890f),   // 0: Body
+                new float3(-0.0051f, 1.7841f, 0.1513f),   // 1: Torso
+                new float3(-0.0224f, 2.2589f, -0.0205f),   // 2: Chest
+                new float3(-0.0355f, 2.6315f, -0.1428f),   // 3: Neck
+                new float3(-0.0456f, 3.0661f, -0.1669f),   // 4: Head
+                new float3(-0.7512f, 2.0188f, -0.0966f),   // 5: UpperLeg.L
+                new float3(-0.7155f, 1.3528f, 0.7772f),   // 6: MidLeg.L
+                new float3(-0.7734f, 0.9334f, -0.4305f),   // 7: LowerLeg.L
+                new float3(-0.7295f, 0.0724f, 0.6519f),   // 8: FootBack.L
+                new float3(0.7061f, 2.0490f, -0.1605f),   // 9: UpperLeg.R
+                new float3(0.7424f, 1.4057f, 0.7302f),   // 10: MidLeg.R
+                new float3(0.6850f, 0.9103f, -0.4484f),   // 11: LowerLeg.R
+                new float3(0.7295f, 0.0724f, 0.6519f),   // 12: FootBack.R
+                new float3(-0.7295f, 0.0724f, 0.6519f),   // 13: Foot.L
+                new float3(0.7295f, 0.0724f, 0.6519f),   // 14: Foot.R
+            },
+            BlendThresholds = new[] { 0f },
+        });
+        /// One phase of this body's real rig — see `ChaserRestPose` above for
+        /// where the numbers come from and why a fixture carries the real
+        /// columns rather than invented ones.
+        public static PoseTable EliteRestPose() => Sealed(new PoseTable
+        {
+            BoneCount = 16,
+            ClipFirstRow = new[] { 0, 1 },
+            Bones = new[]
+            {
+                new float3(0.0000f, 0.0000f, 0.0000f),   // 0: Root
+                new float3(0.0000f, 2.9268f, -0.5937f),   // 1: Body
+                new float3(-0.5340f, 2.6498f, -0.9726f),   // 2: Shoulder.L
+                new float3(-1.2150f, 2.6264f, -1.0429f),   // 3: Leg1.L
+                new float3(-1.2349f, 2.3496f, 0.0304f),   // 4: Leg2.L
+                new float3(-1.2075f, 1.6151f, -1.0893f),   // 5: Leg3.L
+                new float3(-1.2152f, 0.4740f, -0.3413f),   // 6: Leg4.L
+                new float3(-1.2150f, 0.0255f, -0.2016f),   // 7: Foot.L
+                new float3(-0.4799f, 3.1928f, 0.4558f),   // 8: Gun.L
+                new float3(0.5340f, 2.6498f, -0.9726f),   // 9: Shoulder.R
+                new float3(1.2150f, 2.6264f, -1.0429f),   // 10: Leg1.R
+                new float3(1.2349f, 2.3496f, 0.0304f),   // 11: Leg2.R
+                new float3(1.2075f, 1.6151f, -1.0893f),   // 12: Leg3.R
+                new float3(1.2152f, 0.4740f, -0.3413f),   // 13: Leg4.R
+                new float3(1.2150f, 0.0255f, -0.2016f),   // 14: Foot.R
+                new float3(0.4799f, 3.1928f, 0.4558f),   // 15: Gun.R
+            },
+            BlendThresholds = new[] { 0f },
+        });
+        /// One phase of this body's real rig — see `ChaserRestPose` above for
+        /// where the numbers come from and why a fixture carries the real
+        /// columns rather than invented ones.
+        public static PoseTable DirectorRestPose() => Sealed(new PoseTable
+        {
+            BoneCount = 20,
+            ClipFirstRow = new[] { 0, 1 },
+            Bones = new[]
+            {
+                new float3(0.0000f, 0.0000f, 0.0000f),   // 0: Root
+                new float3(0.0000f, 2.3166f, 0.0000f),   // 1: Body
+                new float3(-0.4543f, 2.0321f, 0.4543f),   // 2: Front_Shoulder.L
+                new float3(-0.8957f, 2.2524f, 0.8957f),   // 3: Front_Leg1.L
+                new float3(-1.6215f, 1.0723f, 1.5558f),   // 4: Front_Leg2.L
+                new float3(-2.3705f, 2.1873f, 2.2070f),   // 5: Front_Leg3.L
+                new float3(-0.4543f, 2.0321f, -0.4543f),   // 6: Back_Shoulder.L
+                new float3(-0.8957f, 2.2524f, -0.8957f),   // 7: Back_Leg1.L
+                new float3(-1.5260f, 1.0762f, -1.6536f),   // 8: Back_Leg2.L
+                new float3(-2.2766f, 2.1900f, -2.3053f),   // 9: Back_Leg3.L
+                new float3(0.4543f, 2.0321f, 0.4543f),   // 10: Front_Shoulder.R
+                new float3(0.8957f, 2.2524f, 0.8957f),   // 11: Front_Leg1.R
+                new float3(1.6215f, 1.0723f, 1.5558f),   // 12: Front_Leg2.R
+                new float3(2.3705f, 2.1873f, 2.2070f),   // 13: Front_Leg3.R
+                new float3(0.4543f, 2.0321f, -0.4543f),   // 14: Back_Shoulder.R
+                new float3(0.8957f, 2.2524f, -0.8957f),   // 15: Back_Leg1.R
+                new float3(1.5260f, 1.0762f, -1.6536f),   // 16: Back_Leg2.R
+                new float3(2.2766f, 2.1900f, -2.3053f),   // 17: Back_Leg3.R
+                new float3(-0.7998f, 3.3816f, 0.4403f),   // 18: Gun.L
+                new float3(0.7998f, 3.3816f, 0.4403f),   // 19: Gun.R
+            },
+            BlendThresholds = new[] { 0f },
+        });
 
         /// Two MIRRORED legs of one zone, +/-0.3 along z: the only shape on which
         /// the PartId tie-break is observable at all (on real bodies the zones
@@ -115,21 +252,73 @@ namespace Ring.Simulation.Tests
         /// collector's SlideMuzzleHeight, and addresses its row through
         /// ClipFirstRow[SlideClipIndex]. A one-row table would send that read
         /// past the array.
-        /// ⚠ The rest row is HIS OWN column (0.55 / 1.35 / 1.75), the same three
-        /// numbers his volumes have been cut at since Task 1 — a table whose
-        /// bones disagreed with its own volumes is exactly what rule 13 refuses.
+        /// ⚠ BOTH ROWS ARE HIS REAL RIG (app-saqr, T4b) — 25 columns off
+        /// `Ring/Audit/Pose Candidates`, the rest row from his idle clip and
+        /// the slide row from the slide loop's first phase. The three invented
+        /// heights this factory used to carry (0.55 / 1.35 / 1.75) went with
+        /// the three bands they cut; see `ChaserRestPose` above for where the
+        /// numbers come from and why a fixture carries the real columns.
+        /// ⭐ AND THE SLIDE ROW IS NOW WORTH READING: his pelvis drops to 0.048
+        /// and his crown with it, which is the whole of what rule 16 asks —
+        /// that the gunner's round passes OVER a sliding collector.
         public static PoseTable HeroRestAndSlidePose() => Sealed(new PoseTable
         {
-            BoneCount = 4,
-            ClipFirstRow = new[] { 0, 1, 2 },        // clip 0 - rest, clip 1 - slide
+            BoneCount = 25,
+            ClipFirstRow = new[] { 0, 1, 2 },
             Bones = new[]
             {
-                new float3(0f, 0f,    0f), new float3(0f, 0.55f, 0f),
-                new float3(0f, 1.35f, 0f), new float3(0f, 1.75f, 0f),   // rest, crown 1.75
-                new float3(0f, 0f,    0f), new float3(0f, 0.22f, 0f),
-                new float3(0f, 0.34f, 0f), new float3(0f, 0.42f, 0f),   // slide, crown 0.42
+                new float3(0.0000f, 0.0000f, 0.0000f),   // 0: root
+                new float3(0.0053f, 0.8772f, 0.0865f),   // 1: pelvis
+                new float3(0.0003f, 1.0136f, 0.0652f),   // 2: spine_01
+                new float3(-0.0006f, 1.1376f, 0.0616f),   // 3: spine_02
+                new float3(-0.0026f, 1.2786f, 0.0533f),   // 4: spine_03
+                new float3(-0.0124f, 1.4463f, 0.0125f),   // 5: neck_01
+                new float3(-0.0178f, 1.5256f, -0.0099f),   // 6: Head
+                new float3(-0.0103f, 1.3953f, -0.0606f),   // 7: clavicle_l
+                new float3(0.1984f, 1.4017f, 0.0127f),   // 8: upperarm_l
+                new float3(0.3014f, 1.1546f, 0.0731f),   // 9: lowerarm_l
+                new float3(0.3489f, 0.8991f, -0.0092f),   // 10: hand_l
+                new float3(-0.0469f, 1.3953f, -0.0519f),   // 11: clavicle_r
+                new float3(-0.1654f, 1.4110f, 0.1343f),   // 12: upperarm_r
+                new float3(-0.2228f, 1.1754f, 0.2629f),   // 13: lowerarm_r
+                new float3(-0.2927f, 0.9225f, 0.1888f),   // 14: hand_r
+                new float3(0.0804f, 0.8973f, 0.0175f),   // 15: thigh_l
+                new float3(0.1360f, 0.5285f, -0.1280f),   // 16: calf_l
+                new float3(0.1952f, 0.1031f, -0.1270f),   // 17: foot_l
+                new float3(0.1804f, 0.0146f, -0.2753f),   // 18: ball_l
+                new float3(0.1726f, 0.0146f, -0.3538f),   // 19: ball_leaf_l
+                new float3(-0.0928f, 0.8973f, 0.0585f),   // 20: thigh_r
+                new float3(-0.1673f, 0.5105f, 0.1296f),   // 21: calf_r
+                new float3(-0.1618f, 0.1037f, 0.2673f),   // 22: foot_r
+                new float3(-0.2646f, 0.0152f, 0.1594f),   // 23: ball_r
+                new float3(-0.3190f, 0.0152f, 0.1022f),   // 24: ball_leaf_r
+                new float3(0.0000f, 0.0000f, 0.0000f),   // 0: root
+                new float3(0.0188f, 0.0483f, -0.0115f),   // 1: pelvis
+                new float3(0.0059f, 0.1177f, 0.1073f),   // 2: spine_01
+                new float3(-0.0059f, 0.1656f, 0.2211f),   // 3: spine_02
+                new float3(0.0183f, 0.2627f, 0.3208f),   // 4: spine_03
+                new float3(0.0893f, 0.4126f, 0.3697f),   // 5: neck_01
+                new float3(0.1062f, 0.4800f, 0.4144f),   // 6: Head
+                new float3(0.1331f, 0.3771f, 0.3007f),   // 7: clavicle_l
+                new float3(0.1673f, 0.2825f, 0.4978f),   // 8: upperarm_l
+                new float3(0.1744f, 0.0184f, 0.5722f),   // 9: lowerarm_l
+                new float3(0.3001f, 0.0090f, 0.3305f),   // 10: hand_l
+                new float3(0.1052f, 0.3958f, 0.2837f),   // 11: clavicle_r
+                new float3(-0.0963f, 0.4548f, 0.3535f),   // 12: upperarm_r
+                new float3(-0.3571f, 0.3969f, 0.2909f),   // 13: lowerarm_r
+                new float3(-0.4536f, 0.4440f, 0.0403f),   // 14: hand_r
+                new float3(0.1059f, 0.1044f, -0.0024f),   // 15: thigh_l
+                new float3(0.3832f, 0.3736f, -0.1068f),   // 16: calf_l
+                new float3(0.1580f, 0.1005f, -0.3501f),   // 17: foot_l
+                new float3(0.2063f, 0.1080f, -0.5163f),   // 18: ball_l
+                new float3(0.2348f, 0.1498f, -0.5769f),   // 19: ball_leaf_l
+                new float3(-0.0712f, 0.0997f, -0.0189f),   // 20: thigh_r
+                new float3(-0.0642f, 0.1510f, -0.4159f),   // 21: calf_r
+                new float3(-0.0547f, 0.0901f, -0.8409f),   // 22: foot_r
+                new float3(-0.0260f, 0.0974f, -1.0117f),   // 23: ball_r
+                new float3(0.0009f, 0.1618f, -1.0484f),   // 24: ball_leaf_r
             },
-            BlendThresholds = new[] { 0f, 1f },
+            BlendThresholds = new[] { 0f, 0.33f, 0.66f, 1f },
         });
 
         // ⛔ `PoseTableOfSection` AND `WithOneMoreRow` ARE NOT WRITTEN HERE,
@@ -157,6 +346,50 @@ namespace Ring.Simulation.Tests
             float3 a = table.Bones[part.BoneA], b = table.Bones[part.BoneB];
             plan = bodyPlan + 0.5f * new float2(a.x + b.x, a.z + b.z);
             height = 0.5f * (a.y + b.y);
+        }
+
+        /// ⛔⛔ app-saqr (T4b): THE VOLUME OF `zone` WHOSE MIDPOINT BELONGS TO
+        /// NOBODY ELSE — "a place where a leg is ONLY a leg". A fixture that
+        /// means "shoot the legs" needs such a place, and on real rigs it stops
+        /// being obvious: the fixture chaser used to carry a foot swung 0.9 m
+        /// out of his circle by hand, so any leg point was clear of the torso,
+        /// while his REAL rest pose keeps his legs under him (plan 0.40 against
+        /// a torso capsule of 0.29 + the round's 0.12 — they overlap). The
+        /// place that IS clear sits BELOW the torso rather than beside it, and
+        /// which volume offers it is a question about the body, not about the
+        /// fixture.
+        ///
+        /// ⚠ IT ASKS THE GEOMETRY, NOT THE ORDER: `Parts[0]` answered this
+        /// while parts were a column sorted bottom-to-top, and that is exactly
+        /// the assumption this task removed.
+        public static bool TryFindCleanVolume(HitPart[] parts, in PoseTable table, HitZone zone,
+            float projectileRadius, out HitPart clean)
+        {
+            clean = default;
+            bool found = false;
+            float bestClearance = 0f;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Zone != zone) continue;
+                PartMidWorld(in table, in parts[i], float2.zero, out float2 plan, out float height);
+                var mid = new float3(plan.x, height, plan.y);   // body frame: y is the height
+
+                // How far this midpoint stays clear of EVERY other-zone volume.
+                float clearance = float.PositiveInfinity;
+                for (int j = 0; j < parts.Length; j++)
+                {
+                    if (parts[j].Zone == zone) continue;
+                    float3 a = table.Bones[parts[j].BoneA], b = table.Bones[parts[j].BoneB];
+                    float3 closest = Geometry.ClosestPointOnSegment(mid, a, b, out _);
+                    clearance = math.min(clearance,
+                        math.distance(mid, closest) - parts[j].Radius - projectileRadius);
+                }
+                if (!found || clearance > bestClearance)
+                {
+                    found = true; bestClearance = clearance; clean = parts[i];
+                }
+            }
+            return found && bestClearance > 0f;
         }
 
         /// Validation rule 9's own question, asked as a FIXTURE number: how wide
@@ -242,12 +475,28 @@ namespace Ring.Simulation.Tests
                     // by the table rather than of a scalar.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = -0.32f, RestTop = 0.87f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.1f, RestTop = 1.8f,
-                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.19f, RestTop = 1.91f,
-                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                        new HitPart { BoneA = 1, BoneB = 3, Radius = 0.1559f, RestBottom = 0.7213f, RestTop = 1.2935f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // pelvis→spine_02
+                        new HitPart { BoneA = 3, BoneB = 5, Radius = 0.2107f, RestBottom = 0.9269f, RestTop = 1.6570f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // spine_02→neck_01
+                        new HitPart { BoneA = 5, BoneB = 6, Radius = 0.2605f, RestBottom = 1.1858f, RestTop = 1.7861f,
+                            Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // neck_01→Head
+                        new HitPart { BoneA = 8, BoneB = 9, Radius = 0.0835f, RestBottom = 1.0711f, RestTop = 1.4852f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 3 },   // upperarm_l→lowerarm_l
+                        new HitPart { BoneA = 9, BoneB = 10, Radius = 0.1284f, RestBottom = 0.7707f, RestTop = 1.2830f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 4 },   // lowerarm_l→hand_l
+                        new HitPart { BoneA = 12, BoneB = 13, Radius = 0.0832f, RestBottom = 1.0922f, RestTop = 1.4942f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 5 },   // upperarm_r→lowerarm_r
+                        new HitPart { BoneA = 13, BoneB = 14, Radius = 0.1284f, RestBottom = 0.7941f, RestTop = 1.3038f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 6 },   // lowerarm_r→hand_r
+                        new HitPart { BoneA = 15, BoneB = 16, Radius = 0.1022f, RestBottom = 0.4263f, RestTop = 0.9995f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // thigh_l→calf_l
+                        new HitPart { BoneA = 16, BoneB = 17, Radius = 0.2604f, RestBottom = -0.1573f, RestTop = 0.7889f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // calf_l→foot_l
+                        new HitPart { BoneA = 20, BoneB = 21, Radius = 0.1017f, RestBottom = 0.4088f, RestTop = 0.9990f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // thigh_r→calf_r
+                        new HitPart { BoneA = 21, BoneB = 22, Radius = 0.2604f, RestBottom = -0.1567f, RestTop = 0.7709f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // calf_r→foot_r
                     },
                     Poses = HeroRestAndSlidePose() },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
@@ -371,12 +620,32 @@ namespace Ring.Simulation.Tests
                     // used to be did not.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.23f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.38f, RestTop = 2.62f,
-                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 1.95f, RestTop = 2.87f,
-                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.2902f, RestBottom = 0.6488f, RestTop = 1.6469f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // Torso→Chest
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.8347f, RestBottom = 0.5220f, RestTop = 2.6224f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Chest→Neck
+                        new HitPart { BoneA = 4, BoneB = 4, Radius = 0.2545f, RestBottom = 1.7124f, RestTop = 2.2214f,
+                            Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // Head→Head
+                        new HitPart { BoneA = 5, BoneB = 6, Radius = 0.1271f, RestBottom = 1.7035f, RestTop = 2.0418f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 3 },   // Shoulder.L→UpperArm.L
+                        new HitPart { BoneA = 6, BoneB = 7, Radius = 0.0998f, RestBottom = 1.4144f, RestTop = 2.0145f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 4 },   // UpperArm.L→LowerArm.L  ⛔ claw uncovered: containment 0.5587 would make his forearm wider than his torso
+                        new HitPart { BoneA = 8, BoneB = 9, Radius = 0.1271f, RestBottom = 1.7095f, RestTop = 2.0535f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 5 },   // Shoulder.R→UpperArm.R
+                        new HitPart { BoneA = 9, BoneB = 10, Radius = 0.0998f, RestBottom = 1.4362f, RestTop = 2.0262f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 6 },   // UpperArm.R→LowerArm.R  ⛔ same, right side
+                        new HitPart { BoneA = 11, BoneB = 12, Radius = 0.2757f, RestBottom = 0.4363f, RestTop = 1.3382f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // UpperLeg.L→MidLeg.L
+                        new HitPart { BoneA = 12, BoneB = 13, Radius = 0.1265f, RestBottom = 0.3648f, RestTop = 0.8385f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // MidLeg.L→LowerLeg.L
+                        new HitPart { BoneA = 13, BoneB = 14, Radius = 0.2019f, RestBottom = -0.1638f, RestTop = 0.6932f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // LowerLeg.L→FootBack.L
+                        new HitPart { BoneA = 15, BoneB = 16, Radius = 0.2757f, RestBottom = 0.4641f, RestTop = 1.3541f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // UpperLeg.R→MidLeg.R
+                        new HitPart { BoneA = 16, BoneB = 17, Radius = 0.1265f, RestBottom = 0.3526f, RestTop = 0.8663f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // MidLeg.R→LowerLeg.R
+                        new HitPart { BoneA = 17, BoneB = 18, Radius = 0.2019f, RestBottom = -0.1638f, RestTop = 0.6810f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // LowerLeg.R→FootBack.R
                     },
                     // app-94sk T2 (rule 10): he strikes, so he names the volume he
                     // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
@@ -431,17 +700,29 @@ namespace Ring.Simulation.Tests
                     // truth (same note as the tower above).
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.67f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.82f, RestTop = 3.74f,
-                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.07f, RestTop = 4.37f,
-                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.5315f, RestBottom = 1.2526f, RestTop = 2.7904f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // Torso→Chest
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.7783f, RestBottom = 1.4806f, RestTop = 3.4098f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Chest→Neck
+                        new HitPart { BoneA = 4, BoneB = 4, Radius = 1.1910f, RestBottom = 1.8751f, RestTop = 4.2571f,
+                            Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // Head→Head
+                        new HitPart { BoneA = 5, BoneB = 6, Radius = 0.5095f, RestBottom = 0.8433f, RestTop = 2.5283f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // UpperLeg.L→MidLeg.L
+                        new HitPart { BoneA = 6, BoneB = 7, Radius = 0.2453f, RestBottom = 0.6881f, RestTop = 1.5981f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // MidLeg.L→LowerLeg.L
+                        new HitPart { BoneA = 7, BoneB = 8, Radius = 0.3928f, RestBottom = -0.3204f, RestTop = 1.3262f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // LowerLeg.L→FootBack.L
+                        new HitPart { BoneA = 9, BoneB = 10, Radius = 0.5095f, RestBottom = 0.8962f, RestTop = 2.5585f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // UpperLeg.R→MidLeg.R
+                        new HitPart { BoneA = 10, BoneB = 11, Radius = 0.2453f, RestBottom = 0.6650f, RestTop = 1.6510f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // MidLeg.R→LowerLeg.R
+                        new HitPart { BoneA = 11, BoneB = 12, Radius = 0.3928f, RestBottom = -0.3204f, RestTop = 1.3031f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // LowerLeg.R→FootBack.R
                     },
                     // app-94sk T2 (rule 10): AttackRange is 0 — he never strikes,
                     // and the sentinel is what says so.
                     SwingPartId = -1,
-                    Poses = ColumnPose(1.32f, 3.24f, 4.20f) },
+                    Poses = GunnerRestPose() },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
                     // Task Т6 (app-ggvz, owner decision К5/spec Р325):
@@ -606,19 +887,39 @@ namespace Ring.Simulation.Tests
                     // a partial rerun of the very defect app-oxyo closed.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = -0.56f, RestTop = 1.68f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 0.32f, RestTop = 3.56f,
-                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.48f, RestTop = 3.86f,
-                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 1.9723f, RestBottom = -1.9723f, RestTop = 4.8991f,
+                            Zone = HitZone.Head, DamageMult = 1.70f, PartId = 0 },   // Root→Body
+                        new HitPart { BoneA = 8, BoneB = 8, Radius = 1.0160f, RestBottom = 2.1768f, RestTop = 4.2088f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Gun.L→Gun.L
+                        new HitPart { BoneA = 15, BoneB = 15, Radius = 1.0160f, RestBottom = 2.1768f, RestTop = 4.2088f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 2 },   // Gun.R→Gun.R
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.6921f, RestBottom = 1.9343f, RestTop = 3.3419f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // Shoulder.L→Leg1.L
+                        new HitPart { BoneA = 3, BoneB = 4, Radius = 0.6921f, RestBottom = 1.6575f, RestTop = 3.3185f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // Leg1.L→Leg2.L
+                        new HitPart { BoneA = 4, BoneB = 5, Radius = 0.4388f, RestBottom = 1.1763f, RestTop = 2.7884f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // Leg2.L→Leg3.L
+                        new HitPart { BoneA = 5, BoneB = 6, Radius = 0.4753f, RestBottom = -0.0013f, RestTop = 2.0904f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // Leg3.L→Leg4.L
+                        new HitPart { BoneA = 6, BoneB = 7, Radius = 0.8882f, RestBottom = -0.8627f, RestTop = 1.3622f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // Leg4.L→Foot.L
+                        new HitPart { BoneA = 9, BoneB = 10, Radius = 0.6921f, RestBottom = 1.9343f, RestTop = 3.3419f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // Shoulder.R→Leg1.R
+                        new HitPart { BoneA = 10, BoneB = 11, Radius = 0.6921f, RestBottom = 1.6575f, RestTop = 3.3185f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // Leg1.R→Leg2.R
+                        new HitPart { BoneA = 11, BoneB = 12, Radius = 0.4388f, RestBottom = 1.1763f, RestTop = 2.7884f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // Leg2.R→Leg3.R
+                        new HitPart { BoneA = 12, BoneB = 13, Radius = 0.4753f, RestBottom = -0.0013f, RestTop = 2.0904f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // Leg3.R→Leg4.R
+                        new HitPart { BoneA = 13, BoneB = 14, Radius = 0.8882f, RestBottom = -0.8627f, RestTop = 1.3622f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // Leg4.R→Foot.R
                     },
                     // app-94sk T2 (rule 10): he strikes, so he names the volume he
                     // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
                     // arms out — a striker must name SOME volume he owns, and the
                     // arm he will really swing does not exist in the layout yet.
                     SwingPartId = 1,
-                    Poses = ColumnPose(1.12f, 2.76f, 3.58f) },
+                    Poses = EliteRestPose() },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
                     TelegraphSeconds = 1.1f, AttackCooldown = 0.9f,
@@ -662,19 +963,43 @@ namespace Ring.Simulation.Tests
                     // number to round to something more convenient.
                     Parts = new[]
                     {
-                        new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = -1.54f, RestTop = 3.05f,
-                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                        new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = -0.69f, RestTop = 5.9f,
-                            Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 2.93f, RestTop = 5.57f,
-                            Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                        new HitPart { BoneA = 0, BoneB = 1, Radius = 2.7582f, RestBottom = -2.7582f, RestTop = 5.0748f,
+                            Zone = HitZone.Head, DamageMult = 1.70f, PartId = 0 },   // Root→Body
+                        new HitPart { BoneA = 18, BoneB = 18, Radius = 2.0742f, RestBottom = 1.3074f, RestTop = 5.4558f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Gun.L→Gun.L
+                        new HitPart { BoneA = 19, BoneB = 19, Radius = 2.0742f, RestBottom = 1.3074f, RestTop = 5.4558f,
+                            Zone = HitZone.Body, DamageMult = 1.00f, PartId = 2 },   // Gun.R→Gun.R
+                        new HitPart { BoneA = 2, BoneB = 3, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // Front_Shoulder.L→Front_Leg1.L
+                        new HitPart { BoneA = 3, BoneB = 4, Radius = 0.7368f, RestBottom = 0.3355f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // Front_Leg1.L→Front_Leg2.L
+                        new HitPart { BoneA = 4, BoneB = 5, Radius = 0.5274f, RestBottom = 0.5449f, RestTop = 2.7147f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // Front_Leg2.L→Front_Leg3.L  ⛔ paw uncovered: containment 2.6355 closed the gap between his legs (fixture 45: -2.23 m)
+                        new HitPart { BoneA = 6, BoneB = 7, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // Back_Shoulder.L→Back_Leg1.L
+                        new HitPart { BoneA = 7, BoneB = 8, Radius = 0.7368f, RestBottom = 0.3394f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // Back_Leg1.L→Back_Leg2.L
+                        new HitPart { BoneA = 8, BoneB = 9, Radius = 0.5915f, RestBottom = 0.4847f, RestTop = 2.7815f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // Back_Leg2.L→Back_Leg3.L  ⛔ same, rear left
+                        new HitPart { BoneA = 10, BoneB = 11, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // Front_Shoulder.R→Front_Leg1.R
+                        new HitPart { BoneA = 11, BoneB = 12, Radius = 0.7368f, RestBottom = 0.3355f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // Front_Leg1.R→Front_Leg2.R
+                        new HitPart { BoneA = 12, BoneB = 13, Radius = 0.5274f, RestBottom = 0.5449f, RestTop = 2.7147f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // Front_Leg2.R→Front_Leg3.R  ⛔ same, front right
+                        new HitPart { BoneA = 14, BoneB = 15, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // Back_Shoulder.R→Back_Leg1.R
+                        new HitPart { BoneA = 15, BoneB = 16, Radius = 0.7368f, RestBottom = 0.3394f, RestTop = 2.9892f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 13 },   // Back_Leg1.R→Back_Leg2.R
+                        new HitPart { BoneA = 16, BoneB = 17, Radius = 0.5915f, RestBottom = 0.4847f, RestTop = 2.7815f,
+                            Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 14 },   // Back_Leg2.R→Back_Leg3.R  ⛔ same, rear right
                     },
                     // app-94sk T2 (rule 10): he strikes, so he names the volume he
                     // strikes with. ⚠ THE TORSO IS A PLACEHOLDER until T4b lays the
                     // arms out — a striker must name SOME volume he owns, and the
                     // arm he will really swing does not exist in the layout yet.
                     SwingPartId = 1,
-                    Poses = ColumnPose(1.51f, 3.70f, 4.80f) },
+                    Poses = DirectorRestPose() },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section
                 // above. Inert in both golden scenarios — nothing reads Flow

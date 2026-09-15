@@ -92,16 +92,27 @@ namespace Ring.Simulation.Tests
         /// Mid-band heights of the collector's own body — expectations are
         /// fixture EXPRESSIONS, never numbers restated from the balance data.
         ///
-        /// app-88jb Т15: read off his ORDERED STACK OF PARTS, because the six
-        /// zone scalars these were written from left SimConfig in that task.
-        /// NO NUMBER MOVES: TestConfigs builds his parts out of the very same
-        /// literals the column carried (torso [0.55, 1.35), head [1.35, 1.75]),
-        /// so the torso band is still 0.95 and the head band still 1.55. The
-        /// indices follow the convention the rest of the suite already uses —
-        /// [0] legs, [^2] torso, [^1] head.
+        /// app-88jb Т15: read off his stack of parts, because the six zone
+        /// scalars these were written from left SimConfig in that task.
+        ///
+        /// ⛔⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — and here the index was
+        /// not merely fragile, it was WRONG IN BOTH DIRECTIONS. "[^2] torso,
+        /// [^1] head" was a convention about an ORDERED COLUMN, and the
+        /// collector's eleven volumes are laid out on his real bones: his last
+        /// two are his right SHIN and his right THIGH. Every expectation below
+        /// took a leg's 0.75 under the name of a head's 1.7, and every aim went
+        /// to knee height under the name of a head band.
         static float MidOf(in HitPart p) => 0.5f * (p.RestBottom + p.RestTop);
-        static float BodyBand(in SimConfig c) => MidOf(c.Hero.Parts[^2]);
-        static float HeadBand(in SimConfig c) => MidOf(c.Hero.Parts[^1]);
+        static float BodyBand(in SimConfig c)
+            => MidOf(TestWorlds.VolumeOfZone(c.Hero.Parts, HitZone.Body, "сборщик"));
+        static float HeadBand(in SimConfig c)
+            => MidOf(TestWorlds.VolumeOfZone(c.Hero.Parts, HitZone.Head, "сборщик"));
+        /// The multiplier the band above is aimed into — one home, so an
+        /// expectation cannot name one volume while the aim names another.
+        static float BodyMult(in SimConfig c)
+            => TestWorlds.VolumeOfZone(c.Hero.Parts, HitZone.Body, "сборщик").DamageMult;
+        static float HeadMult(in SimConfig c)
+            => TestWorlds.VolumeOfZone(c.Hero.Parts, HitZone.Head, "сборщик").DamageMult;
 
         [Test]
         public void PlayerShot_DamagesOtherPlayer()
@@ -113,7 +124,7 @@ namespace Ring.Simulation.Tests
             w.ClearEvents();
             TickIdle(w);
 
-            float expected = c.Weapon.Damage * c.Hero.Parts[^2].DamageMult;
+            float expected = c.Weapon.Damage * BodyMult(in c);
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f,
                 "player 0's round must take the hit zone's damage off player 1");
             Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(0).Hp, 1e-4f, "the shooter must be untouched");
@@ -162,7 +173,7 @@ namespace Ring.Simulation.Tests
         public void HeadZoneOnPlayer_AppliesMultiplier()
         {
             SimulationWorld w = Duel(out SimConfig c);
-            Assert.AreNotEqual(1f, c.Hero.Parts[^1].DamageMult,
+            Assert.AreNotEqual(1f, HeadMult(in c),
                 "fixture premise: the collector's head multiplier must not be neutral");
             TestWorlds.FireAimed3D(w, float2.zero, HeadBand(c), new float2(TargetX, 0f), HeadBand(c),
                 ownerIndex: 0);
@@ -173,7 +184,7 @@ namespace Ring.Simulation.Tests
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
             Assert.AreEqual(HitZone.Head, damaged.Zone,
                 "a round on the hero's own head band reads Head");
-            float expected = c.Weapon.Damage * c.Hero.Parts[^1].DamageMult;
+            float expected = c.Weapon.Damage * HeadMult(in c);
             Assert.AreNotEqual(c.Weapon.Damage, damaged.Amount, "NOT the round's base damage");
             Assert.AreEqual(expected, damaged.Amount, 1e-4f, "Amount is the POST-multiplier damage");
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f);
@@ -314,7 +325,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0, TestEvents.CountOf(w, SimEventKind.ProjectileHit),
                 "a player victim must never ride the mob-hit kind — the snapshot assembler maps that "
                 + "one to a hardcoded ProjectileEndKind.HitMob");
-            Assert.AreEqual(c.Weapon.Damage * c.Hero.Parts[^2].DamageMult, hit.Amount, 1e-4f,
+            Assert.AreEqual(c.Weapon.Damage * BodyMult(in c), hit.Amount, 1e-4f,
                 "Amount is the post-multiplier damage, same contract as ProjectileHit");
             Assert.AreEqual(1f, hit.HitDir.x, 1e-3f,
                 "HitDir is the round's travel direction at contact — this shot flies straight down +X");
@@ -367,7 +378,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(roundId, hit.SecondaryEntityId,
                 "the event reports the ROUND ENDING, not the damage landing — a tracer whose end went "
                 + "unreported would hang on the client until its confirm timeout");
-            Assert.AreEqual(c.Weapon.Damage * c.Hero.Parts[^2].DamageMult, hit.Amount, 1e-4f,
+            Assert.AreEqual(c.Weapon.Damage * BodyMult(in c), hit.Amount, 1e-4f,
                 "and Amount is what the round CARRIED: DamagePlayer returns nothing, so the applied "
                 + "figure is not available at the emit site at all");
         }
@@ -522,20 +533,22 @@ namespace Ring.Simulation.Tests
             TickIdle(w);
 
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent damaged));
-            // ⛔⛔ THE ZONE READS Body NOW (app-94sk T2), and the subject is
-            // untouched: what this fixture is FOR is that the height gate is
-            // asked of the VICTIM's own column rather than of the shooter's
-            // launch height, and the blow landing at all is what says so. WHICH
-            // volume answers moved because a capsule has caps — the collector's
-            // torso runs from his pelvis bone down by its own radius (0.55 - 0.45
-            // = 0.10), so a round arriving at shin height meets it as well as the
-            // legs, and the zone ladder gives it to the torso.
-            // ⚠ The torso's radius is still the whole BODY circle — a placeholder
-            // until T4b measures the real one — so this expectation is owed a
-            // second look there.
-            Assert.AreEqual(HitZone.Body, damaged.Zone,
+            // ⛔⛔ THE ZONE IS Legs AGAIN, AND THE SECOND LOOK T2 ASKED FOR IS
+            // THIS ONE (app-saqr, T4b). T2 recorded the expectation as Body and
+            // said in as many words that it was owed a re-check here, because
+            // the reason it read Body was a PLACEHOLDER: the torso capsule
+            // carried the whole body circle (0.45) on a bone at 0.55, so its
+            // lower cap reached down to 0.10 and swallowed a round arriving at
+            // shin height. Measured, his pelvis volume is 0.1559 wide on bones
+            // at 0.877 and 1.138 and reaches no lower than 0.72; down there only
+            // a LEG is present — which is what this fixture's own doc says the
+            // round arrives in. The subject is untouched: the height gate is
+            // asked of the VICTIM's column rather than of the launch height, and
+            // the blow landing at all is what says so.
+            Assert.AreEqual(HitZone.Legs, damaged.Zone,
                 "the round arrives at the victim's own column, whatever height it launched at");
-            float expected = c.Weapon.Damage * c.Hero.Parts[1].DamageMult;
+            float expected = c.Weapon.Damage
+                * TestWorlds.VolumeOfZone(c.Hero.Parts, HitZone.Legs, "сборщик").DamageMult;
             Assert.AreEqual(expected, damaged.Amount, 1e-4f);
             Assert.AreEqual(c.Hero.MaxHp - expected, w.PlayerAt(1).Hp, 1e-4f);
         }
@@ -627,8 +640,35 @@ namespace Ring.Simulation.Tests
             // enters squared, which erases the sign exactly). The loop below
             // re-derives both roots off the very segment the tick is about to
             // sweep and asserts equality with a ZERO delta.
+            //
+            // ⛔⛔ app-saqr (T4b): THE TIE IS MADE OF THE SHAPE, AND A SHAPE IS NO
+            // LONGER A RADIUS. Equal `Radius` made the two contacts bit-identical
+            // while a body WAS its circle; a round is resolved against VOLUMES
+            // now, and the chaser's chest capsule reaches 0.83 m against his
+            // circle's 0.50 while the collector's widest is 0.26 — so the mob is
+            // struck a whole tick EARLIER and there is no tie left to break.
+            // MEASURED, not argued: with the two stands 1.1 m off the line the
+            // round met the chaser on its third step and the circles only lined
+            // up on the fourth, and the fixture died reporting "never reached".
+            // ⇒ BOTH BODIES ARE GIVEN ONE AXIS-CENTERED SPHERE OF THE SAME RADIUS
+            // on the same column — the only shape that is rotationally symmetric,
+            // and therefore the only one a mirror across the firing line leaves
+            // bit-identical. It is an explicit fixture of exactly the kind this
+            // suite builds when the arithmetic IS the subject, and it makes the
+            // premise loop below measure the solver's own question again: with a
+            // sphere at the round's own height the capsule problem collapses to
+            // the circle problem `Geometry.SegmentCircle` states.
             var c = Range();
-            c.Chaser.Radius = c.Hero.Radius; // the shared radius that makes the tie exact
+            const float tieRadius = 0.45f, tieHeight = 1.2f;
+            PoseTable tieColumn = TestConfigs.ColumnPose(tieHeight, 2f, 2.4f);
+            HitPart[] tieShape =
+            {
+                new HitPart { BoneA = 1, BoneB = 1, Radius = tieRadius, Zone = HitZone.Body,
+                    DamageMult = 1f, PartId = 0,
+                    RestBottom = tieHeight - tieRadius, RestTop = tieHeight + tieRadius },
+            };
+            c.Hero.Parts = tieShape; c.Hero.Poses = tieColumn; c.Hero.Radius = tieRadius;
+            c.Chaser.Parts = tieShape; c.Chaser.Poses = tieColumn; c.Chaser.Radius = tieRadius;
             float halfGap = c.Chaser.AttackRange;
             const float sweepRadius = 1f;
             Assert.Less(halfGap, sweepRadius + c.Hero.Radius,
@@ -642,13 +682,16 @@ namespace Ring.Simulation.Tests
             TestWorlds.RelocatePlayerForTest(w, 1, new float2(5f, -halfGap));      // player candidate
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(5f, halfGap)));
             w.SpawnProjectileForTest(ProjectileOwner.Player, float2.zero,
-                new float2(c.Weapon.ProjectileSpeed, 0f), BodyBand(c), 0f,
+                new float2(c.Weapon.ProjectileSpeed, 0f), tieHeight, 0f,
                 c.Chaser.MaxHp * 10f, sweepRadius, c.Weapon.ProjectileLifetime, ownerIndex: 0);
 
             var inputs = new SimInput[2];
             bool tied = false;
+            int ticksFlown = 0;
+            float lastX = float.NaN, lastEndX = float.NaN;
             for (int i = 0; i < 30 && w.ProjectileCount > 0; i++)
             {
+                ticksFlown = i;
                 // The same segment ProjectileSystem is about to build for this
                 // tick (startPos + Vel * TickDt), so these are ITS roots, not an
                 // approximation of them. Neither body moves — Range() zeroes the
@@ -661,6 +704,7 @@ namespace Ring.Simulation.Tests
                     w.Mobs[0].Pos, c.Chaser.Radius, out float tMob);
                 bool onPlayer = Geometry.SegmentCircle(start, end, round.Radius,
                     w.PlayerAt(1).Pos, c.Hero.Radius, out float tPlayer);
+                lastX = start.x; lastEndX = end.x;
                 if (onMob || onPlayer)
                 {
                     Assert.IsTrue(onMob && onPlayer,
@@ -673,7 +717,10 @@ namespace Ring.Simulation.Tests
                 w.TickAll(inputs);
             }
 
-            Assert.IsTrue(tied, "the round never reached the two bodies");
+            Assert.IsTrue(tied,
+                $"the round never reached the two bodies — it flew {ticksFlown} ticks, its last " +
+                $"step was [{lastX:F3}, {lastEndX:F3}], mobs left {w.MobCount}, " +
+                $"victim Hp {w.PlayerAt(1).Hp:F1}");
             Assert.AreEqual(0, w.MobCount, "the mob is packed first, so it takes the tie");
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.MobDied, out _));
             Assert.AreEqual(c.Hero.MaxHp, w.PlayerAt(1).Hp, 1e-4f,

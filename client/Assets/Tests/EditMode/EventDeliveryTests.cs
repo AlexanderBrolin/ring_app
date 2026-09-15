@@ -913,7 +913,7 @@ namespace Ring.Simulation.Tests
             //
             // T15 REMOVED THAT COLUMN FROM THE SIMULATION OUTRIGHT; this
             // fixture had already stopped reading its own aim out of it.
-            HitPart gunnerHead = cfg.Gunner.Parts[cfg.Gunner.Parts.Length - 1];
+            HitPart gunnerHead = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "fixture premise: this must be a one-shot kill, so both events land in one tick");
             var targetPos = new float2(1f, 0f); // under one tick of travel — the round lands next tick
@@ -1544,7 +1544,12 @@ namespace Ring.Simulation.Tests
 
             w.ClearEvents();
             w.Emit(SimEventKind.ProjectileHitPlayer, new float2(30f, 0f), victimSlot, default,
-                cfg.Weapon.Damage * cfg.Hero.Parts[^1].DamageMult, zone: HitZone.Head,
+                // ⛔ app-saqr (T4b): the HEAD's multiplier, asked by zone — the
+                // event says `HitZone.Head`, and `Parts[^1]` is a shin now, so
+                // the index would put a LEG's 0.75 under a headshot's name.
+                cfg.Weapon.Damage
+                    * TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Head, "сборщик").DamageMult,
+                zone: HitZone.Head,
                 hitDir: new float2(1f, 0f), playerIndex: 0, secondaryEntityId: roundId);
 
             asm.BeginTick(w);

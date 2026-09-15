@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;   // app-saqr T4b: HitParts.TryFindByZone
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -58,6 +59,37 @@ namespace Ring.Simulation.Tests
             for (int i = 1; i < parts.Length; i++)
                 if (parts[i].DamageMult > worst) worst = parts[i].DamageMult;
             return worst;
+        }
+
+        /// ⛔⛔ app-saqr (T4b): "THE VOLUME CARRYING THIS ZONE", ASKED IN ONE
+        /// PLACE, with the premise that the body HAS one asserted rather than
+        /// assumed. `Parts[Length-1]` was the head and `Parts[0]` was the legs
+        /// only while a body was an ordered column bottom-to-top, and the layout
+        /// of spec §3.2 ends that: on real bones the last volume is a shin and
+        /// the first is a pelvis.
+        ///
+        /// ⛔ WHY A HOME AND NOT AN IDIOM: the replacement —
+        /// `HitParts.TryFindByZone`, i.e. the resolver's own tie-break — is one
+        /// call, but wrapping it in a premise is four lines, and four lines
+        /// spelled out at a dozen call sites are a dozen chances to drift.
+        /// That is the very argument `MaxPartDamageMult` above was written on,
+        /// and this file is where it says it belongs.
+        ///
+        /// ⚠ IT ANSWERS "A VOLUME OF THIS ZONE", NOT "THE ONE YOU MEANT": a
+        /// chaser carries SIX volumes of zone Body, and the one handed back is
+        /// the smallest `PartId` — what `HitVolumes.Resolve` awards on a tie. A
+        /// fixture needing a PARTICULAR volume (the chest rather than the
+        /// torso, the shin rather than the thigh) must ask the GEOMETRY:
+        /// `TestConfigs.TryFindCleanVolume` and the overlap searches in
+        /// `HitPartsTests` are what that looks like.
+        /// ⚠ `body` is a TRAILING parameter with a default, so a fixture that
+        /// looks a single body up says nothing extra, while one comparing two
+        /// can name which is which in the failure.
+        public static HitPart VolumeOfZone(HitPart[] parts, HitZone zone, string body = "тело")
+        {
+            Assert.IsTrue(HitParts.TryFindByZone(parts, zone, out HitPart part),
+                $"премисса: {body} несёт объём зоны {zone}");
+            return part;
         }
 
         /// A world with every mob slot filled (via the SpawnMobForTest seam,

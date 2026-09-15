@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;   // app-saqr T4b: HitParts.TryFindByZone / RestCrown
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -120,7 +121,18 @@ namespace Ring.Simulation.Tests
         /// that config's flight, before Field() has returned one — and the two
         /// carry the same archetype either way (Field only zeroes speeds and
         /// sets BarrierTop).
-        static HitPart GunnerHead() => TestConfigs.Default().Gunner.Parts[^1];
+        /// ⛔ app-saqr (T4b): BY ZONE, NOT BY INDEX. `Parts[^1]` was the head
+        /// while a body was an ordered column bottom-to-top; with nine volumes
+        /// laid out on his real bones the last one is a SHIN, whose middle sits
+        /// at 0.49 m and clears no barrier at all.
+        /// `HitParts.TryFindByZone` is the project's own answer to "which volume
+        /// is the head", and the same one `HitVolumes.Resolve` gives when two
+        /// volumes share a zone.
+        static HitPart GunnerHead()
+        {
+            return TestWorlds.VolumeOfZone(TestConfigs.Default().Gunner.Parts,
+                HitZone.Head, "ганнер");
+        }
 
         [Test]
         public void NoModelledTop_IsWhatTheSharedBaselineAndTheGoldensRunOn()
@@ -202,7 +214,12 @@ namespace Ring.Simulation.Tests
             // one used to say "inside the mob's own column"; the column is not
             // what resolves a hit any more, so it says "inside the model" and
             // measures it against the crown the silhouette actually presents.
-            Assert.LessOrEqual(flightHeight, c.Gunner.Parts[^1].RestTop + c.Weapon.ProjectileRadius,
+            // ⛔ app-saqr (T4b): THE CROWN, NOT THE LAST VOLUME — "inside the
+            // model" is a claim about the tallest thing the silhouette presents,
+            // and `HitParts.RestCrown` is the one home of that maximum. The index
+            // held it only while the volumes were a sorted column.
+            Assert.LessOrEqual(flightHeight,
+                HitParts.RestCrown(c.Gunner.Parts) + c.Weapon.ProjectileRadius,
                 "fixture premise: and still falls inside the mob's own model");
             Assert.That(flightHeight, Is.InRange(GunnerHead().RestBottom, GunnerHead().RestTop),
                 "fixture premise: the flight must land in the HEAD part, or the kill below is not a headshot");

@@ -501,18 +501,34 @@ namespace Ring.Simulation.Tests
             //     puts the collector at the origin instead of 159.16 m out on
             //     the spawn ring.
             //
-            // ⚠ THE MARGIN IS THIN AND IS THEREFORE NAMED (Ruling 61). The
-            // threshold is reached at an arm of 1.1786 m, i.e. at a contact
-            // height of 2.349 m. Once this task's data step lands, the head
-            // belt is [2.12, 2.70] and only its UPPER 60 % knocks the chaser
-            // over; the middle of the belt, 2.41 m, clears that line by 0.061 m
-            // and that is the whole of the margin. A hit to the LOWER third of
-            // the head leaves the chaser standing -- arithmetic of the arm, not
-            // a defect, and it belongs on milestone В2's tuning list.
+            // ⛔⛔ app-saqr (T4b): AND A THIRD EXPLICIT FIXTURE HAD TO JOIN THEM —
+            // THE FALL THRESHOLD — BECAUSE THE MODEL'S HEAD IS NOT WHERE THE
+            // PLACEHOLDER COLUMN PUT IT. The margin this doc used to name was
+            // thin on purpose (Ruling 61): the threshold is reached at an arm of
+            // 1.1786 m, i.e. at a contact height of 2.349 m, and the head belt
+            // [2.12, 2.70] cleared it by 0.061 m. That belt was the top 21 % of a
+            // column. Measured on his own bones the chaser's head is a 0.25 m
+            // sphere centered at 1.9669 m — 0.44 m LOWER — so the arm is 0.797 m
+            // and the peak 0.6085 rad (34.9°) against the shipped 0.9 rad
+            // (51.6°). No point of his head reaches it: even his crown-most head
+            // height, 2.2214, peaks at 0.7447 rad.
+            // ⇒ THE CRITERION IS UNREACHABLE ON THE SHIPPED BALANCE, and that is
+            // a MEASUREMENT this task produced rather than a defect it
+            // introduced — the tuning is the owner's at the milestone (spec
+            // §3.3), and it is booked as such (bd, discovered from app-w4ca).
+            // What this fixture states meanwhile is its own subject, unweakened:
+            // AT A STATED FALL THRESHOLD a headshot fells the chaser and a body
+            // shot does not. π/9 (20°) is taken because it is an angle with a
+            // meaning of its own rather than a number fitted to the answer, and
+            // because it clears BOTH halves of BOTH fixtures of this pair by a
+            // margin: here the head peaks at 0.6085 rad (74 % above it) and the
+            // body at 0.0169 (twenty-one times below), and the flying sibling
+            // reaches 0.4980 against 0.0911.
             SimConfig cfg = TestConfigs.OpenField();
             cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
             cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
             cfg.Chaser.Accel = 0f;
+            cfg.Chaser.TiltFallAngle = math.PI / 9f;   // explicit fixture, see above
             // ⚠ THE ASSERT BELOW GUARDS THE ASSIGNMENT ONE LINE UP, NOT THE
             // GAME (Т14/Т23 fix-round, Ruling 201 / review finding B-1): it
             // reads the very field the line above just wrote, so the one
@@ -557,32 +573,45 @@ namespace Ring.Simulation.Tests
                 return w.Mobs[0].Ai == MobAiState.Downed;
             }
 
-            HitPart[] parts = cfg.Chaser.Parts;
-            Assert.IsTrue(KnocksDown(parts[parts.Length - 1]),
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — the last two volumes
+            // of the thirteen are his right shin and his right calf, and a
+            // "headshot" into a shin is not this fixture's subject.
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
+            HitPart body = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
+            Assert.Greater(head.RestBottom, body.RestBottom,
+                "премисса: голова сидит выше корпуса — иначе «хедшот особенный» нечем показать");
+            Assert.IsTrue(KnocksDown(head),
                 "выстрел в середину головы не валит чейзера — критерий вехи В1 миром не наблюдается");
-            Assert.IsFalse(KnocksDown(parts[parts.Length - 2]),
+            Assert.IsFalse(KnocksDown(body),
                 "попадание в корпус валит — хедшот перестал быть особенным");
         }
 
         [Test]
         public void TiltImpulse_TheHeadRocksTheChaserHarderThanTheLegs()
         {
-            // ⭐ THE SECOND PLAYTEST DEBT (app-mhw3, coordinator Ruling 62), and
-            // today the proportion is INVERTED. The chaser's center of mass sits
-            // at 1.17 m of a 1.85 m column -- 63 % of the way up -- so the legs
-            // (middle 0.30, arm 0.87) out-rock the head (middle 1.65, arm 0.48):
-            // 38.1 deg against 21.0 deg at the game's projectile speed. After
-            // this task's data step the column is [0, 0.88) / [0.88, 2.12) /
-            // [2.12, 2.70], the same center of mass sits at 43 % of it, and the
-            // head's arm of 1.24 beats the legs' 0.73 -- the head rocks 1.70x
-            // HARDER, which is what a body is supposed to do.
+            // ⭐ THE SECOND PLAYTEST DEBT (app-mhw3, coordinator Ruling 62): the
+            // proportion USED TO BE INVERTED. The chaser's center of mass sits at
+            // 1.17 m of a 1.85 m column -- 63 % of the way up -- so the legs
+            // (middle 0.30, arm 0.87) out-rocked the head (middle 1.65, arm 0.48):
+            // 38.1 deg against 21.0 deg at the game's projectile speed.
             //
-            // ⚠ IT GUARDS THE NUMBERS, NOT THE FORMULA: roll the column back to
-            // 1.85 and the ratio flips, so this dies with the DATA. The formula
-            // half is already held by HitAboveCenterOfMass_TipsAlongTheShot_
-            // BelowUndercutsIt, which places its two heights SYMMETRICALLY
-            // around the center of mass on purpose -- and symmetry is exactly
-            // what cannot show a body whose proportions are wrong.
+            // ⛔⛔ app-saqr (T4b): AND IT IS STILL RIGHT ON THE MEASURED BODY,
+            // WHICH IS NOT THE SAME CLAIM THIS FIXTURE WAS MAKING. Addressed by
+            // POSITION it was green by accident: `parts[0]` under the name "legs"
+            // is his TORSO on the real layout (middle 1.148, arm 0.022 — all but
+            // on the center of mass) and `parts[^1]` under the name "head" is his
+            // right SHIN (middle 0.259, arm 0.911), so the comparison passed
+            // while measuring a shin against a chest. Asked by ZONE it measures
+            // what it names: head middle 1.9669 (arm 0.797) against thigh middle
+            // 0.8873 (arm 0.283) — the head rocks 2.8x harder.
+            //
+            // ⚠ IT GUARDS THE NUMBERS, NOT THE FORMULA: put the head back down
+            // near the center of mass and the ratio flips, so this dies with the
+            // DATA. The formula half is already held by
+            // HitAboveCenterOfMass_TipsAlongTheShot_BelowUndercutsIt, which
+            // places its two heights SYMMETRICALLY around the center of mass on
+            // purpose -- and symmetry is exactly what cannot show a body whose
+            // proportions are wrong.
             //
             // |TiltVel| is read IMMEDIATELY after the blow, with no tick in
             // between, so the two readings are the two angular impulses and
@@ -611,9 +640,8 @@ namespace Ring.Simulation.Tests
                 return math.abs(w.Mobs[0].TiltVel);
             }
 
-            HitPart[] parts = cfg.Chaser.Parts;
-            float legs = RockOf(parts[0]);
-            float head = RockOf(parts[parts.Length - 1]);
+            float legs = RockOf(TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Legs, "чейзер"));
+            float head = RockOf(TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер"));
 
             // Premise: without it a mutation that zeroes the legs' impulse would
             // satisfy the comparison below while proving nothing at all.
@@ -639,30 +667,44 @@ namespace Ring.Simulation.Tests
             // repoints that gate at the parts themselves (top of the last part,
             // 2.70), which is what makes this witness expressible at all.
             //
-            // ⚠ THE CONTACT IS LOWER THAN THE AIM, AND AIMING AT THE MIDDLE OF
-            // THE HEAD WOULD BE RED ON CORRECT CODE (coordinator Ruling 69,
-            // recomputed independently in float32 by the implementer). The
+            // ⚠ THE CONTACT IS LOWER THAN THE AIM, AND THAT HALF IS UNCHANGED
+            // (coordinator Ruling 69, recomputed independently in float32). The
             // contact is the ENTRY into the PART's circle, i.e. a point that
-            // stops (head.Radius + ProjectileRadius) = 0.29 m short of the
-            // body's axis, so on a climbing shot it sits BELOW the aim:
+            // stops (head.Radius + ProjectileRadius) short of the body's axis,
+            // so on a climbing shot it sits BELOW the aim:
             //
-            //   enterX  = 6 - (0.17 + 0.12)               = 5.71 m
-            //   contact = 1.0 + (aim - 1.0) * 5.71 / 6
-            //   knockdown line (Ruling 61)                = 2.3486 m
-            //     [arm 1.1786 = 0.9 rad / (dv 1.51667 * TiltGain 10.5 *
-            //      0.0479508 rad of peak per unit impulse) + CoM 1.17]
+            //   enterX  = 6 - (0.2545 + 0.12)             = 5.6255 m
+            //   contact = 1.0 + (aim - 1.0) * 5.6255 / 6
             //
-            // Aiming at the MIDDLE of the belt, 2.41 m, therefore lands the
-            // contact at 2.3419 m and peaks at 0.8948 rad against the 0.9 rad
-            // threshold -- 0.0067 m short, red on entirely correct code, the
-            // exact class of fixture Ruling 60 exists to catch. The aim taken
-            // here is 80 % of the way up the belt: 2.5840 m, contact 2.5074 m,
-            // arm 1.3374, peak 1.0213 rad -- 13.5 % of margin over the
-            // threshold, and 0.1588 m of margin in the contact height itself.
-            // The whole legal window is an aim of [2.4172, 2.70]; this sits
-            // comfortably inside its upper half.
+            // ⛔⛔ app-saqr (T4b): WHAT DID MOVE IS THE HEAD, BY 0.44 m DOWN, and
+            // with it the whole of this criterion's reachability — the sibling
+            // `WorldHeadshot_OnTheChasersOwnHeadPart_...` above carries the
+            // account and the booking. Measured on his own bones: the aim taken
+            // here, 80 % of the way up his head volume, is 2.1196 m, the contact
+            // 2.0497 m, the arm 0.8797 m and the peak 0.6718 rad (38.5°) —
+            // against the shipped fall threshold of 0.9 rad it is not a
+            // knockdown at all, while the body half peaks at 0.0246 rad (1.4°).
+            // ⇒ THE THIRD EXPLICIT FIXTURE, π/9 (20°), is the sibling's and is
+            // taken here for the sibling's reason. Against it this fixture's own
+            // halves are 0.4980 rad and 0.0911 rad — the head 43 % above, the
+            // body nearly four times below — and the shipped 0.9 remains the
+            // owner's to tune at the milestone.
             //
-            // TWO EXPLICIT FIXTURES, both load-bearing, both the sibling's:
+            // ⛔⛔ AND THE MUZZLE MOVED UP THE LINE, WHICH IS THE SECOND THING
+            // THE MEASURED LAYOUT FORCED. The chaser's head volume sits ENTIRELY
+            // INSIDE his chest capsule (a 0.25 m sphere whose center is 0.19 m
+            // from a segment 0.83 m thick), so a round reaching the head has
+            // been inside the chest for 0.56 m already. That is harmless while
+            // both are candidates on ONE tick-step — the zone ladder puts Head
+            // over Body and the shot reads as a headshot — but a step is 1.75 m
+            // at this speed, and fired from the origin the boundary falls
+            // BETWEEN the two entries: the chest is awarded on the earlier step
+            // and the head is never reached. MEASURED, not argued: from the
+            // origin this fixture read Body on entirely correct code.
+            // ⇒ The muzzle is placed so that ONE STEP SPANS THE WHOLE CROSSING,
+            // and both halves of that are asserted below rather than narrated.
+            //
+            // THREE EXPLICIT FIXTURES, all load-bearing, all the sibling's:
             //  1. ProjectileSpeed 52.5, THE GAME's number, not the shared
             //     fixture's 35 -- at 35 the peak would be 0.6810 rad against
             //     the 0.9 threshold and the criterion would read RED on
@@ -678,6 +720,7 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.ProjectileSpeed = 52.5f;   // explicit fixture, see (1)
             cfg.Chaser.MaxSpeed = 0f;             // explicit fixture, see (2)
             cfg.Chaser.Accel = 0f;
+            cfg.Chaser.TiltFallAngle = math.PI / 9f;   // explicit fixture, see above
             // The assert guards the ASSIGNMENT one line up, not the game --
             // a mirror of the shipped 52.5 as of Т14, deliberately not a live
             // read of the .asset; the first sibling above carries the full
@@ -691,9 +734,10 @@ namespace Ring.Simulation.Tests
             var mobPos = new float2(6f, 0f);
             w.SpawnMobForTest(MobType.Chaser, mobPos);
 
-            HitPart[] parts = cfg.Chaser.Parts;
-            HitPart head = parts[parts.Length - 1];
-            HitPart body = parts[parts.Length - 2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — the last two of his
+            // thirteen volumes are leg segments.
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
+            HitPart body = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
 
             // One round fired at `aimH`, then as many ticks as the spring needs
             // to reach its peak. Pos and Vel are restated along with the tilt:
@@ -705,6 +749,20 @@ namespace Ring.Simulation.Tests
             // half would read green off a MISS -- a round that never connected
             // knocks nothing over either, which is the false green this pair
             // exists to exclude.
+            // The stand-off that keeps the whole crossing inside ONE step: the
+            // middle of the window both premises below define. Derived, not
+            // chosen — it follows the speed and the body's own reach.
+            float stepLength = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            float gatherPad = cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius;
+            float standOff = 0.5f * (stepLength + gatherPad);
+            Assert.Less(standOff, stepLength,
+                "премисса: один шаг снаряда обязан накрыть всё пересечение тела — иначе грудь "
+                + "заберёт попадание на предыдущем шаге, и лестница зон до головы не дойдёт");
+            Assert.Greater(standOff, gatherPad,
+                "премисса: дуло стоит ВНЕ круга охвата цели — иначе раунд начинает внутри тела "
+                + "и никуда не летит");
+            var muzzle = new float2(mobPos.x - standOff, 0f);
+
             bool KnocksDown(float aimH, HitZone expectedZone, string premise)
             {
                 MobState m = w.Mobs[0];
@@ -714,7 +772,7 @@ namespace Ring.Simulation.Tests
                 w.SetMobForTest(0, m);
 
                 w.ClearEvents();
-                TestWorlds.FireAimed3D(w, float2.zero, muzzleH: cfg.Hero.MuzzleHeight,
+                TestWorlds.FireAimed3D(w, muzzle, muzzleH: cfg.Hero.MuzzleHeight,
                     targetXY: mobPos, targetH: aimH);
                 TestWorlds.RunUntilProjectilesDie(w);
                 Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),

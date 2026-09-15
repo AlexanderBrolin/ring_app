@@ -187,14 +187,59 @@ namespace Ring.Data
         /// They read differently from the band numbers they replace ONLY
         /// because a capsule has CAPS and a band did not: the legs reach 0.32
         /// below the ground and the head 0.16 above the crown.
+        /// ⛔⛔ app-saqr (T4b): ELEVEN VOLUMES ON REAL BONES, WHICH IS THE WHOLE
+        /// POINT OF THIS PASS. The three bands above hung on a placeholder
+        /// column 0..3 — bone ends that stood in for a body while the table was
+        /// being built — and a number derived from a placeholder is worse than
+        /// the placeholder: T4 derived the extents from the real table over
+        /// those fake pairs and the SHIPPED configuration stopped assembling
+        /// (`Hero.MuzzleHeight 1.0` above a head bottom of 0.8536, bd app-saqr).
+        ///
+        /// The layout is spec §3.2 / COMBAT-001 §2.2 — pelvis, chest, head,
+        /// upper and lower arm x2, thigh and shin x2 — and the BONE INDICES ARE
+        /// THE BAKED TABLE'S COLUMNS, printed by `Ring/Audit/Pose Candidates`
+        /// against the UAL2 rig (65 skinning bones, 25 of them body bones after
+        /// the finger/IK filter):
+        ///   1 pelvis · 3 spine_02 · 5 neck_01 · 6 Head · 8/12 upperarm l/r
+        ///   9/13 lowerarm l/r · 10/14 hand l/r · 15/20 thigh l/r
+        ///   16/21 calf l/r · 17/22 foot l/r
+        /// ⛔ RADII ARE MEASURED, NOT CHOSEN: each is the furthest the mesh's
+        /// own vertices get from that pair's segment, printed by the same tool.
+        /// Spec §3.2 forbids taking them off COMBAT-001's decile profile and
+        /// says why — the prefab holds a T-POSE, so its 8th and 9th deciles are
+        /// ARM SPAN (0.95 / 1.19 m), and an arm sized from them would be twice
+        /// as wide as the whole collector.
+        /// ⚠ ARMS CARRY `HitZone.Body` FOR NOW: `HitZone.Arms` is plan 2's
+        /// (spec §3.10), and a volume naming a member that does not exist would
+        /// not compile. Their multiplier is the torso's until that lands.
+        /// ⚠ `RestBottom`/`RestTop` are derived — the capsule's extent in the
+        /// rest pose, off `TestConfigs.HeroRestAndSlidePose()`'s row 0, which
+        /// validation rule 13 checks. The shipped `.asset` gets the same
+        /// numbers recomputed from the BAKED table by the bootstrap.
         public HitPart[] Parts =
         {
-            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.32f, RestBottom = -0.32f, RestTop = 0.87f,
-                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.45f, RestBottom = 0.1f, RestTop = 1.8f,
-                Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.16f, RestBottom = 1.19f, RestTop = 1.91f,
-                Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+            new HitPart { BoneA = 1, BoneB = 3, Radius = 0.1559f, RestBottom = 0.7213f, RestTop = 1.2935f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // pelvis→spine_02
+            new HitPart { BoneA = 3, BoneB = 5, Radius = 0.2107f, RestBottom = 0.9269f, RestTop = 1.6570f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // spine_02→neck_01
+            new HitPart { BoneA = 5, BoneB = 6, Radius = 0.2605f, RestBottom = 1.1858f, RestTop = 1.7861f,
+                Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // neck_01→Head
+            new HitPart { BoneA = 8, BoneB = 9, Radius = 0.0835f, RestBottom = 1.0711f, RestTop = 1.4852f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 3 },   // upperarm_l→lowerarm_l
+            new HitPart { BoneA = 9, BoneB = 10, Radius = 0.1284f, RestBottom = 0.7707f, RestTop = 1.2830f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 4 },   // lowerarm_l→hand_l
+            new HitPart { BoneA = 12, BoneB = 13, Radius = 0.0832f, RestBottom = 1.0922f, RestTop = 1.4942f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 5 },   // upperarm_r→lowerarm_r
+            new HitPart { BoneA = 13, BoneB = 14, Radius = 0.1284f, RestBottom = 0.7941f, RestTop = 1.3038f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 6 },   // lowerarm_r→hand_r
+            new HitPart { BoneA = 15, BoneB = 16, Radius = 0.1022f, RestBottom = 0.4263f, RestTop = 0.9995f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // thigh_l→calf_l
+            new HitPart { BoneA = 16, BoneB = 17, Radius = 0.2604f, RestBottom = -0.1573f, RestTop = 0.7889f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // calf_l→foot_l
+            new HitPart { BoneA = 20, BoneB = 21, Radius = 0.1017f, RestBottom = 0.4088f, RestTop = 0.9990f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // thigh_r→calf_r
+            new HitPart { BoneA = 21, BoneB = 22, Radius = 0.2604f, RestBottom = -0.1567f, RestTop = 0.7709f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // calf_r→foot_r
         }; // Was the sync-marker key until app-88jb Т22's PushRecoilFraction below.
 
         /// app-94sk T2 (spec §3.3, Р507): the PROJECTILE BROAD PHASE's radius.
@@ -204,7 +249,15 @@ namespace Ring.Data
         /// ⚠ THE DEFAULT IS THE BODY RADIUS ON PURPOSE: until the baker (T4)
         /// writes the real number, the broad phase must keep answering exactly
         /// what it answered before the split, so this task moves no outcome.
-        [Range(0.05f, 12f)] public float GatherRadius = 0.45f;
+        // ⛔ app-saqr (T4b): 0.45 -> 1.1030772, AND IT IS RULE 9 ON THE ELEVEN REAL
+        // VOLUMES rather than a stand-in. The old value was his body circle,
+        // which the field's doc above called a placeholder "until the baker
+        // writes the real one"; with arms on real bones his widest capsule
+        // leaves that circle by 65 cm, and a gather that small would drop the
+        // arm from the candidate set in silence. Off `TestConfigs`' fixture
+        // table — the shipped number is recomputed from the BAKED table by
+        // `StageOneSceneBootstrap.ApplyPoseNumbers`, as it has been since T4.
+        [Range(0.05f, 12f)] public float GatherRadius = 1.1030772f;
 
         // app-88jb Т22 (spec §3.5, owner decisions Н15/Р442): the two numbers a
         // body collision needs from the collector.

@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Ring.Data;
+using Ring.Simulation.Combat;   // app-saqr T4b: HitParts.RestCrown
 using Ring.Simulation.Core;
 
 namespace Ring.Simulation.Tests
@@ -86,9 +87,17 @@ namespace Ring.Simulation.Tests
             // column top of 1.85, so column-top + 0.01 is now a perfectly legal
             // center of mass. The driver is the bound itself, so the witness
             // cannot drift from the rule again.
+            // ⛔ app-saqr (T4b): THE CROWN, NOT THE LAST VOLUME — and this is the
+            // very drift the note above warns about, arriving a second time. The
+            // bound the rule applies is `PartsTop`, i.e. `HitParts.RestCrown`,
+            // the MAXIMUM over every RestTop; while parts were an ordered column
+            // the last one held that maximum, and with thirteen volumes on real
+            // bones the last one is a shin (0.68 against a crown of 2.62). Left
+            // driving off the index, the fixture would set a center of mass the
+            // rule finds perfectly legal and would witness nothing at all.
             var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
             HitPart[] parts = g.Parts;                     // SECOND archetype
-            g.CenterOfMassHeight = parts[parts.Length - 1].RestTop + 0.01f;
+            g.CenterOfMassHeight = HitParts.RestCrown(parts) + 0.01f;
             var ex = Assert.Throws<System.ArgumentException>(
                 () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis));
             Assert.That(ex.Message, Does.Contain("Gunner.CenterOfMassHeight"));

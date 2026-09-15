@@ -672,12 +672,30 @@ namespace Ring.Editor
             // are read by this gate but never written by ApplyPartsNumbers,
             // because the marker key is what carries THEIR arrays (that
             // method's own doc).
+            // ⛔⛔ app-saqr (T4b): AND IT ASKS THE COUNT AS WELL, WITHOUT WHICH
+            // THIS DELIVERY SILENTLY DOES NOT HAPPEN. The half above keys on the
+            // ABSENCE of the key, a shape that can fire exactly once — right for
+            // a field being INTRODUCED, wrong for one being RESHAPED. T4b adds
+            // no key: it changes the VALUE of one that is already in all five
+            // sheets (measured on the committed assets: three `BoneA` hits
+            // apiece), so the OR above is false and `Apply()` would write
+            // nothing at all while every gate stayed green — the exact shape of
+            // deviation 11a, one task later.
+            // ⇒ The second half compares the count of volumes ON THE SHEET with
+            // the count the CODE holds, asked through the one home of that
+            // layout (`PartsDefaultsOf`), so it cannot disagree with what the
+            // delivery is about to write.
             bool partsPending =
                 !System.IO.File.ReadAllText($"{DataDir}/HeroConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobChaserConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobGunnerConfig.asset").Contains("Parts:") ||
                 !System.IO.File.ReadAllText($"{DataDir}/MobEliteConfig.asset").Contains("Parts:") ||
-                !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Parts:");
+                !System.IO.File.ReadAllText($"{DataDir}/MobDirectorConfig.asset").Contains("Parts:") ||
+                PartsCountDiffers("HeroConfig", AnimatorCatalog.BodyKind.Collector) ||
+                PartsCountDiffers("MobChaserConfig", AnimatorCatalog.BodyKind.Chaser) ||
+                PartsCountDiffers("MobGunnerConfig", AnimatorCatalog.BodyKind.Gunner) ||
+                PartsCountDiffers("MobEliteConfig", AnimatorCatalog.BodyKind.Elite) ||
+                PartsCountDiffers("MobDirectorConfig", AnimatorCatalog.BodyKind.Director);
 
             // app-94sk T4 (deviation 11a): the baked pose table, the gather
             // radius taken off it, and the rest-pose extents recomputed from
@@ -725,9 +743,21 @@ namespace Ring.Editor
             // newlines the match is the whole serialized line; Unity writes
             // this file LF-terminated and the string occurs exactly once
             // (verified on the committed asset).
+            // ⛔⛔ app-saqr (T4b): AND 4.9 JOINS 3.8 ON THAT LIST, BECAUSE THE
+            // CROWNS OVERTOOK IT. Т16 delivered 3.8 -> 4.9 against a Director
+            // whose tallest band reached 4.79; measured on his own bones his
+            // shell is a SPHERE and its crown is 5.4558, so rule 14 refuses the
+            // shipped configuration outright at 4.9 — the very failure app-saqr
+            // was opened for, in its second form.
+            // ⚠ THE NUMBER WRITTEN IS STILL THE OWNER'S, NOT THIS TASK'S:
+            // `ApplyMaxAimHeight` takes it from a pristine `HeroConfig`, where it
+            // has read 5.9 since Т13, and 5.9 clears every new crown with 0.44 m
+            // to spare. Left to `ApplyPoseNumbers` instead, the ceiling would be
+            // raised to the crown itself (5.4558) — a number nobody chose.
             bool maxAimHeightPending = System.IO.File
-                .ReadAllText($"{DataDir}/HeroConfig.asset")
-                .Contains("\n  MaxAimHeight: 3.8\n");
+                .ReadAllText($"{DataDir}/HeroConfig.asset") is var heroSheet
+                && (heroSheet.Contains("\n  MaxAimHeight: 3.8\n")
+                    || heroSheet.Contains("\n  MaxAimHeight: 4.9\n"));
 
             if (impactNumbersPending && ApplyImpactNumbers(hero, weapon, chaser, gunner, elite, director))
             {
@@ -739,12 +769,19 @@ namespace Ring.Editor
                 EditorUtility.SetDirty(director);
             }
 
-            // app-88jb Т16: the parts half. Only the three archetypes whose
-            // target array differs from the class default are dirtied here --
-            // Hero and Chaser hold their targets already and reach the YAML
-            // through the marker key instead (ApplyPartsNumbers' own doc).
-            if (partsPending && ApplyPartsNumbers(gunner, elite, director))
+            // app-88jb Т16: the parts half.
+            // ⛔⛔ app-saqr (T4b): ALL FIVE BODIES ARE WRITTEN NOW, AND THE TWO
+            // THAT WERE NOT ARE THE POINT. Т16 wrote only the three archetypes
+            // whose arrays differ from the class defaults and let Hero and Chaser
+            // reach the YAML "through the marker key" — which works only while
+            // the sheet and the class agree, because a dirtied asset is
+            // re-serialized from what was LOADED off it, not from the
+            // initializer. Their layouts are exactly what this task replaces, so
+            // the marker key would re-write the three bands it found.
+            if (partsPending && ApplyPartsNumbers(hero, chaser, gunner, elite, director))
             {
+                EditorUtility.SetDirty(hero);
+                EditorUtility.SetDirty(chaser);
                 EditorUtility.SetDirty(gunner);
                 EditorUtility.SetDirty(elite);
                 EditorUtility.SetDirty(director);
@@ -755,7 +792,15 @@ namespace Ring.Editor
             // in the C# defaults and NO GATE GOES RED — R-IDEM is green because
             // a no-op is idempotent, and the EditMode set is green because the
             // tests read `TestConfigs`, never the `.asset`.
-            if (posesPending && ApplyPoseNumbers(hero, chaser, gunner, elite, director))
+            // ⛔⛔ app-saqr (T4b): AND THE LAYOUT'S OWN GATE OPENS THIS ONE TOO.
+            // `RestBottom`/`RestTop` and `GatherRadius` are FUNCTIONS of the
+            // layout — validation rule 13 compares the extents with the bones
+            // the volumes name — so a delivery of new bone pairs that left the
+            // old extents behind would ship a configuration the builder refuses.
+            // `posesPending` alone cannot see that: it keys on `Poses:` being
+            // absent, and the key arrived at T4.
+            if ((posesPending || partsPending)
+                && ApplyPoseNumbers(hero, chaser, gunner, elite, director))
             {
                 EditorUtility.SetDirty(hero);
                 EditorUtility.SetDirty(chaser);
@@ -3173,7 +3218,7 @@ namespace Ring.Editor
             // body axis, so his widest capsule is the whole of his reach. ⚠ The
             // shipped number is not this one: `ApplyPoseNumbers` recomputes it
             // off the BAKED table, where the bones move.
-            changed |= SetIfDifferent(ref m.GatherRadius, 0.8f);
+            changed |= SetIfDifferent(ref m.GatherRadius, 2.5661f);   // app-saqr T4b: rule 9 over his 13 volumes
             changed |= SetIfDifferent(ref m.MaxHp, 120f);
             changed |= SetIfDifferent(ref m.ContactDamage, 25f);
             changed |= SetIfDifferent(ref m.AttackRange, 1.4f);
@@ -3254,7 +3299,7 @@ namespace Ring.Editor
             // app-94sk T4: rule 9 on his FIXTURE table — his torso capsule is his
             // body circle, so the two coincide there. ⚠ The shipped number is
             // recomputed off the BAKED table by `ApplyPoseNumbers`.
-            changed |= SetIfDifferent(ref m.GatherRadius, 2.2f);
+            changed |= SetIfDifferent(ref m.GatherRadius, 3.8316f);   // app-saqr T4b: rule 9 over his 15 volumes
             changed |= SetIfDifferent(ref m.MaxHp, 2500f);
             changed |= SetIfDifferent(ref m.ContactDamage, 45f);
             changed |= SetIfDifferent(ref m.TelegraphSeconds, 1.1f);
@@ -3369,16 +3414,37 @@ namespace Ring.Editor
         /// removed the last of it and left this call as the whole of the
         /// archetype's body -- and its call site already has the right gate,
         /// `(gunnerCreated || !gunnerMarkerPresent)`.
+        /// ⛔⛔ app-saqr (T4b): NINE VOLUMES ON REAL BONES — torso, chest, head
+        /// and a leg of three segments twice, AND NO ARMS AT ALL, which is the
+        /// measurement rather than an omission: Leela's rig carries 17 skinning
+        /// bones and not one of them is an arm (COMBAT-001 §2.1). Columns off
+        /// `Ring/Audit/Pose Candidates` (15 body bones after the IK filter):
+        ///   1 Torso · 2 Chest · 3 Neck · 4 Head · 5/9 UpperLeg l/r
+        ///   6/10 MidLeg l/r · 7/11 LowerLeg l/r · 8/12 FootBack l/r
+        /// Radii measured by that tool; extents derived off the rest row
+        /// (validation rule 13), the same way `HeroConfig.Parts` documents.
         static bool ApplyGunnerPartsDefaults(MobConfig m)
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.67f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.82f, RestTop = 3.74f,
-                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 3.07f, RestTop = 4.37f,
-                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.5315f, RestBottom = 1.2526f, RestTop = 2.7904f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // Torso→Chest
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.7783f, RestBottom = 1.4806f, RestTop = 3.4098f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Chest→Neck
+                new HitPart { BoneA = 4, BoneB = 4, Radius = 1.1910f, RestBottom = 1.8751f, RestTop = 4.2571f,
+                    Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // Head→Head
+                new HitPart { BoneA = 5, BoneB = 6, Radius = 0.5095f, RestBottom = 0.8433f, RestTop = 2.5283f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // UpperLeg.L→MidLeg.L
+                new HitPart { BoneA = 6, BoneB = 7, Radius = 0.2453f, RestBottom = 0.6881f, RestTop = 1.5981f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // MidLeg.L→LowerLeg.L
+                new HitPart { BoneA = 7, BoneB = 8, Radius = 0.3928f, RestBottom = -0.3204f, RestTop = 1.3262f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // LowerLeg.L→FootBack.L
+                new HitPart { BoneA = 9, BoneB = 10, Radius = 0.5095f, RestBottom = 0.8962f, RestTop = 2.5585f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // UpperLeg.R→MidLeg.R
+                new HitPart { BoneA = 10, BoneB = 11, Radius = 0.2453f, RestBottom = 0.6650f, RestTop = 1.6510f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // MidLeg.R→LowerLeg.R
+                new HitPart { BoneA = 11, BoneB = 12, Radius = 0.3928f, RestBottom = -0.3204f, RestTop = 1.3031f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // LowerLeg.R→FootBack.R
             });
         }
 
@@ -3398,16 +3464,58 @@ namespace Ring.Editor
         /// (EliteVisualScale 0.75 -> 1.5, crown 3.5756 against 3.50), and it is
         /// the only one of the four for which that is true. Radii are
         /// 0.7 / 1.0 / 0.35 of Radius 0.8, the shared humanoid proportion.
+        /// ⛔⛔ app-saqr (T4b): THIRTEEN VOLUMES ON REAL BONES — the body, two
+        /// guns, and a leg of four segments plus a foot twice (spec §3.2,
+        /// COMBAT-001 §2.2). Columns off `Ring/Audit/Pose Candidates` against
+        /// Trilobite's rig (20 skinning bones, 16 body bones):
+        ///   1 Body · 2/9 Shoulder l/r · 3/10 Leg1 · 4/11 Leg2 · 5/12 Leg3
+        ///   6/13 Leg4 · 7/14 Foot · 8/15 Gun l/r
+        ///
+        /// ⛔ THE BODY IS ONE VOLUME AND IT CARRIES `HitZone.Head`, which is
+        /// spec §3.2's decision with its cause spelled out (round-4 finding
+        /// D-I8): this archetype has no anatomical head at all — ADR-001 A14
+        /// says so — and the zone is what two live behaviors hang on, the 1.7
+        /// multiplier and `PersistentPropsDirector`'s `SpawnFullExplodeGibs`,
+        /// which fires on `e.Zone == HitZone.Head`. Dropping the zone would
+        /// silently lengthen his time-to-kill (against milestone item 5 and
+        /// risk Р-C) and take his exploding death with it.
+        /// ⚠ IT IS A DEGENERATE CAPSULE (`BoneA == BoneB`): his shell skins to
+        /// ONE bone, so the volume is a sphere on it. Every geometry primitive
+        /// already collapses a zero-length segment to a circle by name
+        /// (`Geometry.ClosestPointOnSegment`, `SegmentStadium`), so this is a
+        /// shape the solver has, not one it has to learn.
+        /// ⚠ THE GUNS TAKE `HitZone.Body`: they are the only torso-zone volumes
+        /// he has left, and a blow to one is an ordinary hit.
         static bool ApplyElitePartsDefaults(MobConfig m)
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 0.56f, RestBottom = -0.56f, RestTop = 1.68f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 0.80f, RestBottom = 0.32f, RestTop = 3.56f,
-                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.28f, RestBottom = 2.48f, RestTop = 3.86f,
-                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 1.9723f, RestBottom = -1.9723f, RestTop = 4.8991f,
+                    Zone = HitZone.Head, DamageMult = 1.70f, PartId = 0 },   // Root→Body
+                new HitPart { BoneA = 8, BoneB = 8, Radius = 1.0160f, RestBottom = 2.1768f, RestTop = 4.2088f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Gun.L→Gun.L
+                new HitPart { BoneA = 15, BoneB = 15, Radius = 1.0160f, RestBottom = 2.1768f, RestTop = 4.2088f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 2 },   // Gun.R→Gun.R
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.6921f, RestBottom = 1.9343f, RestTop = 3.3419f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // Shoulder.L→Leg1.L
+                new HitPart { BoneA = 3, BoneB = 4, Radius = 0.6921f, RestBottom = 1.6575f, RestTop = 3.3185f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // Leg1.L→Leg2.L
+                new HitPart { BoneA = 4, BoneB = 5, Radius = 0.4388f, RestBottom = 1.1763f, RestTop = 2.7884f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // Leg2.L→Leg3.L
+                new HitPart { BoneA = 5, BoneB = 6, Radius = 0.4753f, RestBottom = -0.0013f, RestTop = 2.0904f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // Leg3.L→Leg4.L
+                new HitPart { BoneA = 6, BoneB = 7, Radius = 0.8882f, RestBottom = -0.8627f, RestTop = 1.3622f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // Leg4.L→Foot.L
+                new HitPart { BoneA = 9, BoneB = 10, Radius = 0.6921f, RestBottom = 1.9343f, RestTop = 3.3419f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // Shoulder.R→Leg1.R
+                new HitPart { BoneA = 10, BoneB = 11, Radius = 0.6921f, RestBottom = 1.6575f, RestTop = 3.3185f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // Leg1.R→Leg2.R
+                new HitPart { BoneA = 11, BoneB = 12, Radius = 0.4388f, RestBottom = 1.1763f, RestTop = 2.7884f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // Leg2.R→Leg3.R
+                new HitPart { BoneA = 12, BoneB = 13, Radius = 0.4753f, RestBottom = -0.0013f, RestTop = 2.0904f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // Leg3.R→Leg4.R
+                new HitPart { BoneA = 13, BoneB = 14, Radius = 0.8882f, RestBottom = -0.8627f, RestTop = 1.3622f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // Leg4.R→Foot.R
             });
         }
 
@@ -3423,16 +3531,56 @@ namespace Ring.Editor
         /// (SimConfigBuilder) refuses any SimConfig whose Hero.MaxAimHeight
         /// sits below it -- which is why ApplyMaxAimHeight below has to land in
         /// the SAME Apply() run as this array and not one task later.
+        /// ⛔⛔ app-saqr (T4b): FIFTEEN VOLUMES ON REAL BONES — the body, two
+        /// guns, and FOUR legs of three segments each (spec §3.2, COMBAT-001
+        /// §2.2). That fourth pair of legs is milestone item 8's subject: hits
+        /// on the Director's four legs have to differ, and on three bands they
+        /// could not. Columns off `Ring/Audit/Pose Candidates` against
+        /// QuadShell's rig (28 skinning bones, 20 body bones):
+        ///   1 Body · 2/10 Front_Shoulder l/r · 3/11 Front_Leg1 · 4/12
+        ///   Front_Leg2 · 5/13 Front_Leg3 · 6/14 Back_Shoulder l/r ·
+        ///   7/15 Back_Leg1 · 8/16 Back_Leg2 · 9/17 Back_Leg3 · 18/19 Gun l/r
+        /// ⚠ The body is one degenerate-capsule volume carrying `HitZone.Head`,
+        /// and the guns carry `HitZone.Body` — see `ApplyElitePartsDefaults`
+        /// above, whose doc carries the whole argument (finding D-I8).
+        /// ⚠ THE OLD "LEGS END AT 1.51 BY OWNER DECISION" (bd app-50db, "a
+        /// slide does NOT open a passage under the Director") IS NOT LOST: it
+        /// was a property of the BAND column, and what carries it now is the
+        /// body shell's own extent, which reaches the ground on this rig.
         static bool ApplyDirectorPartsDefaults(MobConfig m)
         {
             return SetIfDifferent(ref m.Parts, new[]
             {
-                new HitPart { BoneA = 0, BoneB = 1, Radius = 1.54f, RestBottom = -1.54f, RestTop = 3.05f,
-                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-                new HitPart { BoneA = 1, BoneB = 2, Radius = 2.20f, RestBottom = -0.69f, RestTop = 5.9f,
-                    Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.77f, RestBottom = 2.93f, RestTop = 5.57f,
-                    Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+                new HitPart { BoneA = 0, BoneB = 1, Radius = 2.7582f, RestBottom = -2.7582f, RestTop = 5.0748f,
+                    Zone = HitZone.Head, DamageMult = 1.70f, PartId = 0 },   // Root→Body
+                new HitPart { BoneA = 18, BoneB = 18, Radius = 2.0742f, RestBottom = 1.3074f, RestTop = 5.4558f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Gun.L→Gun.L
+                new HitPart { BoneA = 19, BoneB = 19, Radius = 2.0742f, RestBottom = 1.3074f, RestTop = 5.4558f,
+                    Zone = HitZone.Body, DamageMult = 1.00f, PartId = 2 },   // Gun.R→Gun.R
+                new HitPart { BoneA = 2, BoneB = 3, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 3 },   // Front_Shoulder.L→Front_Leg1.L
+                new HitPart { BoneA = 3, BoneB = 4, Radius = 0.7368f, RestBottom = 0.3355f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 4 },   // Front_Leg1.L→Front_Leg2.L
+                new HitPart { BoneA = 4, BoneB = 5, Radius = 0.5274f, RestBottom = 0.5449f, RestTop = 2.7147f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 5 },   // Front_Leg2.L→Front_Leg3.L  ⛔ paw uncovered: containment 2.6355 closed the gap between his legs (fixture 45: -2.23 m)
+                new HitPart { BoneA = 6, BoneB = 7, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 6 },   // Back_Shoulder.L→Back_Leg1.L
+                new HitPart { BoneA = 7, BoneB = 8, Radius = 0.7368f, RestBottom = 0.3394f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // Back_Leg1.L→Back_Leg2.L
+                new HitPart { BoneA = 8, BoneB = 9, Radius = 0.5915f, RestBottom = 0.4847f, RestTop = 2.7815f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // Back_Leg2.L→Back_Leg3.L  ⛔ same, rear left
+                new HitPart { BoneA = 10, BoneB = 11, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // Front_Shoulder.R→Front_Leg1.R
+                new HitPart { BoneA = 11, BoneB = 12, Radius = 0.7368f, RestBottom = 0.3355f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // Front_Leg1.R→Front_Leg2.R
+                new HitPart { BoneA = 12, BoneB = 13, Radius = 0.5274f, RestBottom = 0.5449f, RestTop = 2.7147f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // Front_Leg2.R→Front_Leg3.R  ⛔ same, front right
+                new HitPart { BoneA = 14, BoneB = 15, Radius = 0.7368f, RestBottom = 1.2953f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // Back_Shoulder.R→Back_Leg1.R
+                new HitPart { BoneA = 15, BoneB = 16, Radius = 0.7368f, RestBottom = 0.3394f, RestTop = 2.9892f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 13 },   // Back_Leg1.R→Back_Leg2.R
+                new HitPart { BoneA = 16, BoneB = 17, Radius = 0.5915f, RestBottom = 0.4847f, RestTop = 2.7815f,
+                    Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 14 },   // Back_Leg2.R→Back_Leg3.R  ⛔ same, rear right
             });
         }
 
@@ -3519,13 +3667,79 @@ namespace Ring.Editor
         ///
         /// Returns whether anything changed -- the caller owns SetDirty/
         /// SaveAssets, like every other Apply* in this file.
-        static bool ApplyPartsNumbers(MobConfig gunner, MobConfig elite, MobConfig director)
+        static bool ApplyPartsNumbers(HeroConfig hero, MobConfig chaser, MobConfig gunner,
+            MobConfig elite, MobConfig director)
         {
             bool changed = false;
+            // ⛔ app-saqr (T4b): Hero and Chaser are written from the ONE home of
+            // the layout rather than from a fourth copy of it — the same home the
+            // pose instrument measures against (`PartsDefaultsOf`).
+            changed |= SetIfDifferent(ref hero.Parts,
+                PartsDefaultsOf(AnimatorCatalog.BodyKind.Collector));
+            changed |= SetIfDifferent(ref chaser.Parts,
+                PartsDefaultsOf(AnimatorCatalog.BodyKind.Chaser));
             changed |= ApplyGunnerPartsDefaults(gunner);
             changed |= ApplyElitePartsDefaults(elite);
             changed |= ApplyDirectorPartsDefaults(director);
             return changed;
+        }
+
+        /// bd `app-saqr` (T4b): does the SHEET carry a different number of
+        /// volumes than the code does? ⛔ THE COUNT IS READ OFF THE TEXT, not off
+        /// the loaded object: what this gate dates is the DELIVERY, and a loaded
+        /// object is whatever the last delivery left — asking it would be asking
+        /// the answer. `BoneA` is counted because it is written once per volume
+        /// and belongs to no other field of these five sheets (verified: the only
+        /// occurrences are inside `Parts`).
+        static bool PartsCountDiffers(string assetName, AnimatorCatalog.BodyKind kind)
+        {
+            string text = System.IO.File.ReadAllText($"{DataDir}/{assetName}.asset");
+            int onSheet = 0;
+            for (int i = text.IndexOf("BoneA", System.StringComparison.Ordinal); i >= 0;
+                 i = text.IndexOf("BoneA", i + 1, System.StringComparison.Ordinal)) onSheet++;
+            return onSheet != PartsDefaultsOf(kind).Length;
+        }
+
+        /// bd `app-saqr` (plan T4b step 1): ONE BODY'S LAYOUT AS THE CODE
+        /// DEFAULTS HOLD IT, for the pose-candidate instrument to measure a
+        /// radius against.
+        ///
+        /// ⛔ IT BUILDS THE ANSWER THROUGH THE SAME `Apply*PartsDefaults` THE
+        /// DELIVERY USES rather than restating any array: the three archetypes
+        /// whose layout differs from the class initializers get it applied to a
+        /// pristine instance, and the two whose layout IS the initializers
+        /// (Hero and Chaser) are returned as they come. A second spelling here
+        /// would be a fourth home for numbers that already have three too many
+        /// readers, and it would drift exactly when the layout changes — which
+        /// is the only time this method is called.
+        ///
+        /// ⚠ THE INSTRUMENT CANNOT READ THE `.asset` INSTEAD: the assets are
+        /// written FROM these defaults, so measuring them would measure the
+        /// delivery, and would have to run after it — one delivery too late to
+        /// choose a radius with.
+        internal static HitPart[] PartsDefaultsOf(AnimatorCatalog.BodyKind kind)
+        {
+            if (kind == AnimatorCatalog.BodyKind.Collector)
+            {
+                var hero = ScriptableObject.CreateInstance<HeroConfig>();
+                try { return hero.Parts; }
+                finally { Object.DestroyImmediate(hero); }
+            }
+
+            var mob = ScriptableObject.CreateInstance<MobConfig>();
+            try
+            {
+                switch (kind)
+                {
+                    case AnimatorCatalog.BodyKind.Chaser: break;   // the class initializers ARE his
+                    case AnimatorCatalog.BodyKind.Gunner: ApplyGunnerPartsDefaults(mob); break;
+                    case AnimatorCatalog.BodyKind.Elite: ApplyElitePartsDefaults(mob); break;
+                    case AnimatorCatalog.BodyKind.Director: ApplyDirectorPartsDefaults(mob); break;
+                    default: throw new System.ArgumentOutOfRangeException(nameof(kind));
+                }
+                return mob.Parts;
+            }
+            finally { Object.DestroyImmediate(mob); }
         }
 
         /// app-94sk T4 (spec §3.5а, deviation 11a): the BAKED numbers reaching
@@ -4376,14 +4590,51 @@ namespace Ring.Editor
         /// un-scaled parent), because part bounds are meters above the ground.
         /// Idempotent per-field diff, like every other self-heal in this file.
         /// Returns whether anything changed.
+        /// ⛔⛔ app-saqr (T4b): ONE BELT PER ZONE, SIZED AS THE ENVELOPE OF THAT
+        /// ZONE'S VOLUMES — AND THE LOOP THAT WAS HERE WAS A LIVE DEFECT THE
+        /// MOMENT THE LAYOUT LANDED (review finding D-C12, confirmed by running
+        /// it). It walked the volumes and named each belt `AimProxy_` + its
+        /// zone; with three volumes that produced three belts, and with thirteen
+        /// it produces three belts carrying the numbers of WHICHEVER VOLUME CAME
+        /// LAST. Measured on the delivered chaser: `AimProxy_Body` took his
+        /// right FOREARM (radius 0.0998 against the torso's 0.5 it replaced) and
+        /// `AimProxy_Legs` his right shin, so the cursor would stop finding his
+        /// body at all.
+        ///
+        /// ⛔ THE THREE NAMES ARE A CONTRACT WITH THE CLIENT TRACK, NOT AN
+        /// IMPLEMENTATION DETAIL: `Presentation/AimProvider.ClassifyProxyZone`
+        /// compares the collider's name against exactly `AimProxy_Legs`,
+        /// `AimProxy_Body` and `AimProxy_Head`, and anything else classifies as
+        /// `HitZone.None`. One belt per VOLUME would be truer to the geometry
+        /// and would need that file changed — which is the other track's zone
+        /// (bd `app-81jx` carries the contract). So the belts stay three and
+        /// each one grows to cover its zone.
+        ///
+        /// ⚠ THE RADIUS IS THE WIDEST VOLUME'S, NOT THE ZONE'S TRUE HALF-WIDTH,
+        /// and the difference is named rather than hidden: a belt is a vertical
+        /// capsule on the body's own axis, while a zone's volumes stand at their
+        /// own offsets from it, so an exact envelope would need the pose table
+        /// this method is not given. It is the best answer available from
+        /// `HitPart` alone and it is never NARROWER than what the loop it
+        /// replaces produced.
         static bool EnsureAimProxyChildren(Transform root, HitPart[] parts)
         {
             bool changed = false;
-            for (int i = 0; i < parts.Length; i++)
+            foreach (HitZone zone in new[] { HitZone.Legs, HitZone.Body, HitZone.Head })
             {
-                HitPart p = parts[i];
-                changed |= EnsureAimProxyCapsule(root, "AimProxy_" + p.Zone,
-                    p.RestBottom, p.RestTop, p.Radius);
+                float bottom = float.PositiveInfinity, top = float.NegativeInfinity, radius = 0f;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (parts[i].Zone != zone) continue;
+                    bottom = Mathf.Min(bottom, parts[i].RestBottom);
+                    top = Mathf.Max(top, parts[i].RestTop);
+                    radius = Mathf.Max(radius, parts[i].Radius);
+                }
+                // ⚠ A BODY MAY SIMPLY NOT HAVE A ZONE — the gunner has no arms
+                // and the elite carries no legs-free shell — and a belt for a
+                // zone nothing occupies would be a trigger in empty air.
+                if (radius <= 0f) continue;
+                changed |= EnsureAimProxyCapsule(root, "AimProxy_" + zone, bottom, top, radius);
             }
             return changed;
         }

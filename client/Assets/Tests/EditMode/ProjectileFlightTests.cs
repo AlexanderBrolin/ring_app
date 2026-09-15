@@ -1066,9 +1066,13 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.PierceDamageLoss = 0.5f;
             cfg.Weapon.Damage = 1000f;         // lethal beyond doubt
 
-            HitPart torso = cfg.Hero.Parts[^2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION. `Parts[^2]` was the
+            // trunk while a body was an ordered column of legs/body/head; laid
+            // out on real bones that slot is a SHIN on both of these bodies, and
+            // the variable's own name was the only thing still saying "torso".
+            HitPart torso = TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Body, "сборщик");
             float band = 0.5f * (torso.RestBottom + torso.RestTop);
-            HitPart chaserTrunk = cfg.Chaser.Parts[^2];
+            HitPart chaserTrunk = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
 
             Assert.AreEqual(0, cfg.Arena.ZoneRadius.Length,
                 "fixture premise: the arena carries no zones, so a live collector at the origin "
@@ -1185,7 +1189,9 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.PierceDamageLoss = 0.5f;
             cfg.Weapon.Damage = 1000f;         // lethal beyond doubt
 
-            HitPart torso = cfg.Hero.Parts[^2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — see the twin note in
+            // `HeavyRound_PiercesACollector_AndReachesTheBodyBehindHim` above.
+            HitPart torso = TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Body, "сборщик");
             float band = 0.5f * (torso.RestBottom + torso.RestTop);
 
             Assert.Greater(cfg.Weapon.ProjectileMass / cfg.Hero.Mass, cfg.Weapon.PierceMassRatio,
@@ -1254,7 +1260,10 @@ namespace Ring.Simulation.Tests
             cfg.Weapon.PierceMassRatio = 0.06f;
             cfg.Weapon.PierceDamageLoss = 0.5f;
 
-            HitPart trunk = cfg.Chaser.Parts[^2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — `Parts[^2]` is a shin
+            // on the thirteen-volume chaser, and a shin multiplies by 0.75, so
+            // the premise on the next line was measuring the wrong volume.
+            HitPart trunk = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
             Assert.AreEqual(1f, trunk.DamageMult, 0f,
                 "fixture premise: the band this shot lands in multiplies damage by exactly one, "
                 + "so the damage the rule compares IS the number the fixture states — a boundary "
@@ -1336,9 +1345,12 @@ namespace Ring.Simulation.Tests
 
             float pr = cfg.Weapon.ProjectileRadius;
             float dropOverTheGap = (muzzleH - aimH) * (bodyX / 9f);
-            Assert.Greater(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].RestBottom,
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — the trunk, asked of
+            // the layout instead of of the array's order.
+            HitPart trunk = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
+            Assert.Greater(muzzleH - dropOverTheGap, trunk.RestBottom,
                 "fixture premise: the descending round meets the body in its trunk band");
-            Assert.Less(muzzleH - dropOverTheGap, cfg.Chaser.Parts[^2].RestTop,
+            Assert.Less(muzzleH - dropOverTheGap, trunk.RestTop,
                 "fixture premise: the descending round meets the body in its trunk band");
             Assert.Greater((muzzleH - pr) / ((muzzleH - aimH) / 9f), bodyX,
                 "fixture premise: the ground arrives well AFTER the body, so this measures a "

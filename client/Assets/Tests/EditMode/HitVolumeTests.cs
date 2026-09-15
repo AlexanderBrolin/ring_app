@@ -18,9 +18,18 @@ namespace Ring.Simulation.Tests
         [Test]
         public void ALegOutsideTheBodyCircleIsStillGathered()   // fixture 4, witness of M327
         {
-            // ⭐⭐ THE CENTRAL TEST OF THE RADIUS SPLIT. The shot misses the body
-            // circle (0.5) and hits the foot swung out of it (0.9 + 0.35).
-            // Before this task it is a miss; after it, a hit on the legs.
+            // ⭐⭐ THE CENTRAL TEST OF THE RADIUS SPLIT: the shot misses the
+            // PHYSICAL circle and still strikes a leg. Before this task it is a
+            // miss; after it, a hit on the legs.
+            //
+            // ⛔⛔ app-saqr (T4b): THE SWUNG-OUT FOOT WAS THE FIXTURE'S OWN, AND
+            // IT IS GONE. The chaser's table used to carry a foot pushed 0.9 m
+            // aside BY HAND so that any leg point cleared his circle; measured,
+            // his rest pose keeps his legs under him. The subject survives
+            // untouched — his THIGH still reaches 0.83 m into the plan against a
+            // physical circle of 0.50 — but WHERE it reaches is now a question
+            // about the body, so the fixture asks the geometry instead of
+            // restating a number nobody measured.
             SimConfig cfg = TestConfigs.OpenField();
             // ⛔⛔ THE FREEZE GOES BEFORE `new SimulationWorld`, AND THAT IS THE
             // WHOLE OF IT: the world copies the configuration in its constructor,
@@ -29,15 +38,50 @@ namespace Ring.Simulation.Tests
             // 0.173 m per tick and leaves this fixture's geometry.
             TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(11, cfg);
-            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
-            // Premise AS A PROPERTY: the foot has to stick out of the physical
-            // circle, or the test is green on any implementation at all.
+            var body = new float2(6f, 0f);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
+            // Premise AS A PROPERTY: the gather circle has to be the wider of
+            // the two, or the test is green on any implementation at all.
             Assert.Greater(cfg.Chaser.GatherRadius, cfg.Chaser.Radius,
                 "премисса фикстуры: охват шире физического круга");
-            // The foot is swung along the body's +z, which ToWorld carries onto
-            // the world's +y. Shooting at leg height, aimed exactly where it is.
-            TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 0.4f,
-                targetXY: new float2(6f, 0.9f), targetH: 0.4f);
+
+            // The leg that swings furthest ACROSS the shot line, and the bone
+            // that does the swinging. ⚠ The shot runs down +X, so what makes the
+            // lateral miss is the body frame's `.z` — `HitVolumes.ToWorld` lays
+            // it on the world's `.y` (the same reading fixture 4a relies on).
+            HitPart leg = default;
+            float3 swung = default;
+            bool found = false;
+            foreach (HitPart candidate in cfg.Chaser.Parts)
+            {
+                if (candidate.Zone != HitZone.Legs) continue;
+                float3 a = cfg.Chaser.Poses.Bones[candidate.BoneA];
+                float3 b = cfg.Chaser.Poses.Bones[candidate.BoneB];
+                float3 outer = a.z >= b.z ? a : b;
+                if (found && outer.z <= swung.z) continue;
+                leg = candidate; swung = outer; found = true;
+            }
+            Assert.IsTrue(found, "премисса: у чейзера есть объём ноги");
+
+            // Aimed PAST that bone by the volume's own radius: the round then
+            // grazes the leg while its axis misses the body's by as much as the
+            // leg is wide. Level, at the bone's own height.
+            var aim = new float2(body.x, swung.z + leg.Radius);
+            var shooter = float2.zero;
+            float2 ray = math.normalize(aim - shooter);
+            float lateral = math.abs(ray.x * (body.y - shooter.y) - ray.y * (body.x - shooter.x));
+            // ⛔ BOTH BOUNDS, AND THEY ARE THE WHOLE POINT: outside the physical
+            // circle (or the mutant that gathers by `Radius` passes too), inside
+            // the gather circle (or nothing is gathered on correct code either
+            // and the fixture witnesses a miss on both sides).
+            Assert.Greater(lateral, cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: луч проходит ВНЕ физического круга тела — иначе мутант, "
+                + "собирающий кандидатов по Radius, остаётся без точки приложения");
+            Assert.Less(lateral, cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: луч внутри круга ОХВАТА — иначе кандидат не соберётся "
+                + "и на верном коде");
+
+            TestWorlds.FireAimed3D(w, shooter, muzzleH: swung.y, targetXY: aim, targetH: swung.y);
             TestWorlds.RunUntilProjectilesDie(w);
             Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e),
                 "нога за кругом тела не собрана в кандидаты — широкая фаза читает Radius");

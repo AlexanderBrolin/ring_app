@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using Ring.Simulation.Combat;   // app-saqr T4b: HitParts.RestCrown
 using Ring.Simulation.Core;
 using Unity.Mathematics;
 
@@ -36,7 +37,12 @@ namespace Ring.Simulation.Tests
         /// Gunner is TestConfigs.Default's Gunner — SpawnPair only zeroes speeds).
         static float AimAtTheGunnersHead()
         {
-            HitPart head = TestConfigs.Default().Gunner.Parts[^1];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — `Parts[^1]` was the
+            // head while a body was an ordered column; with nine volumes on his
+            // real bones the last one is a SHIN, and an aim 80 % up a shin is an
+            // aim at the ground.
+            HitPart head = TestWorlds.VolumeOfZone(TestConfigs.Default().Gunner.Parts,
+                HitZone.Head, "ганнер");
             return head.RestBottom + 0.8f * (head.RestTop - head.RestBottom);
         }
 
@@ -87,8 +93,11 @@ namespace Ring.Simulation.Tests
             // the min-scan carries on to the target behind it — the M5 rescan
             // branch, which nothing else in the suite drives.
             var w = SpawnPair(6.5f, GunnerX, out SimConfig cfg);
-            HitPart gunnerHead = cfg.Gunner.Parts[^1];
-            HitPart chaserCrown = cfg.Chaser.Parts[^1];
+            // ⛔ app-saqr (T4b): the head BY ZONE, and the CROWN as the maximum
+            // over every RestTop (`HitParts.RestCrown`, the rule's own home) —
+            // the index answered both only while the volumes were a column.
+            HitPart gunnerHead = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
+            float chaserCrown = HitParts.RestCrown(cfg.Chaser.Parts);
             Assert.That(AimH, Is.InRange(gunnerHead.RestBottom, gunnerHead.RestTop),
                 "фикстура: прицел обязан лежать в поясе ГОЛОВЫ ганнера, иначе тест не о хедшоте");
             // THE CLEARANCE, STATED AS GEOMETRY RATHER THAN AS PROSE (the old
@@ -106,7 +115,7 @@ namespace Ring.Simulation.Tests
             // what it always meant: above his crown WHERE HE STANDS.
             const float screenX = 6.5f;
             float screenTraceH = MuzzleH + (AimH - MuzzleH) * screenX / GunnerX;
-            Assert.Greater(screenTraceH, chaserCrown.RestTop + cfg.Weapon.ProjectileRadius,
+            Assert.Greater(screenTraceH, chaserCrown + cfg.Weapon.ProjectileRadius,
                 "фикстура: трасса не проходит над экранирующим чейзером — рескан по высоте нечем показать");
             Assert.GreaterOrEqual(cfg.Weapon.Damage * gunnerHead.DamageMult, cfg.Gunner.MaxHp,
                 "фикстура: один хедшот обязан быть смертельным, иначе «достал ганнера» не читается смертью");
@@ -143,12 +152,27 @@ namespace Ring.Simulation.Tests
             // the expectation below has always been written from. The premise
             // makes that explicit instead of leaving it to the prose.
             var w = SpawnPair(2f, GunnerX, out SimConfig cfg);
-            HitPart torso = cfg.Chaser.Parts[^2];
+            // ⛔ app-saqr (T4b): BY ZONE, NOT BY POSITION — `Parts[^2]` is a shin
+            // on the thirteen-volume chaser, and its 0.75 is not the number the
+            // expectation below is written from.
+            HitPart torso = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Body, "чейзер");
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             const float screenX = 2f;
+            // ⛔⛔ app-saqr (T4b): THE ENTRY IS AT THE WIDEST VOLUME, NOT AT THE
+            // PHYSICAL CIRCLE, and the difference is 0.42 m of flight: his chest
+            // capsule reaches 0.92 m into the plan against a body circle of 0.50,
+            // so the screen catches the round EARLIER and therefore LOWER than
+            // this premise used to compute. Both ends of the crossing are stated
+            // instead of one — the lowest the trace can be caught at (the gather
+            // circle, which rule 9 makes exactly the widest volume's reach) and
+            // the highest it reaches over him (his own axis).
             float screenEntryH = MuzzleH + (AimH - MuzzleH)
-                * (screenX - (cfg.Chaser.Radius + cfg.Weapon.ProjectileRadius)) / GunnerX;
+                * (screenX - (cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius)) / GunnerX;
+            float screenAxisH = MuzzleH + (AimH - MuzzleH) * screenX / GunnerX;
             Assert.That(screenEntryH, Is.InRange(torso.RestBottom, torso.RestTop),
                 "фикстура: экран ловит раунд не КОРПУСОМ — множитель ниже посчитан не от той части");
+            Assert.Less(screenAxisH, head.RestBottom,
+                "фикстура: трасса дотянулась до головы экрана — множитель ниже был бы хедшотным");
             TestWorlds.FireAimed3D(w, float2.zero, MuzzleH, new float2(GunnerX, 0f), AimH);
             TestWorlds.RunUntilProjectilesDie(w);
 
@@ -169,7 +193,7 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void Graze_AtTheCrownPlusRadius_HitsAsHead()
+        public void Graze_AtTheCrown_Registers_AndOneRadiusAboveItDoesNot()
         {
             var cfg = TestConfigs.OpenField();
             cfg.Chaser.MaxSpeed = 0f;
@@ -200,9 +224,33 @@ namespace Ring.Simulation.Tests
             // 0.015 m against a probe spacing of 0.073 — the cost recorded as deviation 3 of this plan
             // ("a tangential pass can be missed by the scan — accepted and
             // written down"). Taken at the crown itself the window is 0.47 m
-            // wide, i.e. six probes, and the fixture measures what it is for:
-            // a round level with the crown reads HEAD, one above it misses.
-            float column = cfg.Chaser.Parts[^1].RestTop;
+            // wide, i.e. six probes.
+            //
+            // ⛔⛔ app-saqr (T4b): AND THE NAME LOST ITS SECOND HALF, BECAUSE THE
+            // CROWN CHANGED OWNER. "Hits as Head" was never this fixture's
+            // subject — it was a PROPERTY OF THE COLUMN, where the topmost band
+            // was the head by construction. Laid out on real bones the chaser's
+            // highest point is the cap of his CHEST capsule (2.62) and his head
+            // ends 0.40 m below it (2.22), so a round level with the crown is a
+            // chest graze and reads Body — on entirely correct code. Asserting
+            // Head there would be pinning an accident of the old layout.
+            // ⇒ WHAT SURVIVES IS THE WHOLE OF WHAT IT WITNESSED: the edge
+            // forgiveness of `HitZones.Overlaps`, which grows the presented
+            // column by the round's own radius at both ends instead of dropping
+            // a grazing round off the table. It is still the only witness of it
+            // in the suite, and the zone half is kept — asked of the layout
+            // (whose volume OWNS the crown) instead of of a literal.
+            HitPart crownVolume = default;
+            bool crownFound = false;
+            foreach (HitPart p in cfg.Chaser.Parts)
+            {
+                if (crownFound && p.RestTop <= crownVolume.RestTop) continue;
+                crownVolume = p; crownFound = true;
+            }
+            Assert.IsTrue(crownFound, "премисса: у чейзера есть хоть один объём");
+            float column = crownVolume.RestTop;
+            Assert.AreEqual(HitParts.RestCrown(cfg.Chaser.Parts), column, 1e-6f,
+                "премисса: найденный объём и есть тот, чей верх — крона тела");
 
             var grazing = new SimulationWorld(1, cfg);
             TestWorlds.SpawnMobsAt(grazing, (MobType.Chaser, new float2(5f, 0f)));
@@ -211,7 +259,8 @@ namespace Ring.Simulation.Tests
             TestWorlds.RunUntilProjectilesDie(grazing);
             Assert.IsTrue(TestEvents.TryFirstOf(grazing, SimEventKind.ProjectileHit,
                 out SimEvent graze), "the grazing shot did not register");
-            Assert.AreEqual(HitZone.Head, graze.Zone); // clamped down onto the crown
+            Assert.AreEqual(crownVolume.Zone, graze.Zone,
+                "скользящий по кроне раунд засчитан не тому объёму, чей верх эту крону и держит");
 
             // one projectile radius higher and the column is genuinely cleared
             var over = new SimulationWorld(1, cfg);

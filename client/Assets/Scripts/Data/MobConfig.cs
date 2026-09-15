@@ -95,14 +95,51 @@ namespace Ring.Data
         /// (bones 0 / 0.88 / 2.12 / 2.70). Same numbers `TestConfigs` has
         /// carried since T2; the class defaults were the half that still read
         /// as bands.
+        /// ⛔⛔ app-saqr (T4b): THIRTEEN VOLUMES ON REAL BONES — see
+        /// `HeroConfig.Parts` for why a placeholder column had to go and what
+        /// it cost. The layout is spec §3.2 / COMBAT-001 §2.2 for the CHASER
+        /// (this class's shape): torso, chest, head, upper and lower arm x2,
+        /// leg of three segments x2. Indices are the baked table's columns off
+        /// `Ring/Audit/Pose Candidates` against George's rig (47 skinning
+        /// bones, 21 body bones):
+        ///   1 Torso · 2 Chest · 3 Neck · 4 Head · 5/8 Shoulder l/r
+        ///   6/9 UpperArm l/r · 7/10 LowerArm l/r · 11/15 UpperLeg l/r
+        ///   12/16 MidLeg l/r · 13/17 LowerLeg l/r · 14/18 FootBack l/r
+        /// ⛔ RADII ARE MEASURED by that same tool — the furthest the mesh gets
+        /// from each pair's segment — never taken off a decile profile
+        /// (spec §3.2's own refusal, and the reason is a T-posed prefab).
+        /// ⚠ Arms carry `HitZone.Body` until plan 2 introduces `HitZone.Arms`.
+        /// ⚠ Extents are derived off `TestConfigs.ChaserRestPose()`'s row 0
+        /// (validation rule 13); the `.asset` gets them recomputed from the
+        /// BAKED table by the bootstrap.
         public HitPart[] Parts =
         {
-            new HitPart { BoneA = 0, BoneB = 1, Radius = 0.35f, RestBottom = -0.35f, RestTop = 1.23f,
-                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 0 },
-            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.50f, RestBottom = 0.38f, RestTop = 2.62f,
-                Zone = HitZone.Body, DamageMult = 1.0f, PartId = 1 },
-            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.17f, RestBottom = 1.95f, RestTop = 2.87f,
-                Zone = HitZone.Head, DamageMult = 1.7f, PartId = 2 },
+            new HitPart { BoneA = 1, BoneB = 2, Radius = 0.2902f, RestBottom = 0.6488f, RestTop = 1.6469f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 0 },   // Torso→Chest
+            new HitPart { BoneA = 2, BoneB = 3, Radius = 0.8347f, RestBottom = 0.5220f, RestTop = 2.6224f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 1 },   // Chest→Neck
+            new HitPart { BoneA = 4, BoneB = 4, Radius = 0.2545f, RestBottom = 1.7124f, RestTop = 2.2214f,
+                Zone = HitZone.Head, DamageMult = 1.70f, PartId = 2 },   // Head→Head
+            new HitPart { BoneA = 5, BoneB = 6, Radius = 0.1271f, RestBottom = 1.7035f, RestTop = 2.0418f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 3 },   // Shoulder.L→UpperArm.L
+            new HitPart { BoneA = 6, BoneB = 7, Radius = 0.0998f, RestBottom = 1.4144f, RestTop = 2.0145f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 4 },   // UpperArm.L→LowerArm.L  ⛔ claw uncovered: containment 0.5587 would make his forearm wider than his torso
+            new HitPart { BoneA = 8, BoneB = 9, Radius = 0.1271f, RestBottom = 1.7095f, RestTop = 2.0535f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 5 },   // Shoulder.R→UpperArm.R
+            new HitPart { BoneA = 9, BoneB = 10, Radius = 0.0998f, RestBottom = 1.4362f, RestTop = 2.0262f,
+                Zone = HitZone.Body, DamageMult = 1.00f, PartId = 6 },   // UpperArm.R→LowerArm.R  ⛔ same, right side
+            new HitPart { BoneA = 11, BoneB = 12, Radius = 0.2757f, RestBottom = 0.4363f, RestTop = 1.3382f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 7 },   // UpperLeg.L→MidLeg.L
+            new HitPart { BoneA = 12, BoneB = 13, Radius = 0.1265f, RestBottom = 0.3648f, RestTop = 0.8385f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 8 },   // MidLeg.L→LowerLeg.L
+            new HitPart { BoneA = 13, BoneB = 14, Radius = 0.2019f, RestBottom = -0.1638f, RestTop = 0.6932f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 9 },   // LowerLeg.L→FootBack.L
+            new HitPart { BoneA = 15, BoneB = 16, Radius = 0.2757f, RestBottom = 0.4641f, RestTop = 1.3541f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // UpperLeg.R→MidLeg.R
+            new HitPart { BoneA = 16, BoneB = 17, Radius = 0.1265f, RestBottom = 0.3526f, RestTop = 0.8663f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 11 },   // MidLeg.R→LowerLeg.R
+            new HitPart { BoneA = 17, BoneB = 18, Radius = 0.2019f, RestBottom = -0.1638f, RestTop = 0.6810f,
+                Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 12 },   // LowerLeg.R→FootBack.R
         }; // Was the sync-marker key until app-88jb Т19.
 
         /// app-94sk T2 (spec §3.3, Р507): the projectile broad phase's radius —
@@ -110,7 +147,11 @@ namespace Ring.Data
         /// body radius until the baker writes the real one.
         // app-94sk T4: the chaser's own reach off ChaserRestPose — his foot is
         // swung 0.9 m out of his circle, so rule 9's table half bites here.
-        [Range(0.05f, 12f)] public float GatherRadius = 1.25f;
+        // ⛔ app-saqr (T4b): 1.25 -> 0.9243 — rule 9 over the chaser's THIRTEEN
+        // real volumes. It goes DOWN, and that is the measurement rather than
+        // a saving: the old number came off a fixture whose foot was swung
+        // 0.9 m aside by hand, and his real rest pose keeps its legs under him.
+        [Range(0.05f, 12f)] public float GatherRadius = 0.9243f;
 
         /// app-94sk T2 (spec §3.9): WHICH volume this archetype strikes with.
         /// ⛔ -1 IS THE SENTINEL "this archetype does not strike at all", and it
