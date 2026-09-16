@@ -159,3 +159,4 @@ MonoBehaviour:
   PierceDamageLoss: 0.5
   PushRecoilFraction: 1
   Poses: {fileID: -4802529177845105490, guid: 8a79db306e37bdf7a86f131a486483bc, type: 3}
+  MobTurnDegPerSec: 540
