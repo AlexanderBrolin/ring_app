@@ -129,6 +129,23 @@ namespace Ring.Data
                     // BY SECTION NAME (rule 12) — refusing here instead would
                     // name no body and duplicate a refusal that has a home.
                     Poses = hero.Poses != null ? hero.Poses.Table : default,
+                    // app-94sk T5b (spec §4.2): the three turn-and-damp numbers
+                    // ride across as plain numbers, like GatherRadius above.
+                    // They came from GameFeelConfig, which the builder never
+                    // reads at all — that is the whole point of the move: a
+                    // number the simulation's digest covers has to arrive on
+                    // the assembly line every peer builds its config on.
+                    // ⚠ NO VALIDATION RULE OF THEIR OWN, and that is a choice
+                    // rather than an omission — the same one `TiltGain` and its
+                    // neighbors carry (see `Validate`'s own note on them). A
+                    // rule here would have to say "not negative", and a negative
+                    // turn rate is not silent: the doll visibly turns away from
+                    // where it is going, on the first playtest, which is how
+                    // Presentation numbers are checked at all (ADR-002 §9). The
+                    // `[Range]` hints ride on the SO for the Inspector path.
+                    SpeedDampTime = hero.SpeedDampTime,
+                    VisualTurnDegPerSec = hero.VisualTurnDegPerSec,
+                    IdleAimTurnDegPerSec = hero.IdleAimTurnDegPerSec,
                 },
                 Weapon = new WeaponSimConfig
                 {
@@ -356,7 +373,13 @@ namespace Ring.Data
             PierceDamageLoss = m.PierceDamageLoss,
             // app-88jb Т22 (spec §3.5): this archetype's reaction share, through
             // the same one method, for the same reason.
-            PushRecoilFraction = m.PushRecoilFraction
+            PushRecoilFraction = m.PushRecoilFraction,
+            // app-94sk T5b (spec §4.2): this archetype's turn rate, through the
+            // same one method — which is what makes it per archetype at all:
+            // Chaser, Gunner, Elite and Director each come through here with
+            // their own MobConfig, where GameFeelConfig had one number for the
+            // four of them.
+            MobTurnDegPerSec = m.MobTurnDegPerSec
         };
 
         static ArenaSimConfig ToArenaSimConfig(ArenaConfig a)

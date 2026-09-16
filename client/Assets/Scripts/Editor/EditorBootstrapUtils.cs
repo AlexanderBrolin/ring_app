@@ -382,6 +382,46 @@ namespace Ring.Editor
                 if (!text.Contains(field)) { EditorUtility.SetDirty(so); return; }
         }
 
+        /// THE OTHER HALF OF THE SAME GUARD (app-w4ca T5b) — the one the doc
+        /// above names as missing, in the shape it named: a field REMOVED from
+        /// a class. `EnsureAssetHasKey` sees a MISSING name and never a SURPLUS
+        /// one, so a removed field's key stays in the committed YAML forever:
+        /// nothing dirties the SO, `SaveAssets` writes nothing, and no gate
+        /// goes red for it (R-IDEM stays green because a no-op is idempotent,
+        /// and EditMode stays green because the tests read C# defaults). What
+        /// the owner is left with is a number in the Inspector's YAML that no
+        /// class has any more — the traceability defect its twin exists to
+        /// prevent, mirrored.
+        ///
+        /// Same technique, inverted: dirty the SO while ANY of the named keys
+        /// is STILL in the file, so the `AssetDatabase.SaveAssets()` the caller
+        /// already makes rewrites the asset with the class's CURRENT field set
+        /// and the surplus keys drop out with it.
+        /// ⚠ ONE-TIME BY CONSTRUCTION, exactly like its twin: after that
+        /// rewrite the names are gone from the text, so a second Apply dirties
+        /// nothing and R-IDEM holds.
+        /// ⛔ NAME THE DEPARTED FIELDS, NOT A MARKER: there is no "last field"
+        /// convention on this side — the names are simply what the task took
+        /// away. They stop being needed once every committed asset has been
+        /// rewritten past them, and a later task that finds the list stale is
+        /// meant to shorten it rather than grow it forever.
+        /// ⛔ AND THE MATCH IS KEY-BOUNDED (`"Name:"`), unlike its twin's bare
+        /// `Contains`, because the two directions fail differently. A surplus
+        /// name matched by a LONGER key (`MobTurnDegPerSecScale` answering for
+        /// `MobTurnDegPerSec`) would dirty the asset on EVERY run forever —
+        /// a re-write of identical text, so no gate would ever go red for it.
+        /// ⚠ The twin's own bare `Contains` has the mirrored hole (a longer key
+        /// answers "present" and suppresses the backfill); it is untouched here
+        /// because its fourteen call sites are not this task's to re-verify —
+        /// recorded as a side-quest instead of fixed silently.
+        public static void EnsureAssetLacksKey(Object so, string assetPath,
+            params string[] removedFields)
+        {
+            string text = File.ReadAllText(assetPath);
+            foreach (string field in removedFields)
+                if (text.Contains(field + ":")) { EditorUtility.SetDirty(so); return; }
+        }
+
         /// bd `app-saqr` (T4b): THE TWELVE SHEETS THE GAME LOADS, ASSEMBLED ONCE.
         ///
         /// ⛔ ONE HOME, because there are two callers and their disagreement

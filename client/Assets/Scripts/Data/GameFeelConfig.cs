@@ -106,11 +106,17 @@ namespace Ring.Data
         // visible model from its hittable silhouette. A GunnerVisualScale
         // change must move both.
         [Range(0.05f, 2f)] public float GunnerVisualScale = 0.4f;
-        [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
         [Range(0f, 1f)] public float PlayerMoveThreshold01 = 0.05f;
-        [Range(0f, 1440f)] public float VisualTurnDegPerSec = 720f;
-        [Range(0f, 1440f)] public float IdleAimTurnDegPerSec = 180f;
-        [Range(0f, 1440f)] public float MobTurnDegPerSec = 540f;
+        // ⛔ FOUR NUMBERS LEFT THIS CLASS HERE (app-94sk T5b): `SpeedDampTime`,
+        // `VisualTurnDegPerSec` and `IdleAimTurnDegPerSec` are `HeroConfig`'s
+        // now, `MobTurnDegPerSec` is `MobConfig`'s — per archetype there, where
+        // one number used to turn all four. WHY they are balance rather than
+        // feel, and what it costs, is written once, in `HeroSimConfig`'s own
+        // doc; this tombstone exists so a reader of the feel sheet is not left
+        // hunting. Nothing else moved: `PlayerMoveThreshold01` above and the
+        // two yaw offsets below stay feel, because they decide how the doll
+        // LOOKS doing what the simulation already decided.
+
         [Range(-180f, 180f)] public float PlayerYawOffsetDeg = 180f;
         [Range(-180f, 180f)] public float MechYawOffsetDeg = 0f;
         [Range(0f, 5f)] public float MobWalkEnterSpeed = 0.4f;

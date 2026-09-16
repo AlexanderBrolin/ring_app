@@ -96,10 +96,20 @@ namespace Ring.Simulation.Core
             h = HashHitPartArray(h, c.Parts);
             // app-94sk T2 (spec §3.3, §3.5): the broad-phase radius and the
             // baked poses, folded IN THE STEP THAT DECLARES THEM -- the same
-            // rule HashWeapon's own note above spells out, and the reflective
+            // rule HashWeapon's own note below spells out, and the reflective
             // sweep in SimConfigHashTests is what enforces it.
             h = StateHash64.Add(h, c.GatherRadius);
             h = HashPoseTable(h, in c.Poses);
+            // app-94sk T5b (spec §4.2): the three turn-and-damp numbers, folded
+            // in the step that DECLARES them — the rule HashWeapon's own note
+            // below spells out. ⛔ THREE SEPARATE FOLDS, NOT ONE COMBINED: each
+            // is its own engine of this digest (review-round finding D-I10), so
+            // a slip that folded one number twice and another never would still
+            // move the hash and hide behind the other two. The reflective sweep
+            // in SimConfigHashTests bumps them one at a time for that reason.
+            h = StateHash64.Add(h, c.SpeedDampTime);
+            h = StateHash64.Add(h, c.VisualTurnDegPerSec);
+            h = StateHash64.Add(h, c.IdleAimTurnDegPerSec);
             return h;
         }
 
@@ -190,6 +200,13 @@ namespace Ring.Simulation.Core
             // app-88jb Т22 (spec §3.5, decision Р442): this archetype's reaction
             // share, wired in the same step that declares it, same reason again.
             h = StateHash64.Add(h, c.PushRecoilFraction);
+            // app-94sk T5b (spec §4.2): this archetype's turn rate, same step,
+            // same reason. ⚠ FOUR CALL SITES READ THIS ONE FOLD (Compute hashes
+            // Chaser, Gunner, Elite and Director through here), so the four
+            // archetypes' numbers enter the digest separately even though the
+            // line is written once — which is what the four section sweeps in
+            // SimConfigHashTests check one archetype at a time.
+            h = StateHash64.Add(h, c.MobTurnDegPerSec);
             return h;
         }
 

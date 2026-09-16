@@ -860,17 +860,26 @@ namespace Ring.Presentation
             float alpha = _runner.RenderAlpha;
             int localIndex = curr.LocalPlayerIndex;
 
-            // Read once per frame, exactly like SyncMobs' own telegraphSeconds/
-            // hover reads below: the views take plain values and never hold a
+            // Read once per frame, exactly like SyncMobs' own config/hover
+            // reads below: the views take plain values and never hold a
             // GameFeelConfig/SimulationRunner reference of their own.
+            // app-94sk T5b: THE DAMP TIME AND THE TWO TURN RATES NOW COME OUT
+            // OF THE CONFIG, beside MaxSpeed, instead of out of the feel sheet
+            // — they are balance from this task on and enter SimConfigHash
+            // (HeroSimConfig's own doc carries the whole argument). Nothing the
+            // doll does changes: the numbers travelled unchanged.
+            // `SimulationRunner.Config` is a by-value property over a large
+            // struct, so it is copied ONCE here and read four times off the
+            // copy — the same shape `SyncMobs` already uses further down.
+            SimConfig config = _runner.Config;
             PlayerVisualParams visualParams = new PlayerVisualParams
             {
-                MaxSpeed = _runner.Config.Hero.MaxSpeed,
-                SpeedDampTime = _gameFeel.SpeedDampTime,
+                MaxSpeed = config.Hero.MaxSpeed,
+                SpeedDampTime = config.Hero.SpeedDampTime,
                 MoveThreshold01 = _gameFeel.PlayerMoveThreshold01,
                 YawOffsetDeg = _gameFeel.PlayerYawOffsetDeg,
-                VisualTurnDegPerSec = _gameFeel.VisualTurnDegPerSec,
-                IdleAimTurnDegPerSec = _gameFeel.IdleAimTurnDegPerSec,
+                VisualTurnDegPerSec = config.Hero.VisualTurnDegPerSec,
+                IdleAimTurnDegPerSec = config.Hero.IdleAimTurnDegPerSec,
                 AimYawClampDeg = _gameFeel.AimYawClampDeg,
                 SpineYawShare = _gameFeel.SpineYawShare,
                 DashLeanDeg = _gameFeel.DashLeanDeg,
@@ -1187,7 +1196,7 @@ namespace Ring.Presentation
             // inside the loop.
             SimConfig config = _runner.Config;
             // В1/В2 fix-wave 2 (app-n6g item 3b): read once per frame, same
-            // shape as telegraphSeconds above — MobView.Sync takes plain
+            // shape as the config copy above — MobView.Sync takes plain
             // values, never a GameFeelConfig/AimProvider reference of its own.
             MobView hoveredMob = _aimProvider != null ? _aimProvider.CurrentHoveredMob : null;
             // app-7pk (cheap version, Task 24 fold-in): the hover rim is
@@ -1221,7 +1230,14 @@ namespace Ring.Presentation
                 RunEnterSpeed = _gameFeel.MobRunEnterSpeed,
                 RunExitSpeed = _gameFeel.MobRunExitSpeed,
                 HoldSeconds = _gameFeel.LocomotionHoldSeconds,
-                TurnDegPerSec = _gameFeel.MobTurnDegPerSec,
+                // ⛔ app-94sk T5b: `TurnDegPerSec` IS NOT SET HERE ANY MORE and
+                // that is the whole shape of the move. It used to be one feel
+                // number for every mob in the frame; it is `MobSimConfig`'s
+                // now, i.e. PER ARCHETYPE, so it is written inside the loop
+                // below off the archetype's own config. Left out of this
+                // initializer deliberately rather than set to a placeholder: a
+                // number that means "whichever body is being synced" has no
+                // frame-wide value to stand in for it.
                 YawOffsetDeg = _gameFeel.MechYawOffsetDeg,
                 LocomotionCrossFadeSeconds = _gameFeel.LocomotionCrossFadeSeconds,
                 OneShotCrossFadeSeconds = _gameFeel.OneShotCrossFadeSeconds,
@@ -1236,6 +1252,22 @@ namespace Ring.Presentation
                 MobState m = curr.Mobs[i];
                 _seenMobIds.Add(m.Id);
 
+                // app-94sk T5b: ONE archetype lookup per mob, through
+                // `SimConfig.MobConfigFor` — the canonical home of that
+                // four-way switch (ruling 259; ⚠ ONE full copy still stands,
+                // `PersistentPropsDirector.ArchetypeConfigFor`, parked there
+                // deliberately by that doc's own ruling and not by oversight),
+                // which returns `ref readonly` and so
+                // copies nothing out of the frame's own config copy. It serves
+                // BOTH numbers this loop needs per body: the turn rate that
+                // arrived with this task and the telegraph that used to have a
+                // narrow switch of its own here (`TelegraphSecondsFor`, deleted
+                // — it was a copy the "count, exactly" note on MobConfigFor did
+                // not know about, and leaving it beside the canonical call
+                // would have been two idioms one screen apart).
+                ref readonly MobSimConfig archetype = ref SimConfig.MobConfigFor(in config, m.Type);
+                visualParams.TurnDegPerSec = archetype.MobTurnDegPerSec;
+
                 if (!_activeMobs.TryGetValue(m.Id, out MobView view))
                 {
                     view = RentMob(m.Type);
@@ -1248,7 +1280,7 @@ namespace Ring.Presentation
                     // Sync right away (Task 21 Bind/Sync contract) so a mob that's
                     // already mid-Telegraph the instant it becomes visible reads
                     // correctly this same frame, not one frame late.
-                    view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                    view.Sync(in m, archetype.TelegraphSeconds, view == hoveredMob,
                         hoverAccent, hoverGlowBoost);
                     view.Visual?.Sync(in m, in visualParams);
                     _activeMobs.Add(m.Id, view);
@@ -1263,7 +1295,7 @@ namespace Ring.Presentation
                 float2 prevPos = FindMobPrevPos(prev, m.Id, m.Pos);
                 Vector3 world = Vector3.Lerp(SimSpace.ToWorld(prevPos), SimSpace.ToWorld(m.Pos), alpha);
                 view.transform.position = world + MobOffset;
-                view.Sync(in m, TelegraphSecondsFor(m.Type, in config), view == hoveredMob,
+                view.Sync(in m, archetype.TelegraphSeconds, view == hoveredMob,
                     hoverAccent, hoverGlowBoost);
                 view.Visual?.Sync(in m, in visualParams);
             }
@@ -1559,18 +1591,14 @@ namespace Ring.Presentation
                 "unknown archetype"),
         };
 
-        /// The archetype's own windup length, for `MobView`'s telegraph ramp.
-        /// Same throwing shape as the pool/prefab homes above; see the read
-        /// site in `SyncMobs` for what one shared number cost.
-        static float TelegraphSecondsFor(MobType type, in SimConfig config) => type switch
-        {
-            MobType.Chaser => config.Chaser.TelegraphSeconds,
-            MobType.Gunner => config.Gunner.TelegraphSeconds,
-            MobType.Elite => config.Elite.TelegraphSeconds,
-            MobType.Director => config.Director.TelegraphSeconds,
-            _ => throw new System.ArgumentOutOfRangeException(nameof(type), type,
-                "unknown archetype"),
-        };
+        // ⚠ `TelegraphSecondsFor` STOOD HERE and is gone (app-94sk T5b): it
+        // was a fourth handwritten copy of the archetype switch
+        // `SimConfig.MobConfigFor` is the canonical home of, and `SyncMobs`
+        // now asks that home once per body for the telegraph and the turn
+        // rate together. The pool and prefab switches above stay: they answer
+        // about SCENE objects, which no config section knows anything about.
+        // ⚠ Plain `//`, not `///`: an XML doc here would attach itself to
+        // `RentMob` below and describe a method that no longer exists.
 
         MobView RentMob(MobType type)
         {

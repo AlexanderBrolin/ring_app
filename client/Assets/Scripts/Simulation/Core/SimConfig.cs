@@ -121,6 +121,30 @@ namespace Ring.Simulation.Core
         /// not one shared table on SimConfig: a table carries ONE BoneCount and
         /// the five bodies do not share a skeleton -- see PoseTable's own doc.
         public PoseTable Poses;
+
+        /// app-94sk T5b (spec §4.2): THE THREE TURN-AND-DAMP NUMBERS THE
+        /// COLLECTOR'S DOLL IS DRIVEN BY, moved here out of `GameFeelConfig`.
+        /// They were game feel — hot-tweaked live on the stand — and they are
+        /// balance from this task on, because T5c makes the body's HEADING a
+        /// simulated quantity (`MobState.Dir`): the rate a body turns at then
+        /// decides where a shot lands, and a number that decides an outcome
+        /// cannot live on a sheet each peer keeps its own copy of. Entering
+        /// `SimConfigHash` is exactly what makes the disagreement loud —
+        /// `HandshakeDecision.Evaluate` answers `SimConfigMismatch` instead of
+        /// letting two peers play different silhouettes.
+        /// ⚠ THE PRICE IS NAMED HERE, NOT DISCOVERED ON A PLAYTEST: on the
+        /// stand these three stop turning live (milestone В-M1 item 9). A solo
+        /// PlayMode session still rebuilds the config on an Inspector edit
+        /// (`HeroConfig.OnValidate`), so the tweak loop survives where nobody
+        /// has to agree with anybody.
+        /// ⛔ EACH IS A HASH ENGINE OF ITS OWN (spec §4.2, review-round finding
+        /// D-I10): an error in one is invisible in the other two, which is why
+        /// the reflective sweep in SimConfigHashTests bumps them one at a time.
+        /// ⚠ `Presentation` is still their only consumer — `ViewRegistry`
+        /// reads them out of the same config it already reads `MaxSpeed` from.
+        public float SpeedDampTime;
+        public float VisualTurnDegPerSec;
+        public float IdleAimTurnDegPerSec;
     }
 
     /// Balance numbers for the player's weapon (fire rate, spread/recoil, projectiles).
@@ -343,6 +367,17 @@ namespace Ring.Simulation.Core
         /// weapon fired the round decides which numbers it flies by.
         public float PierceMassRatio;
         public float PierceDamageLoss;
+
+        /// app-94sk T5b (spec §4.2): how fast THIS archetype's body turns
+        /// toward where it is heading — moved out of `GameFeelConfig`, whose
+        /// single `MobTurnDegPerSec` drove every mob in the frame at one rate.
+        /// See HeroSimConfig's own three for the whole argument. What this side
+        /// gains by the move is that the number is PER ARCHETYPE, which is what
+        /// a section field is for: a Director need not turn like a chaser.
+        /// ⚠ AT THE SHIPPED NUMBERS ALL FOUR STILL DO (540 everywhere, the
+        /// value that used to be global), so this task changes no behavior —
+        /// it changes who owns the number.
+        public float MobTurnDegPerSec;
     }
 
     /// Wave-spawning balance numbers (pacing, counts, spawn placement).
@@ -1115,6 +1150,14 @@ namespace Ring.Simulation.Core
         /// answers with the Gunner's number instead of throwing). The
         /// integrator would have been the FOURTH, which is exactly what rule 2
         /// forbids.
+        ///
+        /// ⚠ AND THE COUNT ABOVE WAS ITSELF SHORT BY ONE, found at app-94sk
+        /// T5b: `Presentation.ViewRegistry.TelegraphSecondsFor` was a narrow
+        /// copy (`TelegraphSeconds` alone) nobody had counted — T5b deleted it
+        /// and its two call sites now read the archetype from here. That a
+        /// paragraph titled "THE COUNT, EXACTLY" was wrong twice is the
+        /// argument for the delegation itself: a count maintained by hand is
+        /// the same class of artifact as the switch it counts.
         ///
         /// `ref readonly`, SO NOTHING IS COPIED. `MobSimConfig` is a
         /// fifteen-field struct and this is asked from inside per-mob and

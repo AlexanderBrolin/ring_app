@@ -190,7 +190,9 @@ namespace Ring.Data
         /// deviation in the whole law rather than a special case in the caller.
         /// It is also the ready handle for a future anchor-like archetype that
         /// should be harder to shove than its mass alone would say.
-        [Range(0f, 1f)] public float PushRecoilFraction = 1f; // sync-marker key — keep LAST (was PierceDamageLoss, app-88jb Т20)
+        // ⚠ NO LONGER "keep LAST" either — see HeroConfig.SlideThrustRecovery's
+        // own note for the mechanism T4 replaced it with.
+        [Range(0f, 1f)] public float PushRecoilFraction = 1f; // sync-marker key (was PierceDamageLoss, app-88jb Т20)
 
         /// app-w4ca T4 (spec §3.5а): the BAKED POSE TABLE this body's volumes
         /// stand in. ⛔ NOT A HOT KNOB — the owner turns capsule radii and
@@ -201,6 +203,15 @@ namespace Ring.Data
         /// now takes a LIST of marker names, so a new field is one more name in
         /// that list rather than a marker relocation (Runbook R-ASSET).
         public PoseTableAsset Poses;
+
+        /// app-94sk T5b (spec §4.2): how fast this archetype's body turns
+        /// toward where it is heading — moved here from `GameFeelConfig`,
+        /// where ONE number turned every archetype in the frame. Per archetype
+        /// from here, which is what a MobConfig field is; see MobSimConfig's
+        /// own doc and HeroConfig's three for the whole argument.
+        /// ⚠ THE NUMBER TRAVELS UNCHANGED (540, what was global), so all four
+        /// archetypes still turn at one rate until somebody retunes one.
+        [Range(0f, 1440f)] public float MobTurnDegPerSec = 540f;
 
         // Task 28 (spec §3.9): hot-tweak signal — see HeroConfig.OnValidate's doc.
 #if UNITY_EDITOR

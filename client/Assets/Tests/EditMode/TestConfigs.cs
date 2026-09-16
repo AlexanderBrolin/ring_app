@@ -498,6 +498,12 @@ namespace Ring.Simulation.Tests
                         new HitPart { BoneA = 21, BoneB = 22, Radius = 0.2604f, RestBottom = -0.1567f, RestTop = 0.7709f,
                             Zone = HitZone.Legs, DamageMult = 0.75f, PartId = 10 },   // calf_r→foot_r
                     },
+                    // app-94sk T5b (spec §4.2): the turn-and-damp three mirror
+                    // HeroConfig's C# defaults, the same two-sources discipline
+                    // every section here follows — Build_DefaultAssets_Matches
+                    // TestConfigsBaseline is what compares the two sides.
+                    SpeedDampTime = 0.1f, VisualTurnDegPerSec = 720f,
+                    IdleAimTurnDegPerSec = 180f,
                     Poses = HeroRestAndSlidePose() },
                 Weapon = new WeaponSimConfig { FireInterval = 0.12f, ProjectileSpeed = 35f,
                     ProjectileRadius = 0.12f, ProjectileLifetime = 1.5f, Damage = 12f,
@@ -652,6 +658,11 @@ namespace Ring.Simulation.Tests
                     // arms out — a striker must name SOME volume he owns, and the
                     // arm he will really swing does not exist in the layout yet.
                     SwingPartId = 1,
+                    // app-94sk T5b (spec §4.2): this archetype's turn rate,
+                    // mirroring MobConfig's C# default. ONE number per
+                    // archetype now — GameFeelConfig used to turn all four at
+                    // this same 540, and the four fixtures keep it that way.
+                    MobTurnDegPerSec = 540f,
                     Poses = ChaserRestPose() },
                 // Gunner's Parts already carry the taller ranged-mech tower
                 // (Т16 ships the same numbers into the real .asset via the marker
@@ -722,6 +733,9 @@ namespace Ring.Simulation.Tests
                     // app-94sk T2 (rule 10): AttackRange is 0 — he never strikes,
                     // and the sentinel is what says so.
                     SwingPartId = -1,
+                    // app-94sk T5b: this archetype's turn rate — see the
+                    // Chaser's own line above.
+                    MobTurnDegPerSec = 540f,
                     Poses = GunnerRestPose() },
                 Wave = new WaveSimConfig { FirstWaveDelay = 2.5f,
                     SpawnRingInset = 2f, MinSpawnDistanceToPlayer = 8f,
@@ -919,6 +933,9 @@ namespace Ring.Simulation.Tests
                     // arms out — a striker must name SOME volume he owns, and the
                     // arm he will really swing does not exist in the layout yet.
                     SwingPartId = 1,
+                    // app-94sk T5b: this archetype's turn rate — see the
+                    // Chaser's own line above.
+                    MobTurnDegPerSec = 540f,
                     Poses = EliteRestPose() },
                 Director = new MobSimConfig { MaxSpeed = 3.0f, Accel = 30f, Radius = 2.2f,
                     MaxHp = 2500f, ContactDamage = 45f, AttackRange = 2.8f,
@@ -999,6 +1016,9 @@ namespace Ring.Simulation.Tests
                     // arms out — a striker must name SOME volume he owns, and the
                     // arm he will really swing does not exist in the layout yet.
                     SwingPartId = 1,
+                    // app-94sk T5b: this archetype's turn rate — see the
+                    // Chaser's own line above.
+                    MobTurnDegPerSec = 540f,
                     Poses = DirectorRestPose() },
                 // Stage 3 Task 12 (errata E-2): mirrors MatchFlowConfig's C#
                 // defaults, same two-sources discipline as every section

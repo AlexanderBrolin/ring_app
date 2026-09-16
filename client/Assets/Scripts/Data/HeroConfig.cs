@@ -302,7 +302,11 @@ namespace Ring.Data
         // project uses everywhere for a speed converging on a target. Zero is
         // legal and means an unpowered slide: the loss stands for the rest of
         // the move.
-        [Range(0f, 60f)] public float SlideThrustRecovery = 18f; // sync-marker key — keep LAST (was PushRecoilFraction, app-88jb Т22)
+        // ⚠ THE "keep LAST" THIS LINE USED TO CARRY IS GONE: T4 made the sync
+        // marker a LIST of names (EditorBootstrapUtils.EnsureAssetHasKey), so a
+        // field added after this one is one more name in that list rather than
+        // a marker relocation. The key itself stays what it was.
+        [Range(0f, 60f)] public float SlideThrustRecovery = 18f; // sync-marker key (was PushRecoilFraction, app-88jb Т22)
 
         /// app-w4ca T4 (spec §3.5а): the BAKED POSE TABLE this body's volumes
         /// stand in. ⛔ NOT A HOT KNOB — the owner turns capsule radii and
@@ -313,6 +317,20 @@ namespace Ring.Data
         /// now takes a LIST of marker names, so a new field is one more name in
         /// that list rather than a marker relocation (Runbook R-ASSET).
         public PoseTableAsset Poses;
+
+        /// app-94sk T5b (spec §4.2): THE COLLECTOR'S TURN-AND-DAMP NUMBERS,
+        /// moved here from `GameFeelConfig` — the damping time the locomotion
+        /// blend follows the body's speed with, the rate the doll turns toward
+        /// where it is running, and the slower rate it turns toward the aim
+        /// while standing still. ⛔ THE ARGUMENT FOR THE MOVE, AND ITS PRICE,
+        /// LIVE IN ONE PLACE — `HeroSimConfig`'s own doc; repeating them here
+        /// would be a second home for one piece of knowledge.
+        /// ⚠ What belongs here is what is specific to the sheet: ranges and
+        /// numbers travelled UNCHANGED (0.1 / 720 / 180 — what the shipped
+        /// GameFeelConfig.asset carried), so the doll moves exactly as it did.
+        [Range(0f, 0.5f)] public float SpeedDampTime = 0.1f;
+        [Range(0f, 1440f)] public float VisualTurnDegPerSec = 720f;
+        [Range(0f, 1440f)] public float IdleAimTurnDegPerSec = 180f;
 
         // Task 28 (spec §3.9): hot-tweak signal — every Inspector edit while in
         // PlayMode rebuilds SimConfig via SimulationRunner instead of requiring a

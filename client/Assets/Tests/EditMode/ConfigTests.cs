@@ -256,6 +256,15 @@ namespace Ring.Simulation.Tests
             // would read as this file's own fixtures being wrong.
             target.Poses = FixtureTable(source.Poses);
             target.SwingPartId = source.SwingPartId;
+            // app-94sk T5b: this archetype's turn rate joins the copier on the
+            // block above's own reasoning — it is per archetype from this task
+            // on. ⚠ AND ITS WITNESS HAD TO BE BUILT, because every number here
+            // is 540 today (the C# default and all four fixtures alike), so a
+            // copier that dropped this line would have been green everywhere:
+            // `EachArchetypeReadsItsOwnTurnRate` below seeds the Elite and the
+            // Director from a TUNED baseline for exactly that reason, and it is
+            // what goes red if this line leaves.
+            target.MobTurnDegPerSec = source.MobTurnDegPerSec;
         }
 
         /// Builds a SimConfig from a caller-supplied hero and default everything else —
@@ -1907,6 +1916,15 @@ namespace Ring.Simulation.Tests
             // SO -> builder -> SimConfig path and drops out of coverage
             // without a line of its own, exactly like Parts above.
             Assert.AreEqual(e.GatherRadius, a.GatherRadius, Eps);
+            // app-94sk T5b (spec §4.2): the three turn-and-damp numbers ride
+            // the same SO -> builder -> SimConfig path GatherRadius does and
+            // drop out of this test's coverage without lines of their own.
+            // ⛔ THEY ARE THREE LINES, NOT ONE: each is an independent engine
+            // of the hash and of the mapping alike, and a copy-paste slip that
+            // mapped one field twice would pass a single combined assertion.
+            Assert.AreEqual(e.SpeedDampTime, a.SpeedDampTime, Eps);
+            Assert.AreEqual(e.VisualTurnDegPerSec, a.VisualTurnDegPerSec, Eps);
+            Assert.AreEqual(e.IdleAimTurnDegPerSec, a.IdleAimTurnDegPerSec, Eps);
         }
 
         static void AssertWeaponEqual(WeaponSimConfig e, WeaponSimConfig a)
@@ -2039,6 +2057,11 @@ namespace Ring.Simulation.Tests
             // app-94sk T2 (spec §3.9): the striking volume mirrors for every
             // archetype, so it belongs in the shared helper.
             Assert.AreEqual(e.SwingPartId, a.SwingPartId);
+            // app-94sk T5b (spec §4.2): the turn rate mirrors for every
+            // archetype — both sources carry the 540 that used to be one
+            // global number — so it belongs in the shared helper, on
+            // SwingPartId's own reasoning right above.
+            Assert.AreEqual(e.MobTurnDegPerSec, a.MobTurnDegPerSec, Eps);
             // ⛔⛔ GatherRadius IS DELIBERATELY *NOT* HERE, and the exclusion is
             // this file's own rule one block up: "a field that passes for one
             // caller and fails for another has no business in a shared
@@ -2658,6 +2681,52 @@ namespace Ring.Simulation.Tests
                 "an Elite that reads the Gunner's numbers is the exact defect this pins");
             Assert.AreNotEqual(cfg.Elite.MaxHp, cfg.Director.MaxHp,
                 "and the two new archetypes must not collapse onto each other either");
+        }
+
+        /// app-94sk T5b, FOUND BY THE REVIEW ROUND: the one thing the move
+        /// bought — a turn rate PER ARCHETYPE — had no witness at all. Every
+        /// other assertion about this field compares the two number sources,
+        /// and both carry 540 for all four archetypes today, so a builder that
+        /// ignored `m.MobTurnDegPerSec` and wrote the constant 540 passed the
+        /// whole set: `Build_DefaultAssets_MatchesTestConfigsBaseline`,
+        /// `BootstrapArchetypeSeeds_MatchTheTestConfigsBaseline`, and the
+        /// reflective hash sweep too — that one bumps `SimConfig` directly and
+        /// never goes through the builder at all.
+        /// ⛔ FOUR DISTINCT NUMBERS ARE THIS TEST'S OWN INPUTS, NOT BALANCE.
+        /// The shipped numbers and the shared baseline stay at 540; making an
+        /// archetype really turn differently is the owner's call on the
+        /// milestone, and it would have to move `ApplyEliteDefaults` too (that
+        /// pairing is what `BootstrapArchetypeSeeds_…` binds).
+        /// ⛔ THE ELITE AND THE DIRECTOR TRAVEL THROUGH `SeedMob` ON PURPOSE:
+        /// the copier's own line for this field is the other thing "540
+        /// everywhere" hides. Seeded from a TUNED copy of the baseline, a
+        /// copier that dropped the field leaves `MobConfig`'s C# default behind
+        /// and this test is what reports it.
+        [Test]
+        public void EachArchetypeReadsItsOwnTurnRate()
+        {
+            var (h, w, c, g, wv, a, vis) = MakeDefaults();
+            SimConfig tuned = TestConfigs.Default();
+            tuned.Elite.MobTurnDegPerSec = 333f;
+            tuned.Director.MobTurnDegPerSec = 444f;
+            var elite = ScriptableObject.CreateInstance<MobConfig>();
+            var director = ScriptableObject.CreateInstance<MobConfig>();
+            SeedMob(elite, in tuned.Elite);
+            SeedMob(director, in tuned.Director);
+            c.MobTurnDegPerSec = 111f;
+            g.MobTurnDegPerSec = 222f;
+
+            SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
+
+            Assert.AreEqual(111f, cfg.Chaser.MobTurnDegPerSec, Eps,
+                "the Chaser section must carry the Chaser asset's own turn rate");
+            Assert.AreEqual(222f, cfg.Gunner.MobTurnDegPerSec, Eps,
+                "the Gunner section must carry the Gunner asset's own turn rate");
+            Assert.AreEqual(333f, cfg.Elite.MobTurnDegPerSec, Eps,
+                "the Elite section must carry the Elite asset's own turn rate — "
+                + "through SeedMob, which is what puts it on the asset");
+            Assert.AreEqual(444f, cfg.Director.MobTurnDegPerSec, Eps,
+                "the Director section must carry the Director asset's own turn rate");
         }
 
         [Test]

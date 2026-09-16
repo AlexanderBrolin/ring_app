@@ -3,7 +3,14 @@ namespace Ring.Presentation
     /// Per-frame parameter pack for PlayerVisual.Sync (Stage 2 Task 45a) —
     /// built ONCE per frame by ViewRegistry from GameFeelConfig and the
     /// runner's own Config/Paused, so a pooled doll holds no scene or SO
-    /// reference of its own (spec §3.12). Same shape and the same reason as
+    /// reference of its own (spec §3.12).
+    ///
+    /// ⚠ THE SHAPE DID NOT CHANGE AT app-94sk T5b, THE PROVENANCE DID:
+    /// `SpeedDampTime`, `VisualTurnDegPerSec` and `IdleAimTurnDegPerSec` are
+    /// filled from `Config.Hero` now, beside `MaxSpeed`, instead of from the
+    /// feel sheet — they became balance (HeroSimConfig's own doc says why).
+    /// The pack keeps carrying them for the reason it carries `MaxSpeed`: the
+    /// doll is handed plain numbers, never a config of its own. Same shape and the same reason as
     /// MobVisualParams next door; the two are deliberately separate structs
     /// because the doll and the mech read different feel numbers, and one
     /// merged pack would hand each half fields it must never act on.

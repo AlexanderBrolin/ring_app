@@ -1235,14 +1235,37 @@ namespace Ring.Editor
             // mechanism itself exists to prevent one file over — a comment
             // that lies about the code is the same class of defect as an
             // asset that lags its class).
+            //
+            // app-94sk T5b MOVES KEYS IN BOTH DIRECTIONS FOR THE FIRST TIME,
+            // and only one direction is this mechanism's: four numbers leave
+            // GameFeelConfig for HeroConfig (three) and MobConfig (one). The
+            // ARRIVALS are three more names on the hero's list and one more on
+            // each of the four mobs' — no marker moves, which is exactly what
+            // T4's widening bought. The DEPARTURES are not covered here at all:
+            // a text check for a MISSING name cannot see a SURPLUS one, so
+            // GameFeelConfig.asset would keep carrying four keys no class has
+            // any more, silently and forever. That is what
+            // `EnsureAssetLacksKey` below is, and why it sits beside its twin
+            // rather than inside it: "the class gained a field" and "the class
+            // lost one" are opposite questions about the same file.
             EditorBootstrapUtils.EnsureAssetHasKey(hero, $"{DataDir}/HeroConfig.asset",
-                "SlideThrustRecovery", "Poses"); // app-94sk T4 appends Poses; marker no longer has to move
+                "SlideThrustRecovery", "Poses", // app-94sk T4 appends Poses; marker no longer has to move
+                "SpeedDampTime", "VisualTurnDegPerSec", "IdleAimTurnDegPerSec"); // app-94sk T5b
             EditorBootstrapUtils.EnsureAssetHasKey(weapon, $"{DataDir}/WeaponConfig.asset", "SprayVariance"); // app-8dv (was PierceDamageLoss, app-88jb Т20)
             EditorBootstrapUtils.EnsureAssetHasKey(chaser, $"{DataDir}/MobChaserConfig.asset",
-                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
+                "PushRecoilFraction", "Poses", // app-94sk T4 appends Poses
+                "MobTurnDegPerSec"); // app-94sk T5b
             EditorBootstrapUtils.EnsureAssetHasKey(gunner, $"{DataDir}/MobGunnerConfig.asset",
-                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
+                "PushRecoilFraction", "Poses", // app-94sk T4 appends Poses
+                "MobTurnDegPerSec"); // app-94sk T5b
             EditorBootstrapUtils.EnsureAssetHasKey(gameFeel, $"{DataDir}/GameFeelConfig.asset", "AimRayScreenReachFrac"); // app-461s Н47 (was AimRayNotchMinLength, app-461s T4; was WaveAnnounceFlashColor, app-ggvz Т7)
+            // app-94sk T5b: the four numbers that LEFT this class. Without this
+            // line the committed asset keeps their keys — the marker above is
+            // still present in the text, so nothing dirties the SO and the
+            // "they are gone" half of the task's own gate is unreachable on any
+            // correct code.
+            EditorBootstrapUtils.EnsureAssetLacksKey(gameFeel, $"{DataDir}/GameFeelConfig.asset",
+                "SpeedDampTime", "VisualTurnDegPerSec", "IdleAimTurnDegPerSec", "MobTurnDegPerSec");
             EditorBootstrapUtils.EnsureAssetHasKey(arena, $"{DataDir}/ArenaConfig.asset", "RewindPictureTicks"); // app-88jb Т24 (was RelaxIterations, app-88jb Т22)
             // WaveConfig joined the marker mechanism in Stage 2 Task 16 with
             // PerPlayerCountFrac as its marker; Stage 3 Task 11 (coordinator
@@ -1315,9 +1338,11 @@ namespace Ring.Editor
             // `WeaponConfig` alone, and the spec's own starting-numbers table
             // names the pair's home as "WeaponConfig + the mobs".
             EditorBootstrapUtils.EnsureAssetHasKey(elite, $"{DataDir}/MobEliteConfig.asset",
-                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
+                "PushRecoilFraction", "Poses", // app-94sk T4 appends Poses
+                "MobTurnDegPerSec"); // app-94sk T5b — the number is PER ARCHETYPE now, so all four assets get it
             EditorBootstrapUtils.EnsureAssetHasKey(director, $"{DataDir}/MobDirectorConfig.asset",
-                "PushRecoilFraction", "Poses"); // app-94sk T4 appends Poses
+                "PushRecoilFraction", "Poses", // app-94sk T4 appends Poses
+                "MobTurnDegPerSec"); // app-94sk T5b — the number is PER ARCHETYPE now, so all four assets get it
             EditorBootstrapUtils.EnsureAssetHasKey(flow, $"{DataDir}/MatchFlowConfig.asset",
                 "DirectorReserveSlots"); // Stage 3 Task 12
             // Stage 3 Task 13: the item catalog and loot balance sheet join
