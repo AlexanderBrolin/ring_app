@@ -355,9 +355,14 @@ namespace Ring.Simulation.Tests
             // old float-only filter left for int.
             var unmeasuredFieldTypes = new HashSet<System.Type>
             {
-                // Headings and positions (Pos, Vel, AimPoint, DashDir, SlideDir):
+                // Headings and positions (Pos, Vel, AimPoint, DashDir,
+                // SlideDir, and app-94sk T5c's Dir — the body's course):
                 // ApplyConfig has no per-axis ceiling to clamp them to — arena
                 // containment is Geometry's job, every tick, not a hot-tweak's.
+                // A course needs no ceiling of a second kind either: it is a
+                // UNIT vector by construction, and the law that turns it
+                // (PlayerMovementSystem.TurnTowards) preserves the length it
+                // is given rather than growing it.
                 typeof(float2),
                 // Alive, Extracted: state flags, not magnitudes — nothing to clamp.
                 typeof(bool),

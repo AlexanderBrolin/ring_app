@@ -367,6 +367,60 @@ namespace Ring.Simulation.Movement
                 // DashSpeedCur via `p.Vel = p.DashDir * p.DashSpeedCur` at the
                 // top of this method.
             }
+
+            // app-94sk T5c (spec §3.8): THE COLLECTOR'S COURSE, one tick of it,
+            // and before this task the simulation carried no such quantity at
+            // all -- see PlayerState.Dir's own doc for why a heading has to be
+            // state. The law is Presentation's, moved rather than invented:
+            // PlayerVisual.Sync turns `_facing` towards the frame's own
+            // displacement at Hero.VisualTurnDegPerSec while the doll is
+            // moving and towards the aim at Hero.IdleAimTurnDegPerSec while it
+            // stands, and T5b is what made both rates readable from here.
+            //
+            // LAST IN THE METHOD, AFTER THE COLLISIONS, because the course
+            // follows where the body ACTUALLY went: the picture reads a frame's
+            // displacement, and this tick's post-slide Vel is that same fact
+            // one phase earlier (lesson 694 -- both operands from one phase of
+            // the tick). A course taken off the pre-collision Vel would face a
+            // collector into the wall it is sliding along.
+            //
+            // THE AIM IS THE FALLBACK, NOT A SECOND LAW, and "standing" is a
+            // measurement rather than an epsilon: MoveTowards RETURNS its
+            // target once inside one step, so friction resolves Vel to EXACTLY
+            // zero. What it never does is leave Vel inside the band the
+            // picture ignores -- GameFeelConfig.PlayerMoveThreshold01 x
+            // MaxSpeed is 0.375 m/s as shipped, against a friction step of
+            // Friction * dt = 2.333 m/s, which overshoots the whole band 6.2
+            // times over (1.0 against 0.35 on the fixture numbers, 2.9 times);
+            // acceleration jumps it too, at 3.0 m/s a tick. So the band is
+            // reachable only through a COLLISION, where Geometry.Slide keeps
+            // an arbitrarily small tangential remainder -- which is why the
+            // question is asked against Geometry.MinHeadingLength, the very
+            // threshold the turn itself uses, and on such a tick this law
+            // turns along a creep the picture would have ignored.
+            //
+            // ⚠ THAT THE NUMBER IS NOT ASKED FOR AT ALL IS DELIBERATE:
+            // PlayerMoveThreshold01 is an ANIMATION threshold (it also picks
+            // walk from run) and stays in game feel, because spec §3.8's table
+            // moves FOUR numbers into balance and a fifth is the owner's call.
+            //
+            // ⚠ AND THE TWO `lengthsq(...) > 1e-6f` TESTS EARLIER IN THIS
+            // METHOD ARE NOT THIS THRESHOLD: squared, they ask about a length
+            // of 1e-3, a thousand times higher, and they gate a slide's
+            // steering input rather than a course. They are left exactly as
+            // they were -- naming them here is how the next reader stops
+            // reading three spellings as one.
+            float2 travel = p.Vel;
+            bool traveling = math.length(travel) >= Geometry.MinHeadingLength;
+            // Named `courseTarget` and not `want`: the slide's own steering a
+            // few dozen lines up already holds a `want`, and that one is the
+            // TRAVEL heading a slide is steered towards — a different quantity
+            // in the same method.
+            float2 courseTarget = traveling ? travel : p.AimPoint - p.Pos;
+            float courseDegPerSec = traveling
+                ? hero.VisualTurnDegPerSec
+                : hero.IdleAimTurnDegPerSec;
+            p.Dir = TurnTowards(p.Dir, courseTarget, courseDegPerSec, dt);
             return result;
         }
 
@@ -414,6 +468,44 @@ namespace Ring.Simulation.Movement
             MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena,
                 out _, out _, out _);
         }
+
+        /// ONE TICK OF A BODY'S COURSE (app-94sk T5c): turns `dir` towards
+        /// `want` by at most `degPerSec` for the tick, along the shorter arc,
+        /// preserving `dir`'s length. The arithmetic of the turn itself is
+        /// Geometry.RotateTowards', which has been in the tree since Stage 2
+        /// Task 10 (the slide's steering, inside `Update` above) with three
+        /// fixtures of its own -- this is the LAW's home, not the rotation's,
+        /// and it holds exactly what the law adds: degrees per second read as
+        /// degrees per TICK, and radians handed to the arithmetic.
+        ///
+        /// HERE, BESIDE MoveTowards AND MoveWithCollisions, because that is
+        /// where this file already keeps what BOTH bodies share: MobAiSystem
+        /// calls both of those (this class's own doc -- "mobs share the
+        /// player's collide-and-slide rules"), and the course is the third
+        /// such primitive. A second copy in MobAiSystem would be two spellings
+        /// of one law (rule 2), which is the whole reason the two callers
+        /// differ only in WHAT they face and HOW FAST.
+        ///
+        /// A ZERO OR NEAR-ZERO `want` IS A LEGAL INPUT and means "no heading
+        /// was supplied this tick": the course is returned unchanged rather
+        /// than snapped anywhere, which is Geometry.RotateTowards' own
+        /// contract and the reason neither caller needs a guard of its own.
+        ///
+        /// ⚠ AND IT IS NOT THE ONLY CALLER OF THAT ARITHMETIC IN THIS FILE.
+        /// The slide's steering inside `Update` keeps calling Geometry.
+        /// RotateTowards directly, deliberately: its own number
+        /// (Hero.SlideSteerRadPerSec) is already RADIANS per second, so
+        /// routing it through a degrees-per-second seam would convert twice.
+        /// This method is the home of the COURSE law, not of every turn.
+        ///
+        /// ⚠ LENGTH IS PRESERVED TO WITHIN float32 ROUNDING, not exactly —
+        /// the arithmetic divides by a length and multiplies back. Measured by
+        /// replaying the sequence in float32: the deviation is self-limiting
+        /// under 1.4e-4 over a match (see `PlayerState.Dir`), no reader is
+        /// sensitive to the magnitude, and no fixture in the suite turns for
+        /// more than a hundred ticks, where it is under 1e-6.
+        public static float2 TurnTowards(float2 dir, float2 want, float degPerSec, float dt)
+            => Geometry.RotateTowards(dir, want, math.radians(degPerSec) * dt);
 
         public static float2 MoveTowards(float2 cur, float2 target, float maxDelta)
         {

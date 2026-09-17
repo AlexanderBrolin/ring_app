@@ -158,5 +158,149 @@ namespace Ring.Simulation.Tests
             Assert.Greater(math.distance(w.Player.Pos, start), 10f,
                 "stuck in the wall+obstacle corner — not sliding");
         }
+
+        // ---- app-94sk T5c. The collector's course (spec §3.8) ----
+
+        /// THE MOVING HALF OF THE LAW. Until T5c the collector had no course in
+        /// the simulation at all — it was `PlayerVisual._facing`, a private
+        /// quaternion turned on FRAME time — so this is the first statement
+        /// anywhere that a traveling body turns along its travel, and how
+        /// fast.
+        ///
+        /// THE BUDGET IS ASSERTED AS AN EQUALITY, NOT AS A BOUND, and that is
+        /// what tells the two rates apart: the gap here is a full 180 degrees,
+        /// far more than either rate can spend in a tick, so the turn is
+        /// clamped to exactly one tick's worth of whichever rate the law
+        /// picked. A law that read the idle rate here, or crossed the two over,
+        /// fails by number rather than by feel.
+        ///
+        /// BOTH RATES ARE THIS TEST'S OWN INPUTS, deliberately unequal to the
+        /// shipped pair and to each other: a law reading a CONSTANT instead of
+        /// `Hero.VisualTurnDegPerSec` would pass any fixture whose budget came
+        /// from the same shipped 720 (lesson 833 — a number identical in both
+        /// sources has no witness by construction). They are set BEFORE the
+        /// world is built, because the world copies its configuration in the
+        /// constructor.
+        [Test]
+        public void CollectorsCourse_FollowsItsTravel_AtTheMovingRate()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.VisualTurnDegPerSec = 333f;    // this test's own rates, not balance
+            cfg.Hero.IdleAimTurnDegPerSec = 111f;
+            var w = new SimulationWorld(1, cfg);
+            // Plant the course against the travel: the body runs +X and looks -X.
+            var p = w.PlayerAt(0);
+            p.Dir = new float2(-1f, 0f);
+            w.SetPlayerForTest(0, p);
+
+            w.Tick(Move(1f, 0f));
+
+            Assert.Greater(w.PlayerAt(0).Vel.x, 0f,
+                "fixture premise: one tick of input already gives the body a travel to follow");
+            float budget = math.radians(cfg.Hero.VisualTurnDegPerSec) * SimulationWorld.TickDt;
+            float turned = math.acos(math.clamp(
+                math.dot(w.PlayerAt(0).Dir, new float2(-1f, 0f)), -1f, 1f));
+            Assert.AreEqual(budget, turned, 1e-4f,
+                "a traveling collector turns by exactly one tick of Hero.VisualTurnDegPerSec");
+            Assert.AreEqual(1f, math.length(w.PlayerAt(0).Dir), 1e-4f,
+                "and the course stays a unit vector");
+
+            int ticksFor180 = (int)math.ceil(math.PI / budget) + 2;
+            for (int i = 0; i < ticksFor180; i++) w.Tick(Move(1f, 0f));
+            Assert.Greater(math.dot(w.PlayerAt(0).Dir, new float2(1f, 0f)), 0.99f,
+                $"in {ticksFor180} ticks the course never came round to the travel — there is no turn");
+        }
+
+        /// THE STANDING HALF OF THE SAME LAW (Б8 in `PlayerVisual`'s own
+        /// words): a body that is not traveling turns in towards its AIM, and
+        /// at the gentler of the two rates — the doll must never stay
+        /// back-to-cursor while shooting on the spot, and it must not whip
+        /// round either.
+        ///
+        /// THE TWO RATES ARE WHAT THIS FIXTURE BUYS. Its twin above pins the
+        /// moving one; a law that spent one rate on both branches, or crossed
+        /// the two over, passes that twin and fails here.
+        ///
+        /// "STANDING" IS ASSERTED EXACTLY, WITH NO TOLERANCE, and that is the
+        /// premise's whole point rather than a flourish:
+        /// `PlayerMovementSystem.MoveTowards` RETURNS its target once inside
+        /// one step of it, so friction resolves an unheld collector's velocity
+        /// to precisely zero. A tolerance here would have been a second
+        /// spelling of `Geometry.MinHeadingLength`, which is exactly what
+        /// naming that constant was meant to prevent.
+        [Test]
+        public void CollectorsCourse_TurnsInTowardsTheAim_AtTheIdleRate()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.VisualTurnDegPerSec = 333f;    // this test's own rates, not balance
+            cfg.Hero.IdleAimTurnDegPerSec = 111f;
+            var w = new SimulationWorld(1, cfg);
+            // Plant the course against the aim: the body looks -Y, aims +Y.
+            var p = w.PlayerAt(0);
+            p.Dir = new float2(0f, -1f);
+            w.SetPlayerForTest(0, p);
+            var aim = new SimInput { AimPoint = new float2(0f, 12f) };
+
+            w.Tick(aim);
+
+            Assert.That(math.lengthsq(w.PlayerAt(0).Vel), Is.EqualTo(0f),
+                "fixture premise: the body stands — exactly, not nearly — so the aim branch "
+                + "is the one under test");
+            float budget = math.radians(cfg.Hero.IdleAimTurnDegPerSec) * SimulationWorld.TickDt;
+            float turned = math.acos(math.clamp(
+                math.dot(w.PlayerAt(0).Dir, new float2(0f, -1f)), -1f, 1f));
+            Assert.AreEqual(budget, turned, 1e-4f,
+                "a standing collector turns by exactly one tick of Hero.IdleAimTurnDegPerSec — "
+                + "the MOVING rate here would be three times that");
+
+            int ticksFor180 = (int)math.ceil(math.PI / budget) + 2;
+            for (int i = 0; i < ticksFor180; i++) w.Tick(aim);
+            Assert.Greater(math.dot(w.PlayerAt(0).Dir, new float2(0f, 1f)), 0.99f,
+                $"in {ticksFor180} ticks the course never came round to the aim");
+        }
+
+        /// app-94sk T5c: A COLLECTOR LANDS IN THE RAID LOOKING INWARD, with a
+        /// course of length one — the constructor's half of what
+        /// `SimulationWorld.SpawnMob` does for a mob, and needed for the same
+        /// reason: `Geometry.RotateTowards` returns `from` unchanged below
+        /// `Geometry.MinHeadingLength`, so a course left at zero is an
+        /// ABSORBING state and the law above would be dead for the whole match.
+        ///
+        /// INWARD IS NOT AN INVENTION: a collector spawns on the ring and
+        /// `AimPoint` defaults to the arena center, so this is exactly where
+        /// the standing branch of the law would steer it anyway — the seed just
+        /// saves it the trip.
+        ///
+        /// THE DIRECTION IS ASSERTED AS A GEOMETRIC CONSEQUENCE (review round
+        /// finding): walk from the seat along its own course, by its own
+        /// distance from the center, and you must arrive AT the center. A
+        /// comparison against `normalizesafe(-pos)` would have been the
+        /// product's own formula written twice.
+        ///
+        /// THREE SEATS, THREE BEARINGS, so no constant satisfies all of them —
+        /// and the world is built rather than relocated, because the seeding
+        /// under test happens in the constructor.
+        [Test]
+        public void CollectorsCourseIsSeededInward_AsAUnitVector()
+        {
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg, playerCount: 3);
+            Assert.Greater(cfg.Arena.PlayerSpawnRingFrac, 0f,
+                "fixture premise: Open() spawns the seats on a ring, not all at the center");
+
+            var seen = new float2[3];
+            for (int i = 0; i < 3; i++)
+            {
+                float2 pos = w.PlayerAt(i).Pos;
+                float2 dir = w.PlayerAt(i).Dir;
+                seen[i] = dir;
+                Assert.AreEqual(1f, math.length(dir), 1e-4f, $"seat {i}: a course is a UNIT vector");
+                Assert.That(math.length(pos + dir * math.length(pos)), Is.LessThan(1e-3f),
+                    $"seat {i}: walking along the course by its own radius arrives at the arena center");
+            }
+            Assert.Less(math.dot(seen[0], seen[1]), 0.99f,
+                "witness: the three seats do not share one constant course");
+            Assert.Less(math.dot(seen[1], seen[2]), 0.99f, "…nor do the other two");
+        }
     }
 }

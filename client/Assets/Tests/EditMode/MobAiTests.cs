@@ -1229,5 +1229,178 @@ namespace Ring.Simulation.Tests
             Assert.Less(vel.y, -0.5f,
                 "axis*clearance pin: without it the waypoint sits level with the mob (no route past the end)");
         }
+
+        // ---- app-94sk T5c. The body's course is a quantity of the simulation ----
+
+        /// Fixture 32в (app-94sk T5c, spec §3.8/§3.9, mutation M364). WITHOUT
+        /// THIS TEST REQUIREMENT Н52 IS UNPROVABLE IN PRINCIPLE: at an instant
+        /// turn the strike sector is satisfied on every tick, and the fixture
+        /// that says "a target behind the blow takes no damage" could not go
+        /// red on any implementation whatsoever.
+        ///
+        /// THE COURSE IS SET AGAINST THE TARGET, NOT TOWARDS IT, and that is
+        /// the whole of the arrangement: the bearing from the spawn is MEASURED
+        /// below rather than assumed, and the course is planted exactly 180
+        /// degrees off it. A course planted where the mob was already looking
+        /// would keep `dot` at 1 and pass on a stub.
+        ///
+        /// ⛔ AND IT TICKS TWICE, NOT ONCE, WHICH IS THE DIFFERENCE BETWEEN A
+        /// WITNESS AND A VACUUM (review round finding). A freshly spawned mob
+        /// spends tick one in `UpdateChaser`'s `Idle` arm, which sets Chase and
+        /// decays a zero velocity — so `want` is `(0,0)`, `RotateTowards`
+        /// returns the course unchanged, and every one-tick assertion would be
+        /// reading back the literal this fixture itself planted. An INSTANT
+        /// turn passed all of them. From tick two the mob is in Chase with a
+        /// real velocity, and the same assertions bite.
+        ///
+        /// THE TURN RATE IS THIS TEST'S OWN INPUT, not the shipped balance, and
+        /// that is lesson 833 applied before it can cost anything: all four
+        /// archetypes carry 540, so a law reading a CONSTANT instead of
+        /// `cfg.&lt;Archetype&gt;.MobTurnDegPerSec` would pass any fixture that
+        /// derived its budget from the same 540. At 111 deg/s the two answers
+        /// differ by a factor of five.
+        [Test]
+        public void TheMobsHeadingTurnsAtAFiniteRate()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Chaser.MobTurnDegPerSec = 111f;   // this test's own rate, not balance
+            var w = new SimulationWorld(41, cfg);
+            // Far enough out that 53 ticks of chasing cannot bring the body
+            // into the windup, where the FSM would stop feeding it a travel.
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(25f, 0f)));
+            MobState m = w.Mobs[0];
+            m.Dir = new float2(1f, 0f);
+            w.SetMobForTest(0, m);
+
+            Assert.That(math.length(w.Player.Pos), Is.LessThan(1e-4f),
+                "fixture premise: OpenField holds the collector at the origin "
+                + "(PlayerSpawnRingFrac = 0), which is what makes the bearing below exact");
+            float2 toTarget = math.normalizesafe(w.Player.Pos - w.Mobs[0].Pos, new float2(1f, 0f));
+            Assert.AreEqual(-1f, toTarget.x, 1e-4f, "fixture premise: the bearing is -X, measured");
+            Assert.AreEqual(-1f, math.dot(w.Mobs[0].Dir, toTarget), 1e-5f,
+                "fixture premise: the course must stand exactly against the target, "
+                + "or the turn is not observable at all");
+
+            // TWO ticks: the first is the FSM's Idle->Chase warm-up, which
+            // supplies no travel at all (see this fixture's own doc).
+            TestWorlds.IdleTicks(w, 2);
+            Assert.AreEqual(MobAiState.Chase, w.Mobs[0].Ai,
+                "fixture premise: by tick two the body is chasing, so it has a travel to follow");
+            float afterTwo = math.dot(w.Mobs[0].Dir, toTarget);
+            Assert.Less(afterTwo, 0.99f,
+                "an instant turn makes the strike sector a tautology (Н52)");
+
+            // The per-tick premise is a PROPERTY, not a literal: whatever the
+            // archetype's rate is, one turning tick may not exceed it.
+            float maxRad = math.radians(cfg.Chaser.MobTurnDegPerSec) * SimulationWorld.TickDt;
+            float turnedRad = math.acos(math.clamp(
+                math.dot(w.Mobs[0].Dir, new float2(1f, 0f)), -1f, 1f));
+            Assert.AreEqual(maxRad, turnedRad, 1e-4f,
+                "one turning tick must spend exactly the archetype's own rate — a law reading "
+                + "a constant rate instead of this archetype's field fails here by a factor of five");
+            Assert.AreEqual(1f, math.length(w.Mobs[0].Dir), 1e-4f,
+                "and the course stays a unit vector, which is what makes acos(dot) above an angle");
+
+            int ticksFor180 = (int)math.ceil(math.PI / maxRad) + 2;
+            TestWorlds.IdleTicks(w, ticksFor180);
+            Assert.Greater(math.dot(w.Mobs[0].Dir, toTarget), 0.99f,
+                $"in {ticksFor180} ticks the course never reached its target — there is no turn at all");
+        }
+
+        /// THE OTHER HALF OF THE MOB'S LAW, AND THE HALF THE WHOLE TASK IS FOR
+        /// (spec §3.9): a body fighting at RANGE squares up to what it is
+        /// shooting at while it strafes SIDEWAYS. Its travel and its course
+        /// point ninety degrees apart, which is exactly what the old wire line
+        /// (`normalizesafe(m.Vel)`) got wrong and what `MobState.Dir` exists to
+        /// fix.
+        ///
+        /// ⛔ WITHOUT IT THE `Reposition`/`Fire` PREDICATE HAS NO WITNESS AT
+        /// ALL, measured rather than argued: fixture 32в above spawns a Chaser,
+        /// whose FSM only ever reaches Idle/Chase/Telegraph/Recover, so a law
+        /// hard-wired to `false` there — following the travel in every state —
+        /// passes the whole suite, and with it the new parameter and all seven
+        /// of its call sites become decoration.
+        ///
+        /// THE GUNNER IS PLACED AT ITS PreferredRange so the FSM answers `Fire`
+        /// on the first tick and keeps answering it: strafing is tangential, so
+        /// the distance it walks off the ring grows as the SAGITTA and stays
+        /// well inside RangeTolerance for the ticks this fixture needs.
+        [Test]
+        public void StrafingGunnerSquaresUpToItsTarget_NotToItsTravel()
+        {
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Gunner.MobTurnDegPerSec = 333f;   // this test's own rate, not balance
+            var w = new SimulationWorld(17, cfg);
+            TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(cfg.Gunner.PreferredRange, 0f)));
+            MobState m = w.Mobs[0];
+            m.Dir = new float2(1f, 0f);           // planted AWAY from the collector
+            w.SetMobForTest(0, m);
+
+            float budget = math.radians(cfg.Gunner.MobTurnDegPerSec) * SimulationWorld.TickDt;
+            int ticksFor180 = (int)math.ceil(math.PI / budget) + 2;
+            TestWorlds.IdleTicks(w, ticksFor180);
+
+            Assert.AreEqual(MobAiState.Fire, w.Mobs[0].Ai,
+                "fixture premise: the body must still be fighting at range, or the branch "
+                + "under test is not the one that ran");
+            float2 bearing = math.normalizesafe(w.Player.Pos - w.Mobs[0].Pos, new float2(1f, 0f));
+            float2 travel = math.normalizesafe(w.Mobs[0].Vel, new float2(1f, 0f));
+            Assert.Less(math.abs(math.dot(travel, bearing)), 0.5f,
+                "fixture premise: the strafe is sideways, so travel and bearing are far apart — "
+                + "without that the two candidate courses would be indistinguishable");
+
+            Assert.Greater(math.dot(w.Mobs[0].Dir, bearing), 0.99f,
+                "a body fighting at range faces what it shoots at");
+            Assert.Less(math.dot(w.Mobs[0].Dir, travel), 0.5f,
+                "…and NOT where it walks: a law that followed the travel in every state "
+                + "would land the course on the strafe");
+        }
+
+        /// app-94sk T5c (spec §3.8, finding D-C9): A SPAWNED MOB LOOKS AT WHAT
+        /// IT CAME FOR, with a course of length one.
+        ///
+        /// `new MobState { ... }` zeroes everything it does not name, and a
+        /// zero course is not merely "unset": `Geometry.RotateTowards` returns
+        /// `from` unchanged below `Geometry.MinHeadingLength`, so a body that
+        /// spawns at zero can never turn again for the rest of the raid. The
+        /// length is load-bearing a second time over, in the arithmetic of the
+        /// fixtures above: `acos(dot(...))` is an angle only between unit
+        /// vectors.
+        ///
+        /// THE DIRECTION IS ASSERTED AS A GEOMETRIC CONSEQUENCE, not by
+        /// recomputing the production expression (review round finding): walk
+        /// from the body along its own course, by its own distance to the
+        /// collector, and you must arrive AT the collector. A comparison
+        /// against `normalizesafe(target - pos)` would have been the product's
+        /// own formula written twice and could not redden for any arrangement
+        /// of it.
+        ///
+        /// TWO BODIES ON DIFFERENT BEARINGS, neither of them `normalizesafe`'s
+        /// +X fallback, so no constant satisfies both — the hole
+        /// `SnapshotCodecTests` found in the decoded heading, stated here
+        /// before it can be dug.
+        [Test]
+        public void SpawnedMobsCourseFacesItsTarget_AsAUnitVector()
+        {
+            var w = new SimulationWorld(7, TestConfigs.OpenField());
+            Assert.That(math.length(w.Player.Pos), Is.LessThan(1e-4f),
+                "fixture premise: OpenField holds the collector at the origin, "
+                + "which is what makes the two bearings below exact");
+
+            var northOfIt = new float2(0f, 9f);
+            var offAxis = new float2(-6f, -6f);
+            TestWorlds.SpawnMobsAt(w, (MobType.Chaser, northOfIt), (MobType.Gunner, offAxis));
+
+            for (int i = 0; i < 2; i++)
+            {
+                float2 dir = w.Mobs[i].Dir;
+                Assert.AreEqual(1f, math.length(dir), 1e-4f, $"mob {i}: a course is a UNIT vector");
+                float2 walked = w.Mobs[i].Pos + dir * math.distance(w.Player.Pos, w.Mobs[i].Pos);
+                Assert.That(math.distance(walked, w.Player.Pos), Is.LessThan(1e-3f),
+                    $"mob {i}: walking along the course reaches the collector it was spawned for");
+                Assert.Less(math.dot(dir, new float2(1f, 0f)), 0.9f,
+                    $"mob {i}: and that is a real bearing, not normalizesafe's +X fallback");
+            }
+        }
     }
 }

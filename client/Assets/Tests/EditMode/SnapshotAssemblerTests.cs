@@ -969,6 +969,54 @@ namespace Ring.Simulation.Tests
                 "a mob that just left sight must keep riding through the linger window (Р19)");
         }
 
+        /// app-94sk T5c step 3: THE MOB'S WIRE HEADING IS ITS COURSE, AND NOT
+        /// ITS VELOCITY — and nothing in this suite said so before, which is
+        /// why the change from one to the other could have shipped invisibly
+        /// (measured by grep across all of Tests/EditMode: `MobRecordOf`'s
+        /// derivation had no witness at all, and `SnapshotCodecTests` builds
+        /// its records by hand).
+        ///
+        /// THE TWO DIRECTIONS ARE DELIBERATELY DIFFERENT, because that is the
+        /// only arrangement that can tell them apart: a strafing gunner is the
+        /// production case (it walks sideways and shoots forward), so the body
+        /// here looks along +Y while it travels along +X. An assembler still
+        /// reading `normalizesafe(m.Vel)` fails the second assertion by a full
+        /// quarter turn.
+        ///
+        /// NOT A BYTE MOVED WITH IT: `MobRecord` is still exactly 9 bytes and
+        /// `ProtocolVersion` is untouched (plan 1 does not move it at all) —
+        /// what changed is what the existing field MEANS, which is the third of
+        /// the four triggers spec §3.11 counts towards plan 2's bump.
+        ///
+        /// The 0.02 bound is `Quantize.Dir`'s own: 256 codes over the full
+        /// turn, i.e. at most 0.0123 of chord between two unit vectors, the
+        /// same number the corpse-heading fixtures above state.
+        [Test]
+        public void MobRecord_CarriesTheBodysCourse_NotItsVelocity()
+        {
+            var cfg = TestConfigs.Open();
+            var w = new SimulationWorld(1, cfg);
+            TestWorlds.RelocatePlayerForTest(w, 0, float2.zero);
+            w.SpawnMobForTest(MobType.Chaser, new float2(0f, 10f));   // in plain sight
+
+            var course = new float2(0f, 1f);
+            var travel = new float2(9f, 0f);
+            MobState m = w.Mobs[0];
+            m.Dir = course;
+            m.Vel = travel;
+            w.SetMobForTest(0, m);
+
+            var asm = new SnapshotAssembler(cfg, Net(), connectionCount: 1);
+            AssembledFrame f = Build(asm, w, cfg, 0, 0, 0);
+
+            Assert.AreEqual(1, f.MobCount, "fixture premise: the one mob rides this frame");
+            Assert.That(math.distance(f.Mobs[0].Dir, course), Is.LessThan(0.02f),
+                "the record carries the body's own course");
+            Assert.That(math.distance(f.Mobs[0].Dir, math.normalizesafe(travel)),
+                Is.GreaterThan(0.5f),
+                "and NOT its velocity — a strafing body faces where it shoots, not where it walks");
+        }
+
         // ---- T28.A5. `seq` is assigned once per tick, for every connection ----
 
         [Test]

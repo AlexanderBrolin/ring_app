@@ -382,6 +382,19 @@ namespace Ring.Simulation.Core
                 _players[i] = new PlayerState
                     {
                         Pos = pos, Hp = config.Hero.MaxHp, Stamina = config.Hero.StaminaMax, Alive = true,
+                        // app-94sk T5c (spec §3.8): the course this collector
+                        // lands in the raid with. Needed for the reason
+                        // SpawnMob's own seed is needed -- a zero course is an
+                        // ABSORBING state for Geometry.RotateTowards, so the
+                        // law in PlayerMovementSystem.Update would never move
+                        // it -- and INWARD because that is where the law would
+                        // steer it anyway: a fresh AimPoint is (0, 0), the
+                        // arena center, and a standing collector turns in
+                        // towards its aim. The seed only saves it the trip.
+                        // normalizesafe's fallback covers the one config that
+                        // spawns AT the center (TestConfigs.OpenField, whose
+                        // PlayerSpawnRingFrac is 0), where there is no inward.
+                        Dir = math.normalizesafe(-pos, new float2(1f, 0f)),
                         // Stage 3 Task 2 (spec Р261): the magazine starts full at
                         // the config's own starting count.
                         Ammo = config.Weapon.AmmoStart,
@@ -2599,9 +2612,36 @@ namespace Ring.Simulation.Core
             // committing a half-built array slot.
             float maxHp = MobConfigFor(type).MaxHp;
             int id = _nextEntityId++;
+            // app-94sk T5c (spec §3.8, finding D-C9): the course a fresh body
+            // starts with. `new MobState { ... }` zeroes everything it does not
+            // name, and zero is not a legal course: Geometry.RotateTowards
+            // returns `from` unchanged below Geometry.MinHeadingLength, so a
+            // body spawned at zero could never turn again for the rest of the
+            // raid -- the law in MobAiSystem.ApplyMotion would be dead for it.
+            //
+            // AT WHAT IT WAS SPAWNED FOR, through the SAME Targeting.
+            // NearestAlivePlayer the FSM picks its target with (rule 2, and the
+            // same "one home for which archetype's numbers" reasoning
+            // MobConfigFor is resolved through just above). The second reason
+            // is a game outcome rather than tidiness: spec §3.9 puts the strike
+            // behind a SECTOR around this field, and MobAiTests.
+            // Chaser_TelegraphThenStrike_DamagesPlayer spawns a body 1.0 m from
+            // its victim "already within AttackRange" and demands the damage --
+            // which a body facing nowhere in particular would owe to luck.
+            //
+            // normalizesafe, NOT normalize, and the +X fallback is reachable:
+            // a wave can spawn with every collector dead or extracted (nothing
+            // in WaveSystem waits for a living target), and TestConfigs.
+            // OpenField puts the collector at the origin where a spawn AT the
+            // origin would be bearingless. Either way the field gets a unit
+            // vector, which is what the whole law is built on.
+            float2 course = Targeting.NearestAlivePlayer(this, pos, out int spawnTargetIndex)
+                ? math.normalizesafe(_players[spawnTargetIndex].Pos - pos, new float2(1f, 0f))
+                : new float2(1f, 0f);
             _mobs[_mobCount++] = new MobState
             {
                 Id = id, Type = type, Pos = pos,
+                Dir = course,
                 Hp = maxHp,
                 Ai = MobAiState.Idle,
                 // Deterministic handedness for Gunner strafe / SteerAround's dead-on
@@ -3373,6 +3413,15 @@ namespace Ring.Simulation.Core
         static ulong HashPlayer(ulong h, in PlayerState p)
         {
             h = StateHash64.Add(h, p.Pos); h = StateHash64.Add(h, p.Vel);
+            // app-94sk T5c: the body's course, folded beside the pair it
+            // qualifies (RULING 129 -- a field is folded beside what it
+            // qualifies, not where the struct happens to declare it): Pos says
+            // where the body stands, Vel where it is going, Dir which way it
+            // faces. Canonical state on every count the tilt pair below is
+            // hashed on -- it survives a tick, rides SaveState/RestoreState,
+            // and from the strike sector of spec §3.9 it decides game outcomes
+            // outright.
+            h = StateHash64.Add(h, p.Dir);
             h = StateHash64.Add(h, p.AimPoint); h = StateHash64.Add(h, p.DashDir);
             h = StateHash64.Add(h, p.RecoilOffset); h = StateHash64.Add(h, p.Hp);
             h = StateHash64.Add(h, p.Stamina); h = StateHash64.Add(h, p.StaminaRegenDelayTimer);
@@ -3503,6 +3552,11 @@ namespace Ring.Simulation.Core
             // body's past.
             h = StateHash64.Add(h, m.HistorySlot);
             h = StateHash64.Add(h, m.Pos); h = StateHash64.Add(h, m.Vel);
+            // app-94sk T5c: the course, beside Pos/Vel on HashPlayer's own
+            // account above. It reaches the client as MobRecord.Dir, but that
+            // is not why it is here: the digest is about what the SERVER must
+            // replay identically.
+            h = StateHash64.Add(h, m.Dir);
             h = StateHash64.Add(h, m.Hp); h = StateHash64.Add(h, m.StateTimer);
             h = StateHash64.Add(h, m.FireCooldown); h = StateHash64.Add(h, (int)m.Ai);
             h = StateHash64.Add(h, m.StrafeSign);

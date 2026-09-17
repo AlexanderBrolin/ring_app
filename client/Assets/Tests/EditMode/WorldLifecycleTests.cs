@@ -297,6 +297,24 @@ namespace Ring.Simulation.Tests
             //   38 x 2 = 76, 13 x 2 = 26, 7 x 3 = 21,
             //   5 + 13 + 15 + 5 + 2 + 5 = 45          -> 162 -> 168.
             //
+            // app-94sk T5c: BOTH bodies grew the same field -- Dir, the body's
+            // course (spec §3.8, SimStates.cs' own field docs) -- folded into
+            // HashPlayer and HashMob beside the Pos/Vel pair it qualifies.
+            // Re-derived once more from fresh typeof(X).GetFields() readings of
+            // ALL NINE structs rather than adjusted from 168, and this time the
+            // recount came back agreeing with the receipt in every other line:
+            // MatchStats 13, WaveState 7, WorldStats 5, ProjectileState 15,
+            // PickupState 5, MatchState 2, ContainerState 5. Two lines move,
+            // and by different amounts for the reason the paragraphs above
+            // keep restating: the player line carries the "x 2 players"
+            // multiplier the mob line does not, so 38 -> 39 is worth TWO and
+            // 13 -> 14 is worth one. (ONE field, not two — the "worth FOUR"
+            // of the app-8dv paragraph above counted BurstShots AND
+            // ShotOrdinal, and copying the figure across would have been the
+            // very arithmetic-by-analogy these paragraphs exist to stop):
+            //   39 x 2 = 78, 13 x 2 = 26, 7 x 3 = 21,
+            //   5 + 14 + 15 + 5 + 2 + 5 = 46          -> 168 -> 171.
+            //
             // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST -- SAID OF
             // Т24, whose paragraph it closes. (Т28's own paragraph was inserted
             // above it and left this one reading as if it described Т28, which

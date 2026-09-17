@@ -114,7 +114,12 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Idle;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                    // NO TARGET TO FACE, AND THE ARGUMENT CANNOT BE READ HERE:
+                    // the two lines above put this body in Idle, and the course
+                    // law inside only reads a bearing in Reposition/Fire. Its
+                    // own position is the one value that cannot be mistaken for
+                    // somebody else's.
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing, m.Pos);
                     continue;
                 }
                 PlayerState player = w.PlayerAt(targetIndex);
@@ -183,7 +188,7 @@ namespace Ring.Simulation.AI
                     m.Ai = MobAiState.Chase;
                     m.StateTimer = 0f;
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
                     return;
 
                 case MobAiState.Chase:
@@ -232,14 +237,14 @@ namespace Ring.Simulation.AI
                         m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed,
                             cfg.Accel * dt);
                     }
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
                     return;
                 }
 
                 case MobAiState.Telegraph:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.TelegraphSeconds)
                     {
@@ -304,7 +309,7 @@ namespace Ring.Simulation.AI
                 case MobAiState.Recover:
                 {
                     m.Vel = DecayVelocity(m.Vel, cfg.Accel * dt);
-                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                    ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
                     m.StateTimer += dt;
                     if (m.StateTimer >= cfg.AttackCooldown)
                     {
@@ -355,7 +360,7 @@ namespace Ring.Simulation.AI
                 float2 dir = SteerAround(m.Pos, target, in arena, cfg.AvoidLookahead,
                     cfg.Radius, cfg.AvoidMargin, m.Id);
                 m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, dir * cfg.MaxSpeed, cfg.Accel * dt);
-                ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+                ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
                 return;
             }
 
@@ -363,7 +368,7 @@ namespace Ring.Simulation.AI
             float2 radial = math.normalizesafe(toPlayer, new float2(1f, 0f));
             float2 tangent = new float2(-radial.y, radial.x) * m.StrafeSign;
             m.Vel = PlayerMovementSystem.MoveTowards(m.Vel, tangent * cfg.StrafeSpeed, cfg.Accel * dt);
-            ApplyMotion(ref m, in cfg, in arena, dt, leashRing);
+            ApplyMotion(ref m, in cfg, in arena, dt, leashRing, player.Pos);
 
             if (cfg.StrafeSpeed > 0f && math.length(m.Vel) < StrafeBlockedFactor * cfg.StrafeSpeed)
                 m.StrafeSign = -m.StrafeSign;
@@ -425,14 +430,71 @@ namespace Ring.Simulation.AI
         static float2 DecayVelocity(float2 vel, float maxDelta)
             => PlayerMovementSystem.MoveTowards(vel, float2.zero, maxDelta);
 
-        /// Applies the current velocity through the shared collide-and-slide solver.
+        /// Applies the current velocity through the shared collide-and-slide
+        /// solver, and then turns the body's COURSE by one tick (app-94sk T5c,
+        /// spec §3.8/§3.9).
+        ///
+        /// THE COURSE LANDS HERE BECAUSE THE MOTION DOES, and the two are
+        /// stepped TOGETHER rather than merely nearby. This method is "the
+        /// single place every mob's motion lands" — LeashRingFor's own doc says
+        /// so, and threads its one answer down the whole FSM for exactly that
+        /// reason — so the course is stepped off the post-collision velocity,
+        /// once per mob per arriving tick.
+        /// ⚠ TWO ARMS DO NOT ARRIVE, AND NEITHER IS A GAP, because an arm that
+        /// skips this method skips the MOTION too — the body neither moves nor
+        /// turns on such a tick, which is one consistent answer rather than
+        /// half of one:
+        ///   * `Downed` (the guard at the top of Update, by `continue`): a
+        ///     downed body "neither steers, nor strikes, nor fires";
+        ///   * `UpdateChaser`'s `default:` arm, the defensive one. It is
+        ///     REACHABLE in production and not only in theory: an Elite or the
+        ///     Director sets Reposition/Fire in UpdateGunner, and the dispatch
+        ///     above sends it to UpdateChaser the moment distance drops inside
+        ///     AttackRange, carrying a Gunner-only state into a switch that has
+        ///     no case for it. That costs exactly the one tick the arm spends
+        ///     resetting the state to Chase.
+        ///
+        /// `faceTargetPos` IS THE BEARING, NOT THE HEADING, and it is read in
+        /// exactly two of MobAiState's SEVEN values. A mob fighting at RANGE
+        /// squares up to what it is shooting at while it strafes sideways;
+        /// every other state follows the travel. That PREDICATE is `MobVisual.
+        /// Sync`'s own, moved into the simulation rather than invented here —
+        /// its TARGET is not: the picture squares up to `p.PlayerPos`, the
+        /// LOCAL viewer, while this reads the body the FSM actually chose, and
+        /// in a co-op raid those are two different collectors. The simulation's
+        /// reading is the correct one; the difference is named because the
+        /// paragraph would otherwise promise a straight move.
+        ///
+        /// ⚠ AND THE PICTURE'S THRESHOLD ON SPEED DID NOT COME WITH IT, which
+        /// is a difference with a number rather than an equivalence:
+        /// `GameFeelConfig.MobWalkExitSpeed` is 0.2 m/s, while the only
+        /// threshold here is Geometry.MinHeadingLength at 1e-6 — five orders
+        /// apart. The band between them is all but unreachable in practice, and
+        /// that too is arithmetic rather than hope: `DecayVelocity` steps by
+        /// `Accel * dt`, which is 0.833 m/s for the slowest archetype (Gunner,
+        /// Accel 25) against a 0.2 m/s ceiling, and `PlayerMovementSystem.
+        /// MoveTowards` RETURNS its target once inside one step — so a
+        /// decelerating body lands on exactly zero and never inside the band.
+        /// What can reach it is a collision: `Geometry.Slide` keeps an
+        /// arbitrarily small tangential remainder, and on such a tick this law
+        /// turns along a creep the picture would have ignored. The number that
+        /// keeps the band empty is `Accel >= 6`; the threshold stays in game
+        /// feel because spec §3.8's table moves FOUR numbers into balance, and
+        /// a fifth is the owner's call on the milestone.
+        ///
+        /// ONE RATE, `cfg.MobTurnDegPerSec`, which T5b made a number of the
+        /// ARCHETYPE: before it, one number in game feel turned all four.
         static void ApplyMotion(ref MobState m, in MobSimConfig cfg, in ArenaSimConfig arena, float dt,
-            float leashRing)
+            float leashRing, float2 faceTargetPos)
         {
             float2 target = m.Pos + m.Vel * dt;
             PlayerMovementSystem.MoveWithCollisions(ref m.Pos, ref m.Vel, target, cfg.Radius, in arena,
                 out _, out _, out _);
             if (leashRing > NoLeash) LeashToRing(ref m, in cfg, leashRing);
+
+            bool facesItsTarget = m.Ai == MobAiState.Reposition || m.Ai == MobAiState.Fire;
+            float2 want = facesItsTarget ? faceTargetPos - m.Pos : m.Vel;
+            m.Dir = PlayerMovementSystem.TurnTowards(m.Dir, want, cfg.MobTurnDegPerSec, dt);
         }
 
         /// "No ring" — a leash radius no arena ring can take, because a ring

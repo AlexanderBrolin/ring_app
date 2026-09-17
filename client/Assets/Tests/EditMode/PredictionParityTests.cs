@@ -160,7 +160,7 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 38; nothing is skipped (there is no
+        /// The sweep still visits all 39; nothing is skipped (there is no
         /// skip-list anywhere in this suite, and this is not the place to
         /// start one).
         /// ⚠ THE NUMBER IS RE-READ FROM `typeof(PlayerState).GetFields()`,
@@ -169,8 +169,9 @@ namespace Ring.Simulation.Tests
         /// 34 and had been wrong since Т22, which declared `SlideSpeedPenalty`
         /// and left every count in this file untouched. Т24 then added
         /// `HistorySlot`. 32 -> 34 (Т7's `Tilt`/`TiltVel`) -> 35 (Т22) -> 36
-        /// (Т24) -> 38 (app-8dv's `BurstShots`/`ShotOrdinal`), each reading
-        /// taken fresh rather than incremented.
+        /// (Т24) -> 38 (app-8dv's `BurstShots`/`ShotOrdinal`) -> 39
+        /// (app-94sk T5c's `Dir`, the body's course), each reading taken fresh
+        /// rather than incremented.
         /// The same miss, on the same field, is what RULING 125 had to
         /// correct in `WorldLifecycleTests`' receipt; naming it here is how the
         /// next reader stops inheriting it.
@@ -871,7 +872,7 @@ namespace Ring.Simulation.Tests
         /// Т10/Т13. A skip-list here would be the first one in the project and
         /// would say "we do not look at these eleven fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 38 (see
+        /// not have touched them. So the sweep still visits all 39 (see
         /// `AssertPlayerStateBitEqual`'s own note on where both numbers come
         /// from and why neither is ever incremented from memory).
         ///
@@ -907,6 +908,19 @@ namespace Ring.Simulation.Tests
                 ["AimSettleTimer"] = PredictionRole.Predicted,
                 ["DashRequestCooldownTicks"] = PredictionRole.Predicted,
                 ["SlideRequestCooldownTicks"] = PredictionRole.Predicted,
+                // app-94sk T5c: the body's COURSE. Predicted rather than
+                // Server, and the classification was read off the bodies
+                // (rule 17) rather than taken from the plan: its only writer
+                // anywhere is the trailing block of PlayerMovementSystem.
+                // Update, the same method Step calls — so
+                // both sides turn the same course, off the same Vel and the
+                // same AimPoint, on the same tick. The order inside Step is
+                // what makes that exact rather than approximate: `p.AimPoint =
+                // input.AimPoint` runs BEFORE the movement call on both paths
+                // (SimulationWorld.TickMovement does the same two lines in the
+                // same order), so the standing branch of the law reads one
+                // tick's aim on both.
+                ["Dir"] = PredictionRole.Predicted,
                 // --- written by Step itself, from the sanitized input ---
                 ["AimPoint"] = PredictionRole.Predicted,
                 // --- written by WeaponSystem.AdvanceNoSpawn -> Advance ---
@@ -1063,7 +1077,7 @@ namespace Ring.Simulation.Tests
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 38 fields, which is a claim about ELEVEN of them that
+            // of ALL 39 fields, which is a claim about ELEVEN of them that
             // PlayerPrediction.Step could never satisfy — it does not write
             // them, and the world does. (Nine when R-209 landed; app-88jb Т7's
             // PlayerState.Tilt was the tenth, stepped every tick by

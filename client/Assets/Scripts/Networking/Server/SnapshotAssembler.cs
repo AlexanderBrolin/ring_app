@@ -2372,10 +2372,36 @@ namespace Ring.Networking.Server
                 Type = m.Type,
                 Ai = m.Ai,
                 Pos = m.Pos,
-                // A mob has no aim point, so its heading IS its motion; a
-                // stationary one falls back to +X, which is what
-                // `Quantize.Dir` encodes a zero vector as anyway.
-                Dir = math.normalizesafe(m.Vel, new float2(1f, 0f)),
+                // THE BODY'S OWN COURSE SINCE app-94sk T5c (spec §3.8), and
+                // this line used to DERIVE it: `normalizesafe(m.Vel)` said "a
+                // mob has no aim point, so its heading IS its motion", which
+                // was true only for as long as no mob had a heading of its
+                // own. It does now — `MobState.Dir`, turned at the archetype's
+                // own rate by `MobAiSystem.ApplyMotion` — and what the old
+                // line got wrong is the strafing gunner: it walks sideways and
+                // shoots forward, so its motion was never its facing.
+                // ⚠ NOBODY READS THE BYTE BACK YET, so nothing about the
+                // picture changes today — `NetworkSimBackend.ReadMobs` drops
+                // the record's `Dir` (see `MobState.Dir`'s own doc); the
+                // reader is its own task.
+                //
+                // NOT A BYTE MOVED: `MobRecord` is still exactly 9 bytes and
+                // the quantization is unchanged, so this is a change of
+                // MEANING on an existing field — the third of the four
+                // triggers spec §3.11 counts towards plan 2's
+                // `ProtocolVersion` 5 -> 6. Plan 1 does not bump it.
+                //
+                // AND THE `normalizesafe` GUARD IS GONE WITH THE DERIVATION,
+                // because it had nothing left to guard: it was there for
+                // `Vel`, which is any magnitude including zero, while this
+                // field is a heading by construction (both spawns seed a unit
+                // vector). `Quantize.Dir` encodes `atan2` alone and is
+                // therefore scale-invariant, so the guard could not have
+                // changed a single byte — and even a degenerate zero encodes
+                // to code 128, exactly what the +X fallback encoded to
+                // (`Quantize`'s own doc: "Dir(float2.zero) encodes identically
+                // to Dir(+X)").
+                Dir = m.Dir,
                 Hp = m.Hp,
             };
         }

@@ -14,6 +14,25 @@ namespace Ring.Simulation.Core
     {
         public const float Skin = 1e-3f;
 
+        /// The shortest vector `RotateTowards` below will read AS A HEADING.
+        /// Anything under it supplies no direction to steer by or towards, so
+        /// that function returns the course it was given, unchanged.
+        ///
+        /// NAMED RATHER THAN LEFT A LITERAL BECAUSE A SECOND CALLER NOW ASKS
+        /// THE SAME QUESTION (app-94sk T5c): the collector's course law has to
+        /// know whether its velocity is a travel heading BEFORE it can pick a
+        /// turn rate — a traveling body turns along its travel, a standing one
+        /// towards the aim, and the two rates differ — while the turn itself
+        /// answers the same question again inside. Two spellings of one
+        /// threshold would let a body pick the travel RATE for a travel the
+        /// turn then declines to follow, and nothing would fail.
+        /// ⚠ THE OTHER `1e-6f` LITERALS IN THIS FILE ARE NOT THIS NUMBER and
+        /// are deliberately left alone: they guard DISTANCES — between two
+        /// bodies, and from the arena's center in `ClampInsideRing` — and one
+        /// axis length, which are different questions that happen to share a
+        /// magnitude.
+        public const float MinHeadingLength = 1e-6f;
+
         public static bool CircleOverlap(float2 aPos, float aR, float2 bPos, float bR)
         {
             float r = aR + bR;
@@ -946,16 +965,23 @@ namespace Ring.Simulation.Core
             => Rotate(v, math.sin(rad), math.cos(rad));
 
         /// Rotates `from` towards `to` by at most `maxRad` radians, along the
-        /// shorter arc, preserving `from`'s magnitude (direction-only steer —
-        /// Task 10 slide steering, QC19). A zero-length `from` or `to` can't
-        /// supply a heading, so the other vector (or `from` itself, unchanged)
-        /// is returned rather than dividing by zero.
+        /// shorter arc, preserving `from`'s magnitude to within float32
+        /// rounding (direction-only steer — Task 10 slide steering, QC19). A
+        /// zero-length `from` or `to` can't supply a heading, so `from` is
+        /// returned UNCHANGED in both cases rather than dividing by zero —
+        /// which is also what makes a zero `from` an absorbing state for any
+        /// caller that stores the result back (app-94sk T5c's course fields,
+        /// and the reason both of their spawns seed a unit vector).
+        /// ⚠ THE WORDING USED TO OFFER "the other vector" for the zero cases
+        /// and no arrangement of the code ever did that; `GeometryTests.
+        /// RotateTowards_ZeroLengthInput_ReturnsFromUnchanged` pins what it
+        /// really does.
         public static float2 RotateTowards(float2 from, float2 to, float maxRad)
         {
             float lenFrom = math.length(from);
-            if (lenFrom < 1e-6f) return from;
+            if (lenFrom < MinHeadingLength) return from;
             float lenTo = math.length(to);
-            if (lenTo < 1e-6f) return from;
+            if (lenTo < MinHeadingLength) return from;
 
             float2 nFrom = from / lenFrom;
             float2 nTo = to / lenTo;

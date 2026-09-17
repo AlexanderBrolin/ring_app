@@ -6,6 +6,80 @@ namespace Ring.Simulation.Core
     public struct PlayerState
     {
         public float2 Pos, Vel, AimPoint, DashDir;
+
+        /// THE BODY'S COURSE, and until app-94sk T5c the simulation did not
+        /// carry it at all (spec §3.8): the collector's facing lived in
+        /// Presentation as `PlayerVisual._facing`, a PRIVATE quaternion turned
+        /// by `Quaternion.RotateTowards` on FRAME time. It has to be state
+        /// because a hit volume sitting on a bone is rotated with the body
+        /// (spec §3.2), and a picture-only heading cannot rotate anything the
+        /// server decides.
+        ///
+        /// A UNIT VECTOR, AND ITS LENGTH IS LOAD-BEARING TWICE OVER.
+        /// `Geometry.RotateTowards` preserves the length it is given TO WITHIN
+        /// float32 rounding and does not re-normalize, so whatever the spawn
+        /// puts here is what this field carries for the match — measured
+        /// rather than assumed, by replaying that function's own sequence of
+        /// operations in float32: the deviation from one is SELF-LIMITING and
+        /// stays under 1.4e-4 (1.26e-4 at 27 000 ticks, 1.28e-4 at 36 000,
+        /// 1.37e-4 worst over 200 000), and the pathological case — a body
+        /// flipped a full 180 degrees every tick at 720 deg/s — settles at
+        /// 0.99964 instead of running away. Nothing reads the MAGNITUDE:
+        /// the law normalizes internally, the digest only needs the two sides
+        /// to agree bit for bit (they do — the drift is deterministic), and
+        /// `Quantize.Dir` encodes an `atan2` and is scale-invariant.
+        ///
+        /// ZERO, HOWEVER, IS NOT A LEGAL VALUE: at
+        /// `|from| < Geometry.MinHeadingLength` that function returns `from`
+        /// unchanged, so a zero course is an ABSORBING state and the law would
+        /// be dead for the rest of the raid. The constructor therefore seeds
+        /// it (`SimulationWorld`'s player loop), exactly as
+        /// `SimulationWorld.SpawnMob` seeds the mob's.
+        ///
+        /// ONE LEXICON PER QUANTITY (spec §3.8, finding D-I4): the wire has
+        /// called this `Dir` since Stage 2 (`PlayerRecord.Dir`,
+        /// `MobRecord.Dir`), so the simulation calls it `Dir` too. The pose
+        /// key's byte copy is named `Facing` in that one place only, and the
+        /// relationship is a rule rather than a second fact: `Facing` is a
+        /// QUANTIZATION of `Dir`.
+        ///
+        /// TWO RATES, BOTH BALANCE SINCE T5b, and the branch between them is
+        /// the whole law (`PlayerMovementSystem.Update`, its trailing block):
+        /// a TRAVELLING collector turns along its travel at
+        /// `Hero.VisualTurnDegPerSec`, a STANDING one turns in towards its aim
+        /// at the gentler `Hero.IdleAimTurnDegPerSec` — the doll must never
+        /// stay back-to-cursor while shooting on the spot. The step is a TICK
+        /// (30 Hz) rather than a frame, which is the price spec §3.14 names
+        /// and Presentation is to pay by interpolating.
+        ///
+        /// IT DOES GO ON THE WIRE, and saying so is the point — `MobState.
+        /// Dir`'s own "reaches the client as MobRecord.Dir" does NOT describe
+        /// this field. Nothing puts it in the SNAPSHOT: `SnapshotBlocks.
+        /// PlayerRecord` is a hand-written five-field record whose `Dir`
+        /// carries the AIM heading instead (Р68 — `SnapshotAssembler.
+        /// PlayerRecordOf`, which `PlayerFlags.ToSyntheticState` spreads into
+        /// the remote doll's AimPoint/DashDir/SlideDir, the 8-byte record
+        /// having no second direction to spend). But `ReconcileData` carries
+        /// THE WHOLE PlayerState back to its own owner, so FishNet's
+        /// generated serializer writes these eight bytes too, and
+        /// ReconcileCodecTests walks the struct by reflection precisely so a
+        /// new field is carried the moment it is declared. That is exactly
+        /// HistorySlot's shape a few fields down, and it costs eight bytes
+        /// per reconcile rather than four.
+        ///
+        /// SPEC §3.11 COUNTS THAT AS ITS FOURTH TRIGGER for the
+        /// `ProtocolVersion` 5 -> 6 bump — and plan 1 does not spend it: the
+        /// version stays 5 here (Global Constraints), plan 2 raises it. A
+        /// remote doll still has no course of its own either way.
+        ///
+        /// PREDICTED, NOT SERVER (`PredictionParityTests.RoleByField`): the
+        /// law's only writer is `PlayerMovementSystem.Update`, which
+        /// `PlayerPrediction.Step` calls, so both sides step the same course
+        /// off the same input on the same tick. A corpse keeps the course it
+        /// died with — `PlayerMovementSystem.UpdateDead` never runs the law —
+        /// on AimPoint's own account a few fields up.
+        public float2 Dir;
+
         public float RecoilOffset,
             Hp, Stamina, StaminaRegenDelayTimer,
             DashTimer, DashCooldown, IframeTimer, DashBufferTimer, FireCooldown;
@@ -292,6 +366,44 @@ namespace Ring.Simulation.Core
         public int Id;
         public MobType Type;
         public float2 Pos, Vel;
+
+        /// THE BODY'S COURSE (app-94sk T5c, spec §3.8/§3.9) — see
+        /// `PlayerState.Dir` above for why a heading has to be state at all,
+        /// for the one-lexicon rule that named it `Dir`, and for why zero is
+        /// not a legal value. The differences from the collector's are three:
+        ///   * the law lives in `MobAiSystem.ApplyMotion`, the single place
+        ///     every mob's motion lands, so a body that never gets there
+        ///     never turns -- which is exactly right for `Downed`, a state
+        ///     whose own doc says it "neither steers, nor strikes, nor fires";
+        ///   * the target is picked by the FSM state and not by speed: a mob
+        ///     fighting at RANGE (`Reposition`/`Fire`) squares up to the
+        ///     collector it is shooting at while it strafes, and every other
+        ///     state follows the travel. That predicate is `MobVisual.Sync`'s,
+        ///     moved rather than invented;
+        ///   * ONE rate, `MobSimConfig.MobTurnDegPerSec`, which T5b made a
+        ///     number of the ARCHETYPE (it was one number for all four).
+        ///
+        /// ON THE WIRE, AND THAT LINE CHANGED MEANING WITHOUT CHANGING A BYTE
+        /// (T5c step 3): `SnapshotAssembler.MobRecordOf` used to DERIVE the
+        /// heading as `normalizesafe(m.Vel)` -- a strafing gunner therefore
+        /// faced where it walked instead of where it shot -- and now reads
+        /// this field. `MobRecord` is still exactly 9 bytes.
+        ///
+        /// ⛔ AND NOBODY READS THAT BYTE BACK YET, WHICH IS WHY THIS PARAGRAPH
+        /// CANNOT CLAIM THE PICTURE CHANGED. `SnapshotBlocks` decodes the
+        /// record's `Dir`, but `Ring.Presentation.Net.NetworkSimBackend.
+        /// ReadMobs` builds its MobState from `{Id, Type, Ai, Pos, Hp}` and
+        /// drops it, so ON A CLIENT this field stays default -- the same
+        /// caveat SpawnZone states above, for a different reason (there the
+        /// record does not carry the value; here it does and the reader does
+        /// not take it). Presentation must not read this field until that
+        /// reader lands: `MobVisual.Sync` still turns its own `_facing` off
+        /// the frame's displacement. The step is deliberately not T5c's --
+        /// NetworkSimBackend's constructor demands a live NetworkManager, so
+        /// EditMode cannot witness a line added there (FramePresenceTests'
+        /// own header measures that) -- and it is filed as its own task.
+        public float2 Dir;
+
         public float Hp, StateTimer, FireCooldown;
         public MobAiState Ai;
         public int StrafeSign;
