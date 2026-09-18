@@ -60,6 +60,15 @@ namespace Ring.Simulation.Tests
             TestWorlds.SpawnMobsAt(w,
                 (MobType.Chaser, new float2(chaserX, 0f)),
                 (MobType.Gunner, new float2(gunnerX, 0f)));
+            // app-94sk T6b: the fixtures below state the screen's geometry in
+            // the table's frame (RestBottom/RestTop, GatherRadius on the axis),
+            // and a chaser turned to face the shooter carries his chest 0.08 m
+            // aside and his legs a shoulder-width off the line
+            // (TestWorlds.FaceTheTable's own doc). Only the chaser: a gunner
+            // in Reposition/Fire squares up to his target by the course law
+            // whatever a fixture sets, and none of these shots depends on
+            // which way HE stands -- his head is on his axis.
+            TestWorlds.FaceTheTable(w, 0);
             return w;
         }
 

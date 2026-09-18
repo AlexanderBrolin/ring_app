@@ -881,12 +881,11 @@ namespace Ring.Data
             // still exist. ⚠ This rule is asked of the collector alone; every
             // mob has clips at index 1 too, and none of them is a slide.
             if (cfg.Hero.Poses.ClipFirstRow != null
-                && cfg.Hero.Poses.ClipFirstRow.Length > SlideClipIndex + 1
+                && cfg.Hero.Poses.ClipFirstRow.Length > BakedClips.Collector.Slide + 1
                 && cfg.Hero.Parts != null && cfg.Hero.Parts.Length > 0)
             {
-                int slideRow = cfg.Hero.Poses.ClipFirstRow[SlideClipIndex];
-                float slideCrown = HitParts.PoseTop(cfg.Hero.Parts, in cfg.Hero.Poses,
-                    slideRow, float2.zero);
+                int slideRow = cfg.Hero.Poses.ClipFirstRow[BakedClips.Collector.Slide];
+                float slideCrown = HitParts.PoseTop(cfg.Hero.Parts, in cfg.Hero.Poses, slideRow);
                 if (slideCrown + cfg.Gunner.ProjectileRadius >= cfg.Gunner.MuzzleHeight)
                 {
                     errors.Add("Gunner.MuzzleHeight must be above the collector's slide crown " +
@@ -2534,15 +2533,11 @@ namespace Ring.Data
         /// could author slips through.
         const float RestExtentEps = 1e-4f;
 
-        /// app-94sk T4: the slide loop's clip index, which is the baker's
-        /// ORDERING CONTRACT rather than a guess — clip 0 is the rest clip,
-        /// clip 1 is the slide loop where a body has one, the last clip is the
-        /// death take. ⛔ NOT A LITERAL `1` at the use site: on a one-clip
-        /// table `ClipFirstRow[1]` is the sentinel row count, and a literal
-        /// there reads as a row index while meaning something else entirely.
-        /// ⚠ `Ring.Simulation.Tests.TestConfigs` names the same number for its
-        /// fixture tables; that the two agree IS the contract.
-        internal const int SlideClipIndex = 1;
+        // app-94sk T4 named the slide loop's clip index HERE (`SlideClipIndex
+        // = 1`, the baker's ordering contract rather than a guess) and
+        // TestConfigs named it a second time; app-94sk T6b moved the number
+        // into `BakedClips.Collector.Slide`, the one home of every position the
+        // baker's contract fixes, and rule 16 above reads it from there.
 
         /// NaN WHEN THE BODY CANNOT EXPRESS THE QUESTION: a body with no head
         /// zone at all has no such seam, and a rule reading 0 there would

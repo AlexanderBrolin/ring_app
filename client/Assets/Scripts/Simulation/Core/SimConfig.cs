@@ -945,6 +945,27 @@ namespace Ring.Simulation.Core
             }
         }
 
+        /// How many clips this table carries -- the CSR's own count, zero on a
+        /// table with no rows (a `default` table, or a fixture that names no
+        /// clip). ⛔ THE PRODUCER'S QUESTION (PoseSystem, app-94sk T6b): a
+        /// fixture table carries one phase per body and none of the clips
+        /// BakedClips positions past the slide, so a producer that named the
+        /// walk on it would send Sample to its "clip N is not in a table of M
+        /// clips" refusal from the middle of the combat path. `HasClip` is
+        /// what it asks first; a clip the table does not carry is held at the
+        /// rest clip, and validation rule 15 (T6c) is what keeps a SHIPPED
+        /// table from ever being that short.
+        public static int ClipCount(in PoseTable table)
+            => table.ClipFirstRow == null ? 0 : math.max(0, table.ClipFirstRow.Length - 1);
+
+        public static bool HasClip(in PoseTable table, int clip)
+            => clip >= 0 && clip < ClipCount(in table);
+
+        /// How many rows clip `clip` has -- the CSR subtraction, the number a
+        /// phase loops over. The clip is assumed present (`HasClip`).
+        public static int RowsOf(in PoseTable table, int clip)
+            => table.ClipFirstRow[clip + 1] - table.ClipFirstRow[clip];
+
         /// Where the row that clip `clip` shows at `phase` starts in Bones.
         /// The clip's length is the CSR subtraction its own field doc
         /// describes; a phase past it holds the last row. The row is checked
@@ -1315,6 +1336,23 @@ namespace Ring.Simulation.Core
                     throw new System.ArgumentOutOfRangeException(nameof(type), type,
                         "unknown archetype");
             }
+        }
+
+        /// app-94sk T6b: THE WIDEST BODY OF THIS CONFIGURATION, in bones --
+        /// what sizes a pose buffer that has to hold ANY body's sampled pose
+        /// (the world's PoseMemo and AimProvider's single-pose scratch, spec
+        /// §3.7). One home for the five-way maximum, on MobConfigFor's own
+        /// reasoning: a second spelling in Presentation would be a second
+        /// answer to "how wide", and the two would drift the day a rig grows.
+        /// Zero on a configuration with no tables (a hand-built fixture), and
+        /// the readers size a buffer of at least one bone from it.
+        public static int MaxBoneCount(in SimConfig cfg)
+        {
+            int n = cfg.Hero.Poses.BoneCount;
+            n = math.max(n, cfg.Chaser.Poses.BoneCount);
+            n = math.max(n, cfg.Gunner.Poses.BoneCount);
+            n = math.max(n, cfg.Elite.Poses.BoneCount);
+            return math.max(n, cfg.Director.Poses.BoneCount);
         }
     }
 }

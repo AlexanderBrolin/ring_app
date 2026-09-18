@@ -78,7 +78,7 @@ namespace Ring.Simulation.Tests
         /// the fold hashes a null array as the marker -1 and a real one as its
         /// length, so a fixture left null and a baked table with no aim layer
         /// would seal to DIFFERENT sums for the same body.
-        static PoseTable Sealed(PoseTable t)
+        public static PoseTable Sealed(PoseTable t)
         {
             t.UpperLayerMask ??= new ulong[(t.BoneCount + 63) / 64];
             t.Checksum = SimConfigHash.PoseTableChecksum(in t);
@@ -107,7 +107,7 @@ namespace Ring.Simulation.Tests
         /// rest pose to check extents against, not 180-574 rows of animation.
         /// The collector gets a second row — his SLIDE — because validation
         /// rule 16 measures the slide's crown and addresses it through
-        /// `ClipFirstRow[SlideClipIndex]`.
+        /// `ClipFirstRow[BakedClips.Collector.Slide]`.
         public static PoseTable ChaserRestPose() => Sealed(new PoseTable
         {
             BoneCount = 21,
@@ -282,16 +282,73 @@ namespace Ring.Simulation.Tests
             UpperLayerMask = new[] { 1UL << 2 },
         });
 
-        /// The index of the collector's SLIDE clip in his own table. ⛔ A NAMED
-        /// CONSTANT, NOT THE LITERAL 1: on a one-clip table `ClipFirstRow[1]` is
-        /// the sentinel "number of rows", so the literal reads past the bones of
-        /// every body but this one.
-        public const int SlideClipIndex = 1;
+        /// app-94sk T6b: A FIXTURE TABLE WIDENED TO `clipCount` CLIPS, every
+        /// added clip `rowsPerClip` COPIES OF THE REST ROW. The producer
+        /// (PoseSystem) names clips by their POSITIONS in the baker's order
+        /// (BakedClips), and a fixture that means to watch the walk, the aim
+        /// pose, a strike or the death take needs a table that HAS those
+        /// positions -- while every table above keeps one phase per body on
+        /// purpose (their own doc). Widening rather than baking: the rows stay
+        /// the rig's own measured numbers, and a fixture then moves ONE bone of
+        /// ONE clip through `WithBoneMoved` so the pose it watches differs from
+        /// rest in exactly the place it asserts on. More than one row per
+        /// added clip is what makes a PHASE observable at all: on a one-row
+        /// clip every phase is row 0. `ClipFirstRow` keeps its CSR shape; the
+        /// aim mask is kept as given (or filled empty by `Sealed`). Refuses
+        /// rather than asserts: this file is a factory, not a fixture.
+        public static PoseTable PaddedToClips(in PoseTable t, int clipCount, int rowsPerClip = 1)
+        {
+            int have = PoseTable.ClipCount(in t);
+            if (have <= 0 || clipCount < have || rowsPerClip < 1)
+            {
+                throw new System.ArgumentException(
+                    $"PaddedToClips: a table of {have} clips cannot be widened to {clipCount} "
+                    + $"clips of {rowsPerClip} rows");
+            }
+            int rows = t.Bones.Length / t.BoneCount;
+            int added = (clipCount - have) * rowsPerClip;
+            var bones = new float3[(rows + added) * t.BoneCount];
+            System.Array.Copy(t.Bones, bones, t.Bones.Length);
+            var first = new int[clipCount + 1];
+            System.Array.Copy(t.ClipFirstRow, first, have + 1);
+            for (int c = have; c < clipCount; c++)
+            {
+                for (int r = 0; r < rowsPerClip; r++)
+                {
+                    System.Array.Copy(t.Bones, 0, bones,
+                        (first[c] + r) * t.BoneCount, t.BoneCount);
+                }
+                first[c + 1] = first[c] + rowsPerClip;
+            }
+            PoseTable wide = t;
+            wide.Bones = bones;
+            wide.ClipFirstRow = first;
+            return Sealed(wide);
+        }
+
+        /// One bone of EVERY row of one clip, moved by `delta` (body frame).
+        /// Copies the table's bones rather than editing the caller's, so two
+        /// fixtures sharing a factory never see each other's move; re-sealed.
+        public static PoseTable WithBoneMoved(in PoseTable t, int clip, int bone, float3 delta)
+        {
+            if (!PoseTable.HasClip(in t, clip))
+                throw new System.ArgumentException($"WithBoneMoved: the table has no clip {clip}");
+            PoseTable moved = t;
+            moved.Bones = (float3[])t.Bones.Clone();
+            for (int row = t.ClipFirstRow[clip]; row < t.ClipFirstRow[clip + 1]; row++)
+                moved.Bones[row * t.BoneCount + bone] += delta;
+            return Sealed(moved);
+        }
+
+        // The slide clip's index used to be named HERE too (`SlideClipIndex`,
+        // T4) beside SimConfigBuilder's copy; app-94sk T6b made
+        // `BakedClips.Collector.Slide` the one home of every position the
+        // baker's ordering contract fixes, and this file reads it like rule 16.
 
         /// TWO CLIPS: rest and slide. ⛔ The slide clip is mandatory — validation
         /// rule 16 (T4) compares its crown against the gunner's muzzle and the
         /// collector's SlideMuzzleHeight, and addresses its row through
-        /// ClipFirstRow[SlideClipIndex]. A one-row table would send that read
+        /// ClipFirstRow[BakedClips.Collector.Slide]. A one-row table would send that read
         /// past the array.
         /// ⚠ BOTH ROWS ARE HIS REAL RIG (app-saqr, T4b) — 25 columns off
         /// `Ring/Audit/Pose Candidates`, the rest row from his idle clip and
@@ -372,8 +429,10 @@ namespace Ring.Simulation.Tests
         // them together with the fixtures that call them.
 
         /// The world midpoint of a volume's capsule, for a body standing at
-        /// `bodyPlan` with no heading yet (identity facing, as everything does
-        /// before T5c). ⛔ IT EXISTS BECAUSE "AIM AT THE LEGS" STOPPED BEING A
+        /// `bodyPlan` AS ITS TABLE STANDS -- the identity yaw, which since
+        /// app-94sk T6b a fixture has to STATE (TestWorlds.FaceTheTable): the
+        /// world seeds a spawned mob's course towards the nearest collector,
+        /// and the volumes turn with it. ⛔ IT EXISTS BECAUSE "AIM AT THE LEGS" STOPPED BEING A
         /// HEIGHT (app-94sk T2): a volume is a segment in space now, and the
         /// chaser's leg runs DIAGONALLY out to a foot swung 0.9 m aside, so a
         /// shot down the body's own axis at leg height passes it by. Fixtures

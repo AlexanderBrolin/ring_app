@@ -505,11 +505,23 @@ namespace Ring.Simulation.Tests
             // not let the target move out from under it.
             SimConfig cfg = TestConfigs.Open();
             cfg.Gunner.MaxSpeed = 0f; cfg.Gunner.Accel = 0f;   // Ruling 70, see above
+            // app-94sk T6b: and his TURN is stopped too -- a gunner in
+            // Reposition/Fire squares up to his target by the course law
+            // (T5c) whatever a fixture sets, and since T6b the volumes turn
+            // with him: his head bone sits 0.17 m off his axis in plan, which
+            // the 0.05 m tolerance below cannot absorb. The rate is a config
+            // number (T5b); zero holds the table's orientation
+            // (TestWorlds.FaceTheTable's own doc).
+            cfg.Gunner.MobTurnDegPerSec = 0f;
             var w = new SimulationWorld(7, cfg);
             HitPart head = TestWorlds.VolumeOfZone(cfg.Gunner.Parts, HitZone.Head, "ганнер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
             const float shooterX = 0f, targetX = 9f, muzzleH = 1f;
             TestWorlds.SpawnMobsAt(w, (MobType.Gunner, new float2(targetX, 0f)));
+            // app-94sk T6b: the arithmetic below puts the head ON the axis,
+            // where the table keeps it; a gunner turned to face the shooter
+            // carries it 0.17 m aside (his head bone's own plan offset).
+            TestWorlds.FaceTheTable(w, 0);
 
             TestWorlds.FireAimed3D(w, new float2(shooterX, 0f), muzzleH: muzzleH,
                 targetXY: new float2(targetX, 0f), targetH: headMid);
@@ -593,6 +605,12 @@ namespace Ring.Simulation.Tests
             // to the torso, not to a miss. "Under the knees" therefore has to be
             // said where ONLY the knee is, and PartMidWorld is what says it.
             SimConfig cfg = TestConfigs.Open();
+            // app-94sk T6b: frozen BY CONFIG, before the constructor -- the
+            // volumes turn with the course now, and a chaser left to chase
+            // turns 18 degrees a tick towards his velocity while the round is
+            // in flight, carrying the shin out of the plan PartMidWorld named
+            // (`m.Ai = Idle` below does not freeze him: FreezeArchetype's doc).
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             var w = new SimulationWorld(7, cfg);
             // ⛔⛔ app-saqr (T4b): WHICH LEG IS A QUESTION ABOUT THE BODY NOW.
             // `Parts[0]` was a leg while parts were a column sorted bottom-to-
@@ -611,6 +629,9 @@ namespace Ring.Simulation.Tests
             var body = new float2(6f, 0f);
             TestWorlds.SpawnMobsAt(w, (MobType.Chaser, body));
             var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle; w.SetMobForTest(0, m);
+            // app-94sk T6b: PartMidWorld speaks in the table's frame, and so
+            // must the body (TestWorlds.FaceTheTable's own doc).
+            TestWorlds.FaceTheTable(w, 0);
 
             TestConfigs.PartMidWorld(in cfg.Chaser.Poses, in legs, body,
                 out float2 legPlan, out float legH);
@@ -686,19 +707,22 @@ namespace Ring.Simulation.Tests
         }
 
         [Test]
-        public void TiltedMob_KeepsItsUprightParts()
+        public void TiltedMob_LeansItsPartsWithIt()   // app-94sk T6b: Р375 withdrawn (spec §3.6, risk Р-K)
         {
-            // ⛔⛔ app-saqr (T4b): THE CLAIM IS ASKED AS A COMPARISON NOW, and
-            // that is what it always meant. "The parts do not follow the tilt"
-            // is a statement about TWO worlds — one upright, one leaning — and
-            // pinning a zone LITERAL made it a statement about which volume
-            // happens to win, which is a different question the layout can move
-            // for honest reasons. On real bones it did: the chaser's head is a
-            // 0.25 m sphere sitting INSIDE his 0.83 m chest capsule, so which of
-            // the two answers depends on where a 1.17 m tick-step falls, not on
-            // the tilt. The same shot into the same body, tilted and not, must
-            // still resolve the same way — and a resolver that leaned the
-            // volumes would fail that however the ladder broke the tie.
+            // ⛔⛔ THE OPPOSITE OF WHAT THIS FIXTURE PINNED UNTIL T6b. It was
+            // `TiltedMob_KeepsItsUprightParts`: "the parts do not follow the
+            // tilt" (Р375), asked as a comparison of two worlds, one upright
+            // and one leaning, whose zones had to agree. Spec §3.6 withdraws
+            // Р375 -- the tilt enters the pose key and the volumes go down with
+            // the body (the price is named in risk Р-K and paid by fixture
+            // 26a) -- so the same comparison now has to DISAGREE: at 90 % of
+            // the fall angle towards +x the chaser's head drops from 1.97 to
+            // 1.36 m and leaves the line a head-height shot runs along, while
+            // the neck end of his chest capsule, laid over away from the
+            // shooter, rises into it. Upright the ladder awards the head;
+            // leaning, the body.
+            // The world is the witness, so the caller's hand-off of the tilt
+            // is covered too, not only ToWorld.
             SimConfig cfg = TestConfigs.Open();
             HitPart head = TestWorlds.VolumeOfZone(cfg.Chaser.Parts, HitZone.Head, "чейзер");
             float headMid = 0.5f * (head.RestBottom + head.RestTop);
@@ -711,26 +735,45 @@ namespace Ring.Simulation.Tests
             // fall angle of 0.9, so "almost flat on the ground" would become
             // "past the threshold" and the fixture would change its subject
             // with nothing to report it.
+            // ⛔ FROZEN BY CONFIG, BEFORE THE CONSTRUCTOR (FreezeArchetype's own
+            // doc): the round flies six meters, and an unfrozen chaser walks
+            // 0.173 m a tick towards the shooter meanwhile. The tilt spring is
+            // NOT frozen by it and keeps settling the lean back towards
+            // upright; the shot is spawned close so the lean it meets is the
+            // one the fixture set (fixture 26's own note).
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+
             HitZone Shoot(float2 tilt)
             {
                 var w = new SimulationWorld(7, cfg);
                 TestWorlds.SpawnMobsAt(w, (MobType.Chaser, new float2(6f, 0f)));
-                var m = w.Mobs[0]; m.Hp = 1e6f; m.Ai = MobAiState.Idle;
+                var m = w.Mobs[0]; m.Hp = 1e6f;
+                m.Dir = new float2(0f, 1f);   // the table's own orientation: the yaw is the identity
                 m.Tilt = tilt;
+                m.TiltVel = float2.zero;
                 w.SetMobForTest(0, m);
-                TestWorlds.FireAimed3D(w, float2.zero, muzzleH: headMid,
-                    targetXY: new float2(6f, 0f), targetH: headMid);
+                w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(5.2f, 0f),
+                    new float2(cfg.Weapon.ProjectileSpeed, 0f), headMid, velZ: 0f,
+                    cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
                 TestWorlds.RunUntilProjectilesDie(w);
-                Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit),
-                    "накренённое тело перестало попадаться — части поехали за креном");
-                return hit.Zone;
+                return TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent hit)
+                    ? hit.Zone : HitZone.None;
             }
 
             HitZone upright = Shoot(float2.zero);
-            // 90% of the fall angle ON ONE AXIS -- the length is the angle, so
-            // this is the same "almost flat" the scalar used to state.
+            Assert.AreEqual(HitZone.Head, upright,
+                "премисса фикстуры: стоящему телу выстрел на высоте головы попадает в голову");
+            // 90% of the fall angle ON ONE AXIS, away from the shooter -- the
+            // length is the angle, so this is the same "almost flat" the
+            // scalar used to state.
             HitZone leaning = Shoot(new float2(cfg.Chaser.TiltFallAngle * 0.9f, 0f));
-            Assert.AreEqual(upright, leaning, "зона поехала вслед за креном");
+            // The BODY, not merely "not the head": the comment above commits
+            // to the neck end of the chest capsule rising into the line
+            // (recomputed: 0.72 from the line against its 0.95 reach, while
+            // the head is 0.59 away against 0.37), and a resolver that lost
+            // the body altogether would satisfy an AreNotEqual.
+            Assert.AreEqual(HitZone.Body, leaning,
+                "зона не поехала вслед за креном — объёмы остались стоять, пока тело лежит (Р375 снят)");
         }
 
         [Test]
@@ -841,7 +884,7 @@ namespace Ring.Simulation.Tests
         /// The crown of the SLIDE by the table, repeated here ON PURPOSE
         /// (lesson 427): a witness that calls the code it checks proves only
         /// that the code agrees with itself. The slide is clip
-        /// `TestConfigs.SlideClipIndex`; the crown is the highest bone end of
+        /// `BakedClips.Collector.Slide`; the crown is the highest bone end of
         /// any volume, grown by that volume's own radius.
         /// ⛔ THE CLIP INDEX IS A NAMED CONSTANT, NOT THE LITERAL 1: on a
         /// one-clip table `ClipFirstRow[1]` is the row-count sentinel, and the
@@ -849,7 +892,7 @@ namespace Ring.Simulation.Tests
         static float SlideCrownOf(Ring.Data.HeroConfig hero)
         {
             ref PoseTable t = ref ConfigTests.PoseTableFor(hero);
-            int row = t.ClipFirstRow[TestConfigs.SlideClipIndex];
+            int row = t.ClipFirstRow[BakedClips.Collector.Slide];
             if (row >= t.Bones.Length / t.BoneCount)
                 throw new System.ArgumentException("pose table has no slide clip");
             float top = float.NegativeInfinity;

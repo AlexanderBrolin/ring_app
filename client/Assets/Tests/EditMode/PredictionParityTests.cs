@@ -161,7 +161,7 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 49; nothing is skipped (there is no
+        /// The sweep still visits all 50; nothing is skipped (there is no
         /// skip-list anywhere in this suite, and this is not the place to
         /// start one).
         /// ⚠ THE NUMBER IS RE-READ FROM `typeof(PlayerState).GetFields()`,
@@ -172,7 +172,8 @@ namespace Ring.Simulation.Tests
         /// `HistorySlot`. 32 -> 34 (Т7's `Tilt`/`TiltVel`) -> 35 (Т22) -> 36
         /// (Т24) -> 38 (app-8dv's `BurstShots`/`ShotOrdinal`) -> 39
         /// (app-94sk T5c's `Dir`, the body's course) -> 49 (app-94sk T6a's ten
-        /// pose fields), each reading taken fresh rather than incremented.
+        /// pose fields) -> 50 (app-94sk T6b's `LowerShare`), each reading taken fresh
+        /// rather than incremented.
         /// The same miss, on the same field, is what RULING 125 had to
         /// correct in `WorldLifecycleTests`' receipt; naming it here is how the
         /// next reader stops inheriting it.
@@ -873,7 +874,7 @@ namespace Ring.Simulation.Tests
         /// Т10/Т13. A skip-list here would be the first one in the project and
         /// would say "we do not look at these twelve fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 49 (see
+        /// not have touched them. So the sweep still visits all 50 (see
         /// `AssertPlayerStateBitEqual`'s own note on where both numbers come
         /// from and why neither is ever incremented from memory).
         ///
@@ -1072,25 +1073,32 @@ namespace Ring.Simulation.Tests
                 // every scenario in this file rather than on that one fixture.
                 ["BurstShots"] = PredictionRole.Predicted,
                 ["ShotOrdinal"] = PredictionRole.Predicted,
-                // app-94sk T6a (spec §3.6): the ten pose fields, classified by
-                // reading the bodies (rule 17). NINE are Predicted. LowerBlend's
-                // only writer is the trailing block of PlayerMovementSystem.
-                // Update, the shared body Step calls, so both paths step one
-                // damper off one post-collision Vel. The other eight have NO
-                // writer yet: T6b gives the clips and the phases theirs on
-                // that same shared path -- and this entry is what commits T6b
-                // to it, since a producer on a server-only path would turn
-                // the sweep red the tick it first wrote -- and plan 2 gives
-                // the reaction trio its own, re-reading their role then (a
-                // reaction is armed by a blow, which the client may or may
-                // not predict; that is plan 2's classification to make, not
-                // this task's). Until then "the two paths agree" holds at
-                // zero on both, which is a true statement rather than a
-                // vacuous one only because nothing anywhere writes them.
+                // app-94sk T6a (spec §3.6): the pose fields, classified by
+                // reading the bodies (rule 17) -- eleven since T6b's
+                // LowerShare, TEN Predicted. LowerBlend's only writer is the
+                // trailing block of PlayerMovementSystem.Update, the shared
+                // body Step calls, so both paths step one damper off one
+                // post-collision Vel; T6b's PoseSystem.StepCollector writes
+                // the clips, the phase, the share and the aim layer from that
+                // same block (and from UpdateDead, which is server-only and
+                // safe because prediction stops at death) -- this entry is
+                // what committed T6b to the shared path, since a producer on a
+                // server-only path would turn the sweep red the tick it first
+                // wrote. The reaction trio still has NO writer: plan 2 gives
+                // it one, re-reading its role then (a reaction is armed by a
+                // blow, which the client may or may not predict; that is plan
+                // 2's classification to make, not this task's). For those
+                // three "the two paths agree" holds at zero on both, which is
+                // a true statement rather than a vacuous one only because
+                // nothing anywhere writes them.
                 ["LowerPhase"] = PredictionRole.Predicted,
                 ["LowerBlend"] = PredictionRole.Predicted,
                 ["LowerClipA"] = PredictionRole.Predicted,
                 ["LowerClipB"] = PredictionRole.Predicted,
+                // app-94sk T6b: the share within the pair, written by
+                // PoseSystem.StepCollector from the same trailing block of
+                // PlayerMovementSystem.Update that both paths run.
+                ["LowerShare"] = PredictionRole.Predicted,
                 ["UpperClip"] = PredictionRole.Predicted,
                 ["UpperWeight"] = PredictionRole.Predicted,
                 ["ReactionClip"] = PredictionRole.Predicted,
@@ -1109,7 +1117,7 @@ namespace Ring.Simulation.Tests
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 49 fields, which is a claim about TWELVE of them that
+            // of ALL 50 fields, which is a claim about TWELVE of them that
             // PlayerPrediction.Step could never satisfy — it does not write
             // them, and the world does. (Nine when R-209 landed; app-88jb Т7's
             // PlayerState.Tilt was the tenth, stepped every tick by

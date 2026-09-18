@@ -92,6 +92,42 @@ namespace Ring.Simulation.Tests
             return part;
         }
 
+        /// app-94sk T6b: STANDS A MOB THE WAY ITS TABLE STANDS. Since T6b the
+        /// hit volumes turn with the body's course (HitVolumes.YawOf), and
+        /// the world seeds every spawned mob's course TOWARDS the nearest
+        /// collector (T5c) -- a quarter turn from the table's own orientation
+        /// for a body spawned on the x axis. A fixture that states its
+        /// geometry in the TABLE'S frame (bone numbers, PartMidWorld,
+        /// TryFindCleanVolume) therefore says so, once, through this: the
+        /// course (0, 1) is the identity yaw of a +z rig (BakedClips.
+        /// MobForward), under which the table's plan IS the world's plan.
+        /// ⚠ A frozen CHASER keeps it (its course law turns towards a velocity
+        /// it never has); an unfrozen one turns away within a few ticks, and a
+        /// body fighting at RANGE (a gunner or an elite in Reposition/Fire)
+        /// squares up to its target however it stands -- such a fixture also
+        /// zeroes the archetype's MobTurnDegPerSec before the constructor.
+        public static void FaceTheTable(SimulationWorld world, int mobIndex)
+        {
+            MobState m = world.Mobs[mobIndex];
+            m.Dir = new float2(0f, 1f);
+            world.SetMobForTest(mobIndex, m);
+        }
+
+        /// app-94sk T6b: THE REST POSE OF A TABLE, ready for HitVolumes.Resolve
+        /// -- what every direct caller of the resolver handed in as `poseRow:
+        /// 0` until the resolver started taking a READY pose. Through
+        /// PoseTable.Sample with a `default` key (clip 0, phase 0, no aim
+        /// layer), so the answer IS row 0 and not a second spelling of "row 0";
+        /// the fixtures that state their geometry in the rest pose keep their
+        /// numbers to the bit. A fresh array per call is legal here, in a
+        /// fixture; the game's own buffers are preallocated (PoseMemo).
+        public static float3[] RestPoseOf(in PoseTable table)
+        {
+            var pose = new float3[math.max(1, table.BoneCount)];
+            PoseTable.Sample(in table, default, singleLayer: true, pose);
+            return pose;
+        }
+
         /// ⛔⛔ app-saqr (T4b): "DOES THE AXIS MEET THIS BODY AT THIS HEIGHT",
         /// AND IT IS THE QUESTION HALF THIS FILE ASKS. While a body was one
         /// circle the answer was `|offset| < Radius + projRadius` and every

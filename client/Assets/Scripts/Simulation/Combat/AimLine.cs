@@ -140,9 +140,18 @@ namespace Ring.Simulation.Combat
         /// the round's own broad phase sweeps -- because that is the order the
         /// round uses; the two roles of `t` are separate, and test 19 pins
         /// the ranking half.
+        ///
+        /// ⛔ `poseScratch` IS THE SECOND BUFFER OF THE SAME KIND (app-94sk T6b,
+        /// spec §3.7): HitVolumes.Resolve reads a READY pose, PoseTable.Sample
+        /// writes one into a buffer the caller owns, and the rule above admits
+        /// no other owner. One pose, not a memo: the line resolves in the
+        /// PRESENT, one body at a time, and has no rewind depth to key by.
+        /// Sized by SimConfig.MaxBoneCount, the one home of "how wide is the
+        /// widest body". No default value, for the reason the candidate
+        /// scratch has none.
         public static AimLineSolution Solve(float2 heroPos, float2 aimPoint, float muzzleHeight,
             in SimConfig cfg, RenderSnapshot snap, int selfIndex,
-            (float t, int kind, int index)[] scratch)
+            (float t, int kind, int index)[] scratch, float3[] poseScratch)
         {
             float2 start = MuzzleSimPos(heroPos, aimPoint, cfg.Weapon.MuzzleOffset,
                 out float2 dir);
@@ -242,8 +251,19 @@ namespace Ring.Simulation.Combat
                 // field straight off it copies nothing -- which is why
                 // MobRadiusFor, whose whole reason for existing was that copy,
                 // is deleted by this task.
+                // app-94sk T6b: a leaning body's circle is its leaned pose's
+                // reach (HitVolumes.GatherRadiusFor); an upright one keeps the
+                // table's number, and neither packs a key nor samples here.
+                ref readonly MobSimConfig mobCfg = ref SimConfig.MobConfigFor(in cfg, mob.Type);
+                float mobRadius = mobCfg.GatherRadius;
+                if (HitVolumes.LeanOf(mob.Tilt).Leaning)
+                {
+                    mobRadius = LeaningCircleOf(mobCfg.Parts, in mobCfg.Poses, PoseKey.FromMob(in mob),
+                        singleLayer: true, mob.Dir, BakedClips.MobForward, mob.Tilt, mobCfg.GatherRadius,
+                        poseScratch);
+                }
                 if (Geometry.SegmentCircle(start, far, cfg.Weapon.ProjectileRadius, mob.Pos,
-                        SimConfig.MobConfigFor(in cfg, mob.Type).GatherRadius, out float tm))
+                        mobRadius, out float tm))
                 {
                     scratch[count++] = (tm, CandidateMob, m);
                 }
@@ -269,8 +289,15 @@ namespace Ring.Simulation.Combat
                 // T4b, where the collector's volumes move onto real bones and
                 // his arms leave the axis; the mob half is witnessed today
                 // (fixture 42 stands 0.89 m out against a physical 0.62).
+                float otherRadius = cfg.Hero.GatherRadius;
+                if (HitVolumes.LeanOf(other.Tilt).Leaning)
+                {
+                    otherRadius = LeaningCircleOf(cfg.Hero.Parts, in cfg.Hero.Poses,
+                        PoseKey.FromPlayer(in other), singleLayer: false, other.Dir,
+                        BakedClips.CollectorForward, other.Tilt, cfg.Hero.GatherRadius, poseScratch);
+                }
                 if (Geometry.SegmentCircle(start, far, cfg.Weapon.ProjectileRadius, other.Pos,
-                        cfg.Hero.GatherRadius, out float tp))
+                        otherRadius, out float tp))
                 {
                     scratch[count++] = (tp, CandidatePlayer, i);
                 }
@@ -311,7 +338,7 @@ namespace Ring.Simulation.Combat
                 if (bestSlot < 0) break;
 
                 if (ResolveBody(in cfg, snap, scratch[bestSlot].kind, scratch[bestSlot].index,
-                        start, far, muzzleHeight, out zone, out float contactT))
+                        start, far, muzzleHeight, poseScratch, out zone, out float contactT))
                 {
                     stop = AimStop.Body;
                     stopT = contactT;
@@ -414,7 +441,8 @@ namespace Ring.Simulation.Combat
         /// mid-slide profile is a RULE ABOUT A STATE that no table can express.
         /// Validation rule 5 keeps it alive until T4.
         static bool ResolveBody(in SimConfig cfg, RenderSnapshot snap, int kind, int index,
-            float2 p0, float2 p1, float muzzleHeight, out HitZone zone, out float contactT)
+            float2 p0, float2 p1, float muzzleHeight, float3[] poseScratch,
+            out HitZone zone, out float contactT)
         {
             zone = HitZone.None;
             contactT = 0f;
@@ -423,6 +451,20 @@ namespace Ring.Simulation.Combat
             PoseTable poses;
             float2 targetPos;
             float gatherRadius;
+            // app-94sk T6b: the pose's key, its layer count, the course
+            // turned by the rig's forward and the lean -- what ProjectileSystem
+            // reads off the same body for the same call. ⚠ OFF THE FRAME, AND
+            // THE FRAME IS WHAT THE WIRE GAVE: on a networked client a mob's
+            // record carries no pose fields and (bd app-4io9) no course, and a
+            // foreign collector's `Dir` is his AIM (Р68), so the line answers
+            // with the rest pose in the table's orientation for them -- the
+            // client-side derivation of a foreign body's phase is spec
+            // §3.14's, plan 2's. In a local or host frame the state is the
+            // world's and the line agrees with the round to the bone.
+            PoseKey key;
+            bool singleLayer;
+            float2 dir, rigForward, tilt;
+            float facingSin, facingCos;
             // NaN means "no ceiling of that kind", the same "stand down rather
             // than invent a bound" convention ProjectileSystem's own branch uses.
             float slideCeiling = float.NaN;
@@ -434,6 +476,9 @@ namespace Ring.Simulation.Combat
                 poses = mobCfg.Poses;
                 gatherRadius = mobCfg.GatherRadius;
                 targetPos = mob.Pos;
+                key = PoseKey.FromMob(in mob);
+                singleLayer = true;
+                dir = mob.Dir; rigForward = BakedClips.MobForward; tilt = mob.Tilt;
             }
             else
             {
@@ -442,6 +487,9 @@ namespace Ring.Simulation.Combat
                 poses = cfg.Hero.Poses;
                 gatherRadius = cfg.Hero.GatherRadius;
                 targetPos = other.Pos;
+                key = PoseKey.FromPlayer(in other);
+                singleLayer = false;
+                dir = other.Dir; rigForward = BakedClips.CollectorForward; tilt = other.Tilt;
                 // Mid-slide a collector presents a lower silhouette, and the
                 // slide bit rides the wire, so this holds in a PvP frame as
                 // much as in a local one -- the same choice ProjectileSystem
@@ -457,6 +505,20 @@ namespace Ring.Simulation.Combat
             // solves the same quadratic against the same circle -- and is kept
             // because this method is also the one that must not read past a
             // degenerate interval.
+            // app-94sk T6b: a body without a table is refused HERE, where
+            // Resolve refused it before this task -- Sample would refuse it by
+            // name, and the line is drawn every frame.
+            if (poses.Bones == null || poses.BoneCount <= 0) return false;
+            // The same circle the broad phase used for this body, its leaned
+            // reach if it leans (the sample lands in the scratch Resolve reads
+            // a moment later and is re-done there: one body, one buffer, two
+            // readers a few lines apart, and only for a leaning body).
+            HitVolumes.YawOf(dir, rigForward, out facingSin, out facingCos);
+            if (HitVolumes.LeanOf(tilt).Leaning)
+            {
+                gatherRadius = LeaningCircleOf(parts, in poses, in key, singleLayer, dir, rigForward,
+                    tilt, gatherRadius, poseScratch);
+            }
             if (!Geometry.SegmentCircleInterval(p0, p1, cfg.Weapon.ProjectileRadius, targetPos,
                     gatherRadius, out float tEnter, out float tExit)) return false;
 
@@ -464,11 +526,12 @@ namespace Ring.Simulation.Combat
             // the very form ShotGeometry builds its muzzle and aim points with.
             // The bones arrive in the BODY frame and HitVolumes.ToWorld is what
             // reconciles the two; nothing is transposed here (app-coou).
-            // ⛔ `poseRow: 0` AND `bodyTilt: zero` UNTIL T6/T6b, the same as every
-            // other caller: the pose key and the tilt vector do not exist yet.
-            if (!HitVolumes.Resolve(parts, in poses, poseRow: 0, bodyTilt: float2.zero,
+            // app-94sk T6b: the READY pose, sampled into the caller's scratch
+            // -- one body at a time, in the present, so no memo (spec §3.7).
+            PoseTable.Sample(in poses, in key, singleLayer, poseScratch);
+            if (!HitVolumes.Resolve(parts, in poses, poseScratch, tilt,
                     bodyOrigin: new float3(targetPos, 0f),
-                    bodyFacingSin: 0f, bodyFacingCos: 1f,
+                    facingSin, facingCos,
                     p0: new float3(math.lerp(p0, p1, tEnter), muzzleHeight),
                     p1: new float3(math.lerp(p0, p1, tExit), muzzleHeight),
                     projRadius: cfg.Weapon.ProjectileRadius,
@@ -478,6 +541,20 @@ namespace Ring.Simulation.Combat
             // [start, far], and so does everything downstream of `Length`.
             contactT = tEnter + chordT * (tExit - tEnter);
             return true;
+        }
+
+        /// app-94sk T6b: the broad phase's circle for a LEANING body --
+        /// ProjectileSystem.LeaningCircleOf's twin over the caller's scratch
+        /// instead of the world's memo (that helper's doc says why the twin
+        /// is a twin and not a shared helper: the buffer's owner). The law
+        /// lives in HitVolumes.GatherRadiusFor; the caller asks `LeanOf` first.
+        static float LeaningCircleOf(HitPart[] parts, in PoseTable table, in PoseKey key,
+            bool singleLayer, float2 dir, float2 rigForward, float2 tilt, float gatherRadius,
+            float3[] poseScratch)
+        {
+            if (table.Bones == null || table.BoneCount <= 0) return gatherRadius;   // refused downstream
+            PoseTable.Sample(in table, in key, singleLayer, poseScratch);
+            return HitVolumes.GatherRadiusFor(parts, poseScratch, table.BoneCount, dir, rigForward, tilt, gatherRadius);
         }
 
         /// The four points of the two cross strokes (T3 draws them).

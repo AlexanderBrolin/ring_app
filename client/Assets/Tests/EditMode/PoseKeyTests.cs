@@ -26,7 +26,13 @@ namespace Ring.Simulation.Tests
             var p = new PlayerState
             {
                 LowerPhase = 7, ReactionPhase = 3,
-                LowerClipA = 1, LowerClipB = 2, LowerBlend = 0.5f,
+                LowerClipA = 1, LowerClipB = 2, LowerShare = 131,
+                // ⛔ NOT PACKED, AND THE FIXTURE SAYS SO BY GIVING IT A NUMBER
+                // THAT WOULD PACK DIFFERENTLY (app-94sk T6b): the tree's damped
+                // parameter is the damper's memory, not the pose's share --
+                // PlayerState's own block; 0.5 would round to 128, and the key
+                // below carries 131, the share.
+                LowerBlend = 0.5f,
                 UpperClip = 4, UpperWeight = 200,
                 ReactionClip = 5, ReactionDir = 6, ReactionCooldown = 99,
                 Dir = new float2(0f, 1f),               // +Y: atan2 = pi/2 -> code 192 of 256
@@ -37,7 +43,8 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(3, k.ReactionPhase, "ReactionPhase");
             Assert.AreEqual(1, k.LowerClipA, "LowerClipA");
             Assert.AreEqual(2, k.LowerClipB, "LowerClipB");
-            Assert.AreEqual(128, k.LowerBlend, "LowerBlend: 0.5 * 255 = 127.5 округляется к чётному, в 128");
+            Assert.AreEqual(131, k.LowerBlend,
+                "LowerBlend ключа — это LowerShare состояния байт в байт, а не квантование LowerBlend (T6b)");
             Assert.AreEqual(4, k.UpperClip, "UpperClip");
             Assert.AreEqual(200, k.UpperWeight, "UpperWeight");
             Assert.AreEqual(5, k.ReactionClip, "ReactionClip");

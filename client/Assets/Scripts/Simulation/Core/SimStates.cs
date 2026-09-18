@@ -320,13 +320,15 @@ namespace Ring.Simulation.Core
         /// pose lived in the Animator, a blend tree stepped on FRAME time
         /// that no server can replay. It has to be state because the hit
         /// volumes sit on bones (spec §3.2), and a bone is somewhere only
-        /// once the pose says where. Ten fields in three groups:
+        /// once the pose says where. Eleven fields in three groups:
         ///   * LOWER LAYER -- locomotion. `LowerClipA`/`LowerClipB` are the
         ///     two neighboring clips of the blend tree (Simple1D over speed,
         ///     four clips, thresholds baked into PoseTable.BlendThresholds),
-        ///     `LowerBlend` the share of B in [0, 1], `LowerPhase` the
-        ///     playhead in WHOLE TICKS (determinism: a fractional position
-        ///     arises only at the row mapping, spec §3.6);
+        ///     `LowerBlend` the tree's damped parameter in [0, 1] and
+        ///     `LowerShare` the share of B within the pair (two quantities,
+        ///     the block below says why), `LowerPhase` the playhead in WHOLE
+        ///     TICKS (determinism: a fractional position arises only at the
+        ///     row mapping, spec §3.6);
         ///   * UPPER LAYER -- the aim layer, the collector's alone (a mob has
         ///     one layer): `UpperClip` and its weight `UpperWeight`, laid over
         ///     the lower layer on the bones PoseTable.UpperLayerMask names;
@@ -341,7 +343,7 @@ namespace Ring.Simulation.Core
         /// PredictionParityTests' comparer and its DistinctValueFor know
         /// float/float2/bool/int/byte and Assert.Fail on anything else, and
         /// RoleByField holds ONE role per field where a pose MIXES roles
-        /// (`ReactionCooldown` is the server's, the other nine are predicted).
+        /// (`ReactionCooldown` is the server's, the other ten are predicted).
         /// ⛔⛔ AND THE TYPES ARE A DECISION TOO: `ushort` and `sbyte` HARD-FAIL
         /// five sites in three guards (Assert.Fail / NotSupportedException,
         /// never a RED) -- the two above, WorldLifecycleTests.Bump, and both
@@ -352,33 +354,52 @@ namespace Ring.Simulation.Core
         /// 1353 bodies, 2.6 of them the excess over a ushort) -- cheaper than
         /// teaching five sites a type for two bytes.
         ///
-        /// WHO WRITES WHAT AS OF T6a. `LowerBlend` has its producer: the
+        /// WHO WRITES WHAT. `LowerBlend` has its producer since T6a: the
         /// trailing block of PlayerMovementSystem.Update, the same shared
         /// body that turns `Dir`, so world and prediction step one damper off
-        /// one Vel (Predicted for RoleByField). ⛔ COMPUTED IN FLOAT AND
-        /// QUANTIZED TO A BYTE ONLY IN THE KEY: at TickDt 1/30 against
-        /// SpeedDampTime 0.1 a damper step can be smaller than 1/255, and a
-        /// weight rounded to a byte inside the simulation would stop short of
-        /// its target (spec §3.6; PoseTableTests' fixture 20). The clips and
-        /// the phases get their producer in T6b, in tick order ahead of
-        /// ProjectileSystem and on the same shared path -- which is what keeps
-        /// their Predicted classification true rather than vacuous.
+        /// one Vel (Predicted for RoleByField). ⛔ COMPUTED IN FLOAT: at
+        /// TickDt 1/30 against SpeedDampTime 0.1 a damper step can be smaller
+        /// than 1/255, and a weight rounded to a byte inside the simulation
+        /// would stop short of its target (spec §3.6; PoseTableTests' fixture
+        /// 20). The clips, the phases and `LowerShare` get theirs in T6b
+        /// (PoseSystem.StepCollector, called from that same trailing block --
+        /// which is what keeps their Predicted classification true rather
+        /// than vacuous).
+        ///
+        /// ⛔⛔ `LowerBlend` AND `LowerShare` ARE TWO QUANTITIES, NOT ONE
+        /// (app-94sk T6b, decision 2 of the task). `LowerBlend` is the blend
+        /// TREE'S PARAMETER `s` in [0, 1] -- the damped speed the Animator's
+        /// `Speed` float carried -- and it is what the damper has memory of.
+        /// `LowerShare` is the SHARE OF CLIP B WITHIN THE PAIR (LowerClipA,
+        /// LowerClipB), which is what PoseTable.Sample mixes by and what the
+        /// key packs (PoseKey.LowerBlend). On a tree of two clips with
+        /// thresholds {0, 1} the two are the same number, which is the one
+        /// case spec §3.6's table equated them on; on the collector's four
+        /// (thresholds 0 / 0.33 / 0.66 / 1) they are not: at s = 0.5 the pair
+        /// is (Walk, Jog) and the share is (0.5 - 0.33) / 0.33 = 0.515. The
+        /// producer maps one onto the other once a tick, with the table's
+        /// thresholds and BakedClips.Collector.Tree; keeping only one of them
+        /// would either lose the damper's memory (a share cannot be damped
+        /// across a threshold) or ask Sample to know which tree child a clip
+        /// index is (a table does not say). A byte, not a float: it is
+        /// already the key's quantization, and a float here would be a
+        /// second rounding of it.
         ///
         /// ON THE WIRE THE SAME WAY `Dir` AND `HistorySlot` ARE: nothing puts
         /// any of these in the snapshot (`SnapshotBlocks.PlayerRecord` is
         /// hand-written), but `ReconcileData` carries THE WHOLE PlayerState,
-        /// so FishNet's generated serializer writes all ten -- 22 bytes per
-        /// reconcile (three ints, one float, six bytes). Spec §3.11's fourth
-        /// trigger already covers the class; plan 1 keeps `ProtocolVersion`
-        /// at 5 (Global Constraints) and plan 2 raises it.
+        /// so FishNet's generated serializer writes all eleven -- 23 bytes
+        /// per reconcile (three ints, one float, seven bytes). Spec §3.11's
+        /// fourth trigger already covers the class; plan 1 keeps
+        /// `ProtocolVersion` at 5 (Global Constraints) and plan 2 raises it.
         ///
-        /// IN THE DIGEST FROM THIS TASK, as a trailing group in declaration
-        /// order (HashPlayer, RULING 129: a new subsystem with no neighbor to
-        /// sit beside). The packed copy, PoseKey, joins the digest a second
-        /// time through PositionHistory in T7, when the record grows.
+        /// IN THE DIGEST, as a trailing group in declaration order
+        /// (HashPlayer, RULING 129: a new subsystem with no neighbor to sit
+        /// beside). The packed copy, PoseKey, joins the digest a second time
+        /// through PositionHistory in T7, when the record grows.
         public int LowerPhase, ReactionPhase;
         public float LowerBlend;
-        public byte LowerClipA, LowerClipB;
+        public byte LowerClipA, LowerClipB, LowerShare;
         public byte UpperClip, UpperWeight;
         public byte ReactionClip, ReactionDir;
         public int ReactionCooldown;
@@ -539,9 +560,11 @@ namespace Ring.Simulation.Core
         /// say "no mob tilt at all today" and "authoritative-only, OFFLINE-only"
         /// in the present tense; both are past tense now, and the В1 playtest
         /// was run solo offline for exactly that reason. Rebuilding it on the
-        /// client is legal because tilt decides no game outcome -- the hit parts
-        /// do not rotate with it (Р375) -- and the rebuild writes into a render
-        /// snapshot, never into a world.
+        /// client is legal because the rebuild writes into a RENDER snapshot,
+        /// never into a world: the outcome a tilt now decides -- since
+        /// app-94sk T6b the hit volumes go down with the body (Р375
+        /// withdrawn, spec §3.6) -- is decided on the server, off the
+        /// server's own field, and the client's copy of the lean is a picture.
         ///
         /// A VECTOR SINCE app-94sk T5a (spec §3.20), on PlayerState.Tilt's own
         /// account -- LENGTH is the angle, DIRECTION is the heading the body

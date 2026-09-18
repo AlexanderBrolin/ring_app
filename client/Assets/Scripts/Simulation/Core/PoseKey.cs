@@ -55,12 +55,18 @@ namespace Ring.Simulation.Core
         /// lean survives the clamp even when its magnitude does not.
         public const float TiltQuantStep = 0.01f;   // 127 * 0.01 = 1.27 rad = 72.8 deg
 
-        /// The collector's key. `Facing` and the blend share go through the
-        /// SAME codecs the wire uses (ByteCodecs.Dir / ByteCodecs.Unit -- one
-        /// mapping, not two spellings of it), the tilt through QuantizeTilt,
-        /// the phases through a saturating narrowing.
+        /// The collector's key. `Facing` goes through the SAME codec the wire
+        /// uses (ByteCodecs.Dir -- one mapping, not two spellings of it), the
+        /// tilt through QuantizeTilt, the phases through a saturating
+        /// narrowing. ⛔ THE KEY'S `LowerBlend` IS THE STATE'S `LowerShare`,
+        /// byte for byte, NOT a quantization of `PlayerState.LowerBlend`
+        /// (app-94sk T6b): the state's float is the tree's damped PARAMETER,
+        /// the key's byte is the SHARE within the pair -- two quantities the
+        /// producer maps one onto the other (PlayerState's own block says why
+        /// they cannot be one). The share is born a byte, so nothing is
+        /// rounded here.
         public static PoseKey FromPlayer(in PlayerState p)
-            => Pack(p.LowerPhase, p.ReactionPhase, p.LowerClipA, p.LowerClipB, p.LowerBlend,
+            => Pack(p.LowerPhase, p.ReactionPhase, p.LowerClipA, p.LowerClipB, p.LowerShare,
                 p.UpperClip, p.UpperWeight, p.ReactionClip, p.ReactionDir, p.Dir, p.Tilt);
 
         /// The mob's key: the collector's layout minus the fields MobState
@@ -68,14 +74,14 @@ namespace Ring.Simulation.Core
         /// blend share (a mob has no blend tree), both packed as ZERO. See
         /// MobState's own block for why each absence is a decision.
         public static PoseKey FromMob(in MobState m)
-            => Pack(m.LowerPhase, m.ReactionPhase, m.LowerClipA, m.LowerClipB, 0f,
+            => Pack(m.LowerPhase, m.ReactionPhase, m.LowerClipA, m.LowerClipB, 0,
                 0, 0, m.ReactionClip, m.ReactionDir, m.Dir, m.Tilt);
 
         /// The ONE spelling of the layout. Eleven arguments rather than two
         /// structs because the two structs carry different subsets, and a
         /// packer per struct is the duplicated layout the class doc refuses.
         static PoseKey Pack(int lowerPhase, int reactionPhase, byte lowerClipA, byte lowerClipB,
-            float lowerBlend, byte upperClip, byte upperWeight, byte reactionClip, byte reactionDir,
+            byte lowerShare, byte upperClip, byte upperWeight, byte reactionClip, byte reactionDir,
             float2 dir, float2 tilt)
         {
             QuantizeTilt(tilt, out sbyte tiltX, out sbyte tiltZ);
@@ -85,7 +91,7 @@ namespace Ring.Simulation.Core
                 ReactionPhase = QuantizePhase(reactionPhase),
                 LowerClipA = lowerClipA,
                 LowerClipB = lowerClipB,
-                LowerBlend = ByteCodecs.Unit(lowerBlend, 1f),
+                LowerBlend = lowerShare,
                 UpperClip = upperClip,
                 UpperWeight = upperWeight,
                 ReactionClip = reactionClip,

@@ -328,6 +328,13 @@ namespace Ring.Simulation.Tests
             // the player line still carries the "x 2 players" multiplier:
             //   49 x 2 = 98, 13 x 2 = 26, 7 x 3 = 21,
             //   5 + 21 + 15 + 5 + 2 + 5 = 53          -> 171 -> 198.
+            // app-94sk T6b: ONE more on PlayerState -- `LowerShare`, the share
+            // within the blend pair, a second quantity beside the damped tree
+            // parameter (SimStates.cs' block says why) -- folded beside the
+            // pair in HashPlayer. Same script, first made to reproduce 198 on
+            // the committed tree (49/21), then read the tree (50/21):
+            //   50 x 2 = 100, 13 x 2 = 26, 7 x 3 = 21,
+            //   5 + 21 + 15 + 5 + 2 + 5 = 53          -> 198 -> 200.
             //
             // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST -- SAID OF
             // Т24, whose paragraph it closes. (Т28's own paragraph was inserted

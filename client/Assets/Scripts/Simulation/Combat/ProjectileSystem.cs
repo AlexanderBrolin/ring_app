@@ -293,7 +293,20 @@ namespace Ring.Simulation.Combat
                 // would COPY the whole struct; that reason expired with Т31,
                 // where it became `ref readonly`, and app-94sk T3 deleted the
                 // member once the aim ray, its last caller, moved here too.
-                float mobRadius = SimConfig.MobConfigFor(in config, mobs[m].Type).GatherRadius;
+                ref readonly MobSimConfig mobCfg = ref SimConfig.MobConfigFor(in config, mobs[m].Type);
+                // app-94sk T6b: a leaning body's circle is its leaned pose's
+                // reach, not the table's (HitVolumes.GatherRadiusFor); an
+                // upright body -- every body but a knocked one -- keeps the
+                // table's number, and neither packs a key nor samples here:
+                // the lean is asked FIRST, because packing a key is an atan2
+                // per body per round in the hottest loop there is.
+                float mobRadius = mobCfg.GatherRadius;
+                if (HitVolumes.LeanOf(mobs[m].Tilt).Leaning)
+                {
+                    mobRadius = LeaningCircleOf(w, mobs[m].HistorySlot, proj.RewindLeft, mobCfg.Parts,
+                        in mobCfg.Poses, PoseKey.FromMob(in mobs[m]), singleLayer: true,
+                        mobs[m].Dir, BakedClips.MobForward, mobs[m].Tilt, mobCfg.GatherRadius);
+                }
                 if (RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
                         liveAlive: true, liveSliding: false, liveInvulnerable: false,
                         out float2 mobPos, out _, out _, out _)
@@ -374,11 +387,20 @@ namespace Ring.Simulation.Combat
                 // construction, so the un-rewound path behaves exactly as it did
                 // before Т28 -- and as it did before this fix.
                 if (!player.Alive) continue;
+                // app-94sk T6b: a leaning collector's circle, on the mob
+                // loop's own account above.
+                float playerRadius = heroRadius;
+                if (HitVolumes.LeanOf(player.Tilt).Leaning)
+                {
+                    playerRadius = LeaningCircleOf(w, player.HistorySlot, proj.RewindLeft,
+                        config.Hero.Parts, in config.Hero.Poses, PoseKey.FromPlayer(in player),
+                        singleLayer: false, player.Dir, BakedClips.CollectorForward, player.Tilt, heroRadius);
+                }
                 if (RewoundBody(w, historyTick, player.HistorySlot, player.Pos,
                         player.Alive, player.SlideTimer > 0f, player.IframeTimer > 0f,
                         out float2 playerPos, out _, out _, out _)
                     && Geometry.SegmentCircle(startPos, target, proj.Radius,
-                        playerPos, heroRadius, out float tp))
+                        playerPos, playerRadius, out float tp))
                 {
                     candidates[candCount++] = (tp, HitPlayer, pi);
                 }
@@ -1208,6 +1230,25 @@ namespace Ring.Simulation.Combat
             // than invent a bound" convention SimConfigBuilder's own height rules
             // already use.
             PoseTable poses;
+            // app-94sk T6b (spec §3.6/§3.7): what the READY pose is sampled
+            // from and placed by -- the body's memo row (its rewind slot, the
+            // number the history is keyed by), its packed key, whether it has
+            // one layer (a mob) or two (the collector, whose aim layer rides
+            // over locomotion), its course turned by its rig's forward
+            // (HitVolumes.YawOf), and its lean. ⚠ THE LIVE KEY AND THE LIVE
+            // TILT, WHATEVER `historyTick` SAYS: the history record carries no
+            // key until T7 (spec §3.7), so a rewound round meets today's pose
+            // at yesterday's stand -- the position is rewound, the pose is
+            // not, and T7 is where the key joins the record. The tilt read
+            // here is the one TiltSystem left at the end of the PREVIOUS
+            // tick: it steps after this system, so the key carries the lean
+            // at the moment of judgement, not at the end of the tick (spec
+            // §3.6, fixture 23a in T7).
+            int slot;
+            PoseKey key;
+            bool singleLayer;
+            float facingSin, facingCos;
+            float2 tilt;
             float slideCeiling = float.NaN;
             // ⚠ app-94sk T2: the array is no longer an ORDERED STACK and the
             // reader is no longer HitZones.Resolve — the paragraph below is the
@@ -1250,6 +1291,11 @@ namespace Ring.Simulation.Combat
                 // inside HitVolumes.Resolve from the pose table. Kept because it
                 // records WHY the crown had to stop being the column's.
                 poses = cfg.Poses;   // a mob never slides: no ceiling of that kind
+                slot = mob.HistorySlot;
+                key = PoseKey.FromMob(in mob);
+                singleLayer = true;
+                HitVolumes.YawOf(mob.Dir, BakedClips.MobForward, out facingSin, out facingCos);
+                tilt = mob.Tilt;
             }
             else if (kind == HitPlayer)
             {
@@ -1296,6 +1342,11 @@ namespace Ring.Simulation.Combat
                 // differed from the column (0.32 / 0.45 / 0.16 against one body
                 // radius of 0.45).
                 poses = cfg.Poses;
+                slot = target.HistorySlot;
+                key = PoseKey.FromPlayer(in target);
+                singleLayer = false;
+                HitVolumes.YawOf(target.Dir, BakedClips.CollectorForward, out facingSin, out facingCos);
+                tilt = target.Tilt;
                 if (sliding) slideCeiling = cfg.SlideProfileTop;
             }
             else if (kind == HitRingWall)
@@ -1415,17 +1466,54 @@ namespace Ring.Simulation.Combat
             // the very form ShotGeometry builds its muzzle and aim points with.
             // The bones arrive in the BODY frame and HitVolumes.ToWorld is what
             // reconciles the two; nothing is transposed here (app-coou).
-            // ⛔ `poseRow: 0` AND `bodyTilt: zero` UNTIL T6/T6b: the pose key and
-            // the tilt vector do not exist yet, and the rest row is what every
-            // caller hands in meanwhile.
+            // app-94sk T6b: THE READY POSE, out of the world's memo (spec
+            // §3.7) -- keyed by the body's rewind slot and the round's own
+            // depth, sampled once per generation per pair through the one
+            // home of "sample this body" below the gather loop shares.
+            // ⛔ A BODY WITHOUT A TABLE IS REFUSED HERE, where Resolve refused
+            // it before this task: Sample refuses such a table by name, and
+            // a named refusal from the middle of the combat path is a crash,
+            // not a miss (review finding).
             // ⚠ `partId` travels out of the resolver and is DROPPED here: the
             // damage path learns it in plan 2 (spec §3.10), and a field nobody
             // reads yet has no business in an event.
-            return HitVolumes.Resolve(parts, in poses, poseRow: 0, bodyTilt: float2.zero,
+            if (poses.Bones == null || poses.BoneCount <= 0) return false;
+            float3[] pose = PoseOf(w, slot, proj.RewindLeft, in poses, in key, singleLayer);
+            return HitVolumes.Resolve(parts, in poses, pose, tilt,
                 bodyOrigin: new float3(targetPos, 0f),
-                bodyFacingSin: 0f, bodyFacingCos: 1f,
+                facingSin, facingCos,
                 p0: new float3(p0, hStart), p1: new float3(p1, hEnd), projRadius: proj.Radius,
                 out zone, out mult, out hitHeight, out _, out contactT);
+        }
+
+        /// app-94sk T6b: ONE HOME OF "THIS BODY'S READY POSE" for the two
+        /// places that need it -- the gather phase (for a leaning body's
+        /// circle) and the resolution -- so the memo's contract (fill on a
+        /// stale entry, read a fresh one) is written once. `depth` is the
+        /// round's RewindLeft, the memo's second key.
+        static float3[] PoseOf(SimulationWorld w, int slot, int depth, in PoseTable table,
+            in PoseKey key, bool singleLayer)
+        {
+            float3[] pose = w.PoseMemo.Entry(slot, depth, out bool fresh);
+            if (!fresh) PoseTable.Sample(in table, in key, singleLayer, pose);
+            return pose;
+        }
+
+        /// app-94sk T6b: the broad phase's circle for a LEANING body -- the
+        /// reach of its leaned pose (HitVolumes.GatherRadiusFor, the one home
+        /// of that law), off the same memo the resolution reads. The caller
+        /// asks `LeanOf(tilt).Leaning` first and packs the key only then.
+        /// AimLine has a twin of these three lines over its own scratch
+        /// instead of the memo -- the two differ in WHO OWNS THE BUFFER, which
+        /// is the one thing AimLine's convention does not let a shared helper
+        /// decide; the law itself is not spelled twice.
+        static float LeaningCircleOf(SimulationWorld w, int slot, int depth, HitPart[] parts,
+            in PoseTable table, in PoseKey key, bool singleLayer, float2 dir, float2 rigForward,
+            float2 tilt, float gatherRadius)
+        {
+            if (table.Bones == null || table.BoneCount <= 0) return gatherRadius;   // refused downstream
+            float3[] pose = PoseOf(w, slot, depth, in table, in key, singleLayer);
+            return HitVolumes.GatherRadiusFor(parts, pose, table.BoneCount, dir, rigForward, tilt, gatherRadius);
         }
     }
 }

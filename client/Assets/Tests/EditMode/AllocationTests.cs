@@ -587,6 +587,10 @@ namespace Ring.Simulation.Tests
             // measures instead of the function.
             var scratch = new (float t, int kind, int index)[
                 config.Arena.MaxMobs + config.Arena.MaxPlayers];
+            // app-94sk T6b: and the SECOND buffer of the same kind -- the bone
+            // buffer the hit volumes read a ready pose from (AimProvider owns
+            // one too), allocated before the window for the same reason.
+            var poseScratch = new float3[math.max(1, SimConfig.MaxBoneCount(in config))];
             float2 heroPos = snap.Player.Pos;
             float2 aimPoint = heroPos + new float2(30f, 0f);
             const float stroke = 0.5f;
@@ -594,7 +598,7 @@ namespace Ring.Simulation.Tests
             // Warm-up OUTSIDE the measured window: the first call carries JIT
             // and other one-off work that is not this function's allocation.
             AimLineSolution warm = AimLine.Solve(heroPos, aimPoint, config.Hero.MuzzleHeight,
-                in config, snap, snap.LocalPlayerIndex, scratch);
+                in config, snap, snap.LocalPlayerIndex, scratch, poseScratch);
             AimLine.Notches(in warm, stroke, out _, out _, out _, out _);
 
             Assert.That(() =>
@@ -606,7 +610,7 @@ namespace Ring.Simulation.Tests
                 {
                     AimLineSolution line = AimLine.Solve(heroPos, aimPoint,
                         config.Hero.MuzzleHeight, in config, snap, snap.LocalPlayerIndex,
-                        scratch);
+                        scratch, poseScratch);
                     AimLine.Notches(in line, stroke, out _, out _, out _, out _);
                 }
             }, Is.Not.AllocatingGCMemory());

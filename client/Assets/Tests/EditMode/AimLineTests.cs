@@ -48,6 +48,13 @@ namespace Ring.Simulation.Tests
         static (float t, int kind, int index)[] Scratch(in SimConfig cfg)
             => new (float t, int kind, int index)[cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers];
 
+        /// The SECOND scratch Solve takes since app-94sk T6b -- the bone buffer
+        /// the hit volumes read a body's READY pose from. Fresh per call for
+        /// the same reason as the candidate scratch above; sized by the one
+        /// home of "the widest body" the production caller sizes its own by.
+        static float3[] PoseScratch(in SimConfig cfg)
+            => new float3[math.max(1, SimConfig.MaxBoneCount(in cfg))];
+
         /// A barrier top bound to HOLD the line: the muzzle's height, the
         /// round's own radius on top of it (the height gate pads by that at
         /// both ends) and a meter to spare. ⚠ Every fixture here states its own
@@ -93,12 +100,12 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.OpenField();
             var snap = Snap(in cfg);
             AimLineSolution standing = AimLine.Solve(float2.zero, new float2(10f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(cfg.Hero.MuzzleHeight, standing.Height, Eps,
                 "высота линии не равна высоте дула стоя");
 
             AimLineSolution sliding = AimLine.Solve(float2.zero, new float2(10f, 0f),
-                cfg.Hero.SlideMuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.SlideMuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(cfg.Hero.SlideMuzzleHeight, sliding.Height, Eps,
                 "в слайде линия не опустилась — высота приходит параметром, а не тернаром внутри");
             // ⚠ THE PREMISE IS A PROPERTY, NOT A LITERAL (307/308): the two
@@ -112,7 +119,7 @@ namespace Ring.Simulation.Tests
         {
             SimConfig cfg = TestConfigs.OpenField();
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(10f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Range, line.Stop, "упор не в предел дальности");
             // The expectation is a FIXTURE EXPRESSION: 35 * 1.5 = 52.5 m, not
             // the 78.75 m the game's own asset would give (lesson 699).
@@ -126,7 +133,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.OpenField();
             var hero = new float2(3f, -2f);
             AimLineSolution line = AimLine.Solve(hero, new float2(13f, -2f),
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(cfg.Weapon.MuzzleOffset, math.distance(hero, line.Start), Eps,
                 "начало линии не отодвинуто на MuzzleOffset");
             // And it sits ON the collector-to-cursor segment rather than off to
@@ -158,7 +165,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: обод достижим в пределах дальности");
 
             AimLineSolution line = AimLine.Solve(float2.zero, cursor,
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.RingWall, line.Stop, "упор не в обод арены");
             Assert.Less(line.Length, reach, "обод не укоротил линию против предела дальности");
         }
@@ -176,7 +183,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: курсор ближе дула");
 
             AimLineSolution line = AimLine.Solve(hero, cursor, cfg.Hero.MuzzleHeight,
-                in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             float2 expected = math.normalize(cursor - hero);
             Assert.Greater(math.dot(line.Dir, expected), 0f,
                 "направление линии развернулось на близком курсоре");
@@ -195,7 +202,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: направление вырождено — курсор в позиции сборщика");
 
             AimLineSolution line = AimLine.Solve(hero, cursor, cfg.Hero.MuzzleHeight,
-                in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.IsFalse(math.any(math.isnan(line.Dir)),
                 "вырожденный ввод дал нечисловое направление");
             Assert.AreEqual(1f, math.length(line.Dir), Eps,
@@ -239,7 +246,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: высота дула ниже верха корпуса цели");
 
             AimLineSolution line = AimLine.Solve(hero, cursor, cfg.Hero.MuzzleHeight,
-                in cfg, snap, 0, Scratch(in cfg));
+                in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop, "дуло внутри круга тела не дало упора в тело");
             Assert.AreEqual(0f, line.Length, Eps, "упор в тело из его же круга не нулевой длины");
             Assert.AreEqual(corpus.Zone, line.Zone,
@@ -297,7 +304,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: тело стоит ближе стены");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop, "тело на линии её не остановило");
             Assert.Less(line.Length, toWall, "линия прошла тело насквозь до стены за ним");
         }
@@ -340,7 +347,7 @@ namespace Ring.Simulation.Tests
             inside.Mobs[0] = new MobState { Id = 1, Type = MobType.Chaser,
                 Pos = new float2(10f, padded - step), Hp = cfg.Chaser.MaxHp };
             AimLineSolution held = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, inside, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, inside, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, held.Stop,
                 "смещение внутри пада тело не задело — радиус снаряда в пороге не участвует");
 
@@ -348,7 +355,7 @@ namespace Ring.Simulation.Tests
             outside.Mobs[0] = new MobState { Id = 1, Type = MobType.Chaser,
                 Pos = new float2(10f, padded + step), Hp = cfg.Chaser.MaxHp };
             AimLineSolution clear = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, outside, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, outside, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Range, clear.Stop, "тело в стороне удержало линию");
             Assert.AreEqual(reach, clear.Length, Eps,
                 "линия мимо тела не дошла до предела дальности");
@@ -403,7 +410,7 @@ namespace Ring.Simulation.Tests
             Assert.Less(near.x, far.x, "премисса фикстуры: отказавшее тело — ближнее");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop, "перескан не нашёл дальнее тело");
             Assert.AreEqual(chaserCorpus.Zone, line.Zone,
                 "ответ пришёл не от дальнего тела — зона не его");
@@ -419,13 +426,13 @@ namespace Ring.Simulation.Tests
                 near.cfg.Hero.MuzzleHeight + near.cfg.Weapon.ProjectileRadius,
                 "премисса фикстуры: барьер выше луча и обязан держать");
             AimLineSolution barrierFirst = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                near.cfg.Hero.MuzzleHeight, in near.cfg, near.snap, 0, Scratch(in near.cfg));
+                near.cfg.Hero.MuzzleHeight, in near.cfg, near.snap, 0, Scratch(in near.cfg), PoseScratch(in near.cfg));
             Assert.AreEqual(AimStop.Barrier, barrierFirst.Stop,
                 "ближний барьер не победил дальнее тело");
 
             var far = BarrierAndBody(obstacleX: 16f, bodyX: 8f);
             AimLineSolution bodyFirst = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                far.cfg.Hero.MuzzleHeight, in far.cfg, far.snap, 0, Scratch(in far.cfg));
+                far.cfg.Hero.MuzzleHeight, in far.cfg, far.snap, 0, Scratch(in far.cfg), PoseScratch(in far.cfg));
             Assert.AreEqual(AimStop.Body, bodyFirst.Stop,
                 "ближнее тело не победило дальний барьер");
         }
@@ -512,7 +519,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: ответы двух кандидатов различимы зоной");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, snap, 0, Scratch(in cfg));
+                muzzleH, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop, "ни один из двух кандидатов не остановил линию");
             Assert.AreEqual(gunnerLegs.Zone, line.Zone,
                 "при точном равенстве выиграл не спрошенный первым");
@@ -570,11 +577,11 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: слайдовое дуло ниже стоячего");
 
             AimLineSolution standing = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(chaserCorpus.Zone, standing.Zone, "стоя ось прошла не по корпусу");
 
             AimLineSolution sliding = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.SlideMuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.SlideMuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(chaserLegs.Zone, sliding.Zone, "в слайде ось прошла не по ногам");
         }
 
@@ -597,7 +604,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: круг ОХВАТА накрывает ось — мешать держать может только высота");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreNotEqual(AimStop.Body, line.Stop,
                 "слайдящий сборщик удержал линию — потолок силуэта взят не по слайду");
             Assert.AreEqual(reach, line.Length, Eps,
@@ -645,13 +652,13 @@ namespace Ring.Simulation.Tests
             var foreign = Snap(in cfg, players: 2);
             foreign.Players[1] = new PlayerState { Alive = true, Pos = ownBody };
             AimLineSolution onForeign = AimLine.Solve(hero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, foreign, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, foreign, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, onForeign.Stop,
                 "премисса фикстуры: то же тело на том же месте, но ЧУЖОЕ, линию обязано держать — "
                 + "иначе исключение своего тела не отличить от того, что линия не видит никого");
 
             AimLineSolution line = AimLine.Solve(hero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreNotEqual(AimStop.Body, line.Stop, "линия остановилась на собственном теле");
             Assert.AreEqual(reach, line.Length, Eps,
                 "линия сквозь своё тело не дошла до предела дальности");
@@ -676,7 +683,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: барьер ниже луча даже с радиусом снаряда");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreNotEqual(AimStop.Barrier, line.Stop, "низкий барьер удержал линию");
             Assert.AreEqual(reach, line.Length, Eps,
                 "линия над низким барьером не дошла до предела дальности");
@@ -705,7 +712,7 @@ namespace Ring.Simulation.Tests
             Assert.IsFalse(evacuated.Players[1].Alive,
                 "премисса фикстуры: эвакуанта в арене больше нет");
             AimLineSolution overGone = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, evacuated, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, evacuated, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreNotEqual(AimStop.Body, overGone.Stop,
                 "эвакуант удержал линию — гейт сборщиков не по Alive");
             Assert.AreEqual(reach, overGone.Length, Eps,
@@ -717,7 +724,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(0f, quantized.Mobs[0].Hp, Eps,
                 "премисса фикстуры: здоровье живого босса декодировано проводом в ноль");
             AimLineSolution onBoss = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, quantized, 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, quantized, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, onBoss.Stop,
                 "моб с нулевым декодированным здоровьем линию не удержал — мобы гейтятся по здоровью");
         }
@@ -762,13 +769,13 @@ namespace Ring.Simulation.Tests
             mobs.Mobs[0] = new MobState { Id = 1, Type = MobType.Gunner, Pos = at,
                 Hp = cfg.Gunner.MaxHp };
             AimLineSolution onGunner = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, mobs, 0, Scratch(in cfg));
+                muzzleH, in cfg, mobs, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(gunnerLegs.Zone, onGunner.Zone, "зона на ганнере — не ноги");
 
             var collectors = Snap(in cfg, players: 2);
             collectors.Players[1] = new PlayerState { Alive = true, Pos = at };
             AimLineSolution onCollector = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, collectors, 0, Scratch(in cfg));
+                muzzleH, in cfg, collectors, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(heroCorpus.Zone, onCollector.Zone, "зона на сборщике — не корпус");
         }
 
@@ -834,11 +841,11 @@ namespace Ring.Simulation.Tests
             var aOnly = Snap(in cfg, players: 2);
             aOnly.Players[1] = snap.Players[1];
             AimLineSolution onA = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, aOnly, 0, Scratch(in cfg));
+                muzzleH, in cfg, aOnly, 0, Scratch(in cfg), PoseScratch(in cfg));
             var bOnly = Snap(in cfg, mobs: 1);
             bOnly.Mobs[0] = snap.Mobs[0];
             AimLineSolution onB = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, bOnly, 0, Scratch(in cfg));
+                muzzleH, in cfg, bOnly, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, onA.Stop, "премисса фикстуры: A сам по себе останавливает линию");
             Assert.AreEqual(AimStop.Body, onB.Stop, "премисса фикстуры: B сам по себе останавливает линию");
             Assert.Less(onB.Length, onA.Length,
@@ -849,7 +856,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: по кругам ОХВАТА ближе A");
 
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(30f, 0f),
-                muzzleH, in cfg, snap, 0, Scratch(in cfg));
+                muzzleH, in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop, "ни одно из двух тел не остановило линию");
             Assert.AreEqual(heroCorpus.Zone, line.Zone,
                 "кандидаты ранжированы по объёмам, а не по кругам охвата");
@@ -894,7 +901,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: курсор ближе предела дальности — иначе минимум берёт упор");
 
             AimLineSolution open = AimLine.Solve(float2.zero, new float2(toCursor, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(expected, open.NotchDistance, Eps,
                 "засечки встали не у курсора, когда упор дальше него");
 
@@ -911,7 +918,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: стена ближе курсора");
 
             AimLineSolution stopped = AimLine.Solve(float2.zero, new float2(toCursor, 0f),
-                walled.Hero.MuzzleHeight, in walled, Snap(in walled), 0, Scratch(in walled));
+                walled.Hero.MuzzleHeight, in walled, Snap(in walled), 0, Scratch(in walled), PoseScratch(in walled));
             Assert.AreEqual(AimStop.Barrier, stopped.Stop, "стена не остановила линию");
             Assert.Greater(stopped.Length, 0f, "линия встала в нуле, а не на стене");
             Assert.Less(stopped.Length, expected, "линия ушла за стену, дальше курсора");
@@ -925,7 +932,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.OpenField();
             const float stroke = 0.5f;
             AimLineSolution line = AimLine.Solve(float2.zero, new float2(8f, 0f),
-                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, Snap(in cfg), 0, Scratch(in cfg), PoseScratch(in cfg));
 
             // ⛔ THIS PREMISE IS WHAT KEEPS THE ASSERTIONS BELOW FROM PASSING ON
             // ZEROES: at a zero half-width both strokes collapse onto the axis
@@ -1047,7 +1054,7 @@ namespace Ring.Simulation.Tests
                 "премисса фикстуры: цель стоит на линии огня и на высоте дула её объёмы есть");
 
             AimLineSolution line = AimLine.Solve(shooter.Pos, fire.AimPoint,
-                cfg.Hero.MuzzleHeight, in cfg, snap, snap.LocalPlayerIndex, Scratch(in cfg));
+                cfg.Hero.MuzzleHeight, in cfg, snap, snap.LocalPlayerIndex, Scratch(in cfg), PoseScratch(in cfg));
             Assert.AreEqual(AimStop.Body, line.Stop,
                 "премисса фикстуры: линия показывает не на тело — сравнивать нечего");
 
@@ -1149,7 +1156,7 @@ namespace Ring.Simulation.Tests
             // the shot, then the round flies, then the event is read. Any other
             // order has the two looking at different ticks.
             AimLineSolution line = AimLine.Solve(float2.zero, aimPoint, muzzleH,
-                in cfg, snap, 0, Scratch(in cfg));
+                in cfg, snap, 0, Scratch(in cfg), PoseScratch(in cfg));
 
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: muzzleH,
                 targetXY: aimPoint, targetH: muzzleH);
@@ -1223,6 +1230,44 @@ namespace Ring.Simulation.Tests
                 "дуло картинки разошлось с бедровой веткой выстрела");
             Assert.AreEqual(0f, math.distance(expected, aimed.SpawnPos), Eps,
                 "дуло картинки разошлось с прицельной веткой выстрела");
+        }
+
+        // ------------------------------------------------ app-94sk T6b
+
+        [Test]
+        public void TheLineStopsOnALeaningBodyOutsideItsStandingCircle()   // the AimLine half of fixture 26a, witness of M448
+        {
+            // The round's broad phase widens its circle for a leaning body
+            // (PoseTableTests.ATiltedMobIsNotImmuneToFlatFire); the LINE walks
+            // the same two stages and has to widen too, or the picture would
+            // show a clear shot across a fallen chaser that the round stops on.
+            // A chaser on his side at TiltFallAngle, towards +x; the line runs
+            // down +y across his laid-over chest, 1.35 m from his origin --
+            // outside the standing circle of 0.92 + 0.12.
+            const int ChestBone = 2;
+            SimConfig cfg = TestConfigs.OpenField();
+            float3 chest = cfg.Chaser.Poses.Bones[ChestBone];
+            float fall = cfg.Chaser.TiltFallAngle;
+            float chestAlong = chest.y * math.sin(fall) + chest.x * math.cos(fall) + 0.3f;
+            Assert.Greater(chestAlong, cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: линия поперёк лежащего корпуса проходит ВНЕ круга охвата стоящего тела");
+            var body = new float2(8f, 0f);
+            var hero = new float2(body.x + chestAlong, -3f);
+            var cursor = new float2(body.x + chestAlong, 5f);
+
+            AimStop StopOn(float2 tilt)
+            {
+                var snap = Snap(in cfg, mobs: 1);
+                snap.Mobs[0] = new MobState { Id = 1, Type = MobType.Chaser, Pos = body,
+                    Hp = cfg.Chaser.MaxHp, Dir = new float2(0f, 1f), Tilt = tilt };
+                return AimLine.Solve(hero, cursor, cfg.Hero.MuzzleHeight, in cfg, snap, 0,
+                    Scratch(in cfg), PoseScratch(in cfg)).Stop;
+            }
+
+            Assert.AreEqual(AimStop.Range, StopOn(float2.zero),
+                "премисса фикстуры: стоящее тело эту линию не держит — она вне его круга");
+            Assert.AreEqual(AimStop.Body, StopOn(new float2(fall, 0f)),
+                "линия прошла сквозь лежащий корпус — широкая фаза линии держит круг стоящего тела (M448)");
         }
     }
 }

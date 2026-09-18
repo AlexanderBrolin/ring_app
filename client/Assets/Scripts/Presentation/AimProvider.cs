@@ -102,6 +102,15 @@ namespace Ring.Presentation
         // second Restart at a larger Arena.MaxPlayers puts an index past the
         // end of an array sized for the old cap, on every frame afterward.
         (float t, int kind, int index)[] _aimLineScratch;
+        // app-94sk T6b (bd app-j4fl, the contract for this one touch): the
+        // SECOND scratch AimLine.Solve asks for -- the bone buffer the hit
+        // volumes read a body's READY pose from (PoseTable.Sample writes it,
+        // HitVolumes.Resolve reads it, and by AimLine's own rule the buffer
+        // belongs to the caller). Same ownership, same length check, same
+        // reason as the candidate scratch right above; sized by the widest
+        // body of the built configuration (SimConfig.MaxBoneCount, the one
+        // home of that number), at least one bone.
+        float3[] _poseScratch;
         // app-461s T2 fix round 1: the last `RenderSnapshot.Tick` this class
         // has seen, read by `Update` below to tell a restart apart from an
         // ordinary frame. -1 so tick 0 of the very first match ever played
@@ -205,9 +214,13 @@ namespace Ring.Presentation
             int scratchNeed = config.Arena.MaxMobs + config.Arena.MaxPlayers;
             if (_aimLineScratch == null || _aimLineScratch.Length < scratchNeed)
                 _aimLineScratch = new (float t, int kind, int index)[scratchNeed];
+            int poseNeed = Mathf.Max(1, SimConfig.MaxBoneCount(in config));
+            if (_poseScratch == null || _poseScratch.Length < poseNeed)
+                _poseScratch = new float3[poseNeed];
             _cachedHipLine = AimLine.Solve(_runner.RenderCurr.Player.Pos, planeAimSimPos,
                 _runner.RenderMuzzleHeight, config,
-                _runner.RenderCurr, _runner.RenderCurr.LocalPlayerIndex, _aimLineScratch);
+                _runner.RenderCurr, _runner.RenderCurr.LocalPlayerIndex, _aimLineScratch,
+                _poseScratch);
 
             if (!_runner.LastFrameInput.AimHeld)
             {

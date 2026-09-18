@@ -50,7 +50,7 @@ namespace Ring.Simulation.Tests
         {
             // ⛔⛔ THE CLIP-ORDER CONTRACT, ASKED WHERE IT CAN STILL BE ANSWERED.
             // Validation rule 16 reads the slide's crown through
-            // `ClipFirstRow[SlideClipIndex]`, and the ONLY thing that makes
+            // `ClipFirstRow[BakedClips.Collector.Slide]`, and the ONLY thing that makes
             // that row the slide is `PoseBaker.BakeSet`'s ordering. A table
             // carries no clip NAMES, so the rule itself can check nothing but a
             // length — lose `Slide_Loop` from the controller and rule 16 would
@@ -82,7 +82,7 @@ namespace Ring.Simulation.Tests
                     "премисса: контроллер сборщика вообще несёт клип слайда");
 
                 PoseTable baked = PoseBaker.BakeOne(prefab);
-                Assert.Greater(baked.ClipFirstRow.Length, TestConfigs.SlideClipIndex + 1,
+                Assert.Greater(baked.ClipFirstRow.Length, BakedClips.Collector.Slide + 1,
                     "у запечённой таблицы сборщика обязан быть клип 1");
 
                 // The slide is SHORTER than standing — that is the whole point
@@ -91,11 +91,11 @@ namespace Ring.Simulation.Tests
                 // re-typed every time the clip changes, and would then be the
                 // thing that broke instead of the contract.
                 float restCrown = HitParts.PoseTop(
-                    TestConfigs.Default().Hero.Parts, in baked, 0, float2.zero);
+                    TestConfigs.Default().Hero.Parts, in baked, 0);
                 float slideCrown = HitParts.PoseTop(TestConfigs.Default().Hero.Parts, in baked,
-                    baked.ClipFirstRow[TestConfigs.SlideClipIndex], float2.zero);
+                    baked.ClipFirstRow[BakedClips.Collector.Slide]);
                 Assert.Less(slideCrown, restCrown,
-                    $"клип {TestConfigs.SlideClipIndex} запечённой таблицы обязан быть СЛАЙДОМ: "
+                    $"клип {BakedClips.Collector.Slide} запечённой таблицы обязан быть СЛАЙДОМ: "
                     + $"его крона {slideCrown:F4} не ниже кроны покоя {restCrown:F4}, то есть "
                     + "порядок клипов пекаря разошёлся с тем, что читает правило 16");
             }
@@ -387,5 +387,506 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(lo, pose[Masked].x, 1e-6f,
                 "однослойное тело взяло позу прицела — singleLayer не читается");
         }
+
+        // ------------------------------------------------ app-94sk T6b (spec §3.5а/§3.6/§3.7)
+
+        /// The collector's fixture table widened to every position BakedClips
+        /// names for him (the death take is the last), `rows` rows per added
+        /// clip. One factory for the four fixtures below, so they read one
+        /// table rather than four spellings of it.
+        static PoseTable CollectorTableWithEveryClip(int rows = 1)
+            => TestConfigs.PaddedToClips(TestConfigs.HeroRestAndSlidePose(),
+                BakedClips.Collector.Death + 1, rows);
+
+        /// A shot spawned CLOSE, along +x, at a stated plan y and height --
+        /// the shape fixtures 26/26a use, for the reason they give: a body
+        /// this fixture leans or slides is not frozen in that state by the
+        /// world (the tilt spring settles, the slide clock runs), so the round
+        /// has to meet it on its first steps.
+        static void ShootAlongX(SimulationWorld w, in SimConfig cfg, float fromX, float y, float height)
+            => w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(fromX, y),
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
+
+        static HitZone FirstHitZone(SimulationWorld w)
+            => TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e) ? e.Zone : HitZone.None;
+
+        [Test]
+        public void ASlidingCollectorIsShotInTheSlidePose()   // fixture 17, the outcome half
+        {
+            // ⭐⭐ THE POSE CHANGES THE OUTCOME. Sliding, the collector's head
+            // drops to 0.48 m and swings 0.41 m forward (his table's own slide
+            // row); a round passing that point strikes his HEAD sliding and
+            // nothing standing -- his standing legs stand 0.44 m off that line
+            // and everything else stands higher. Not the profile ceiling of
+            // Task 11 (SlideProfileTop, 0.55 in the fixtures), which the shot
+            // passes under and which knows no plan: the round meets the slide
+            // ROW through the volumes, with the clip the producer named.
+            SimConfig cfg = TestConfigs.OpenField();
+            // The slide's own thrust would carry him out of the geometry
+            // between the spawn and the round; the fixture states a slide that
+            // stays put (a fixture input, not a balance number).
+            cfg.Hero.SlideSpeed = 0f;
+
+            int slideRow = cfg.Hero.Poses.ClipFirstRow[BakedClips.Collector.Slide];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Head, "сборщик");
+            float3 slidHead = cfg.Hero.Poses.Bones[slideRow * cfg.Hero.Poses.BoneCount + head.BoneB];
+            Assert.Less(slidHead.y + head.Radius, cfg.Hero.SlideProfileTop + 0.5f,
+                "премисса фикстуры: голова в слайде лежит низко, иначе слайд ничего не меняет");
+            // The line: PAST the slid head's plan by a quarter of a meter and
+            // a little above it -- 0.25 from the head bone against the head
+            // capsule's reach of 0.38 (0.26 + the round's 0.12), and 0.51 from
+            // the standing calf's axis against its 0.38 (measured on the T4b
+            // rig: on the head's own plan that shin is struck at 0.26). The
+            // body faces -y, the identity yaw of
+            // a rig that looks down -z (BakedClips.CollectorForward), so the
+            // table's plan IS the world's plan and no turn enters the numbers.
+            float lineY = slidHead.z + 0.24f;
+            float height = slidHead.y + 0.07f;
+            Assert.Less(math.distance(new float2(lineY, height), new float2(slidHead.z, slidHead.y)),
+                head.Radius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: линия проходит в пределах досягаемости лежащей головы");
+
+            HitZone Shoot(bool sliding)
+            {
+                var w = new SimulationWorld(17, cfg);
+                var p = w.PlayerAt(0);
+                p.Dir = new float2(0f, -1f);
+                if (sliding) p.SlideTimer = cfg.Hero.SlideDuration;
+                w.SetPlayerForTest(0, p);
+                w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(-1.6f, lineY),
+                    new float2(cfg.Weapon.ProjectileSpeed, 0f), height, velZ: 0f,
+                    cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
+                    ownerIndex: ProjectileIds.NoOwner);
+                TestWorlds.RunUntilProjectilesDie(w);
+                return TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e)
+                    ? e.Zone : HitZone.None;
+            }
+
+            Assert.AreEqual(HitZone.None, Shoot(sliding: false),
+                "премисса фикстуры: стоящего сборщика этот выстрел обязан миновать");
+            Assert.AreEqual(HitZone.Head, Shoot(sliding: true),
+                "скользящий сборщик не подставил голову там, где она лежит в слайде — поза в объёмы не пришла");
+        }
+
+        [Test]
+        public void ADeadCollectorsKeyNamesTheDeathTakeFromTheTickHeDied()   // fixture 17, the dead row (spec §3.5а)
+        {
+            // Dead: the death take, its phase counting from the tick of death
+            // and HELD past the clip's end (a corpse does not loop and does
+            // not stand back up into locomotion), the aim layer off, the
+            // reaction fields cleared -- the pose PersistentPropsDirector
+            // reads debris heights off (spec §3.5а).
+            const int DeathRows = 3;
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.Poses = CollectorTableWithEveryClip(DeathRows);
+            var w = new SimulationWorld(17, cfg);
+            var input = new SimInput[1];
+            input[0].MoveDir = new float2(1f, 0f);
+            for (int i = 0; i < 6; i++) w.TickAll(input);   // alive and moving: the pair is a locomotion pair
+            var alive = w.PlayerAt(0);
+            Assert.AreNotEqual(BakedClips.Collector.Death, alive.LowerClipA,
+                "премисса фикстуры: живой сборщик не в клипе смерти");
+            alive.ReactionClip = 3; alive.ReactionPhase = 9;   // a gesture half played when the blow lands
+            w.SetPlayerForTest(0, alive);
+
+            w.KillPlayerForTest();
+            const int DeadTicks = 5;
+            for (int i = 0; i < DeadTicks; i++) w.TickAll(new SimInput[1]);
+            var dead = w.PlayerAt(0);
+            Assert.IsFalse(dead.Alive, "премисса фикстуры: сборщик мёртв");
+            Assert.AreEqual(BakedClips.Collector.Death, dead.LowerClipA, "мёртвое тело не в клипе смерти (A)");
+            Assert.AreEqual(BakedClips.Collector.Death, dead.LowerClipB, "мёртвое тело не в клипе смерти (B)");
+            Assert.AreEqual(DeadTicks - 1, dead.LowerPhase,
+                "фаза мёртвого тела не считается от тика смерти (или зациклилась, или встала на последней строке)");
+            Assert.AreEqual(0, dead.UpperWeight, "слой прицела мёртвого тела не выключен");
+            Assert.AreEqual(0, dead.UpperClip, "мёртвое тело всё ещё называет клип прицела");
+            Assert.AreEqual(0, dead.ReactionClip, "поле реакции пережило смерть (клип)");
+            Assert.AreEqual(0, dead.ReactionPhase, "поле реакции пережило смерть (фаза)");
+            Assert.AreEqual(0, dead.LowerShare, "у мёртвого тела нет пары — доля обязана быть нулевой");
+        }
+
+        [Test]
+        public void AMobsOneShotPlaysFromItsStateAndFreezesWhenItGoesDown()   // fixture 17, the downed row (spec §3.5а)
+        {
+            // A mob's lower layer follows its FSM: Telegraph plays the melee
+            // take from its first row, one row a tick; going Downed FREEZES
+            // the last live clip and phase (Ruling 45: the fall is the tilt
+            // spring, there is no clip for it) and clears the reaction fields
+            // (spec §3.5а, D-I3). Three rows per take so that a phase is
+            // observable at all.
+            const int Rows = 3;
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            cfg.Chaser.Poses = TestConfigs.PaddedToClips(cfg.Chaser.Poses,
+                math.max(BakedClips.MeleeOf(MobType.Chaser), BakedClips.RangedOf(MobType.Chaser)) + 1, Rows);
+            var w = new SimulationWorld(17, cfg);
+            // "Already within AttackRange" (MobAiTests' own fixture): the FSM
+            // walks Idle -> Chase -> Telegraph on its own clock, and the take
+            // starts on the tick the ENTRY happens -- the number of ticks is
+            // the FSM's, not a literal (lesson 839).
+            w.SpawnMobForTest(MobType.Chaser, new float2(1.0f, 0f));
+            Assert.Greater(cfg.Chaser.TelegraphSeconds, 4f * SimulationWorld.TickDt,
+                "премисса фикстуры: замах длится дольше четырёх тиков, иначе FSM уйдёт из Telegraph раньше замера");
+            int ticksToTelegraph = 0;
+            while (w.Mobs[0].Ai != MobAiState.Telegraph && ticksToTelegraph < 10)
+            {
+                w.TickAll(new SimInput[1]);
+                ticksToTelegraph++;
+            }
+            Assert.AreEqual(MobAiState.Telegraph, w.Mobs[0].Ai, "премисса фикстуры: тело вошло в замах");
+            Assert.AreEqual(BakedClips.MeleeOf(MobType.Chaser), w.Mobs[0].LowerClipA,
+                "замах не переключил нижний клип на удар");
+            Assert.AreEqual(0, w.Mobs[0].LowerPhase, "одиночный тейк не начался с первой строки на тике входа");
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(MobAiState.Telegraph, w.Mobs[0].Ai, "премисса фикстуры: тело ещё в замахе");
+            Assert.AreEqual(1, w.Mobs[0].LowerPhase, "фаза одиночного тейка не идёт по строке за тик");
+
+            // Knocked over on the next tick: the producer sees Telegraph once
+            // more (phase 2), then TiltSystem puts the body down.
+            var m = w.Mobs[0];
+            m.Tilt = new float2(cfg.Chaser.TiltFallAngle * 1.2f, 0f);
+            m.ReactionClip = 4; m.ReactionPhase = 7;
+            w.SetMobForTest(0, m);
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(MobAiState.Downed, w.Mobs[0].Ai, "премисса фикстуры: тело опрокинуто");
+            for (int i = 0; i < 4; i++) w.TickAll(new SimInput[1]);
+            Assert.AreEqual(BakedClips.MeleeOf(MobType.Chaser), w.Mobs[0].LowerClipA,
+                "опрокинутое тело сменило клип — последний живой клип не заморожен");
+            Assert.AreEqual(2, w.Mobs[0].LowerPhase,
+                "фаза опрокинутого тела идёт дальше — она обязана замереть на входе в Downed");
+            Assert.AreEqual(0, w.Mobs[0].ReactionClip, "поле реакции пережило вход в Downed (клип)");
+            Assert.AreEqual(0, w.Mobs[0].ReactionPhase, "поле реакции пережило вход в Downed (фаза)");
+        }
+
+        [Test]
+        public void TheCollectorsAimLayerMovesTheVolumesItMasks()   // fixture 21, witness of M348
+        {
+            // ⭐ TWO LAYERS, THROUGH THE OUTCOME. The aim layer's pose holds
+            // the collector's head 0.8 m off his axis in this table, on the
+            // bones the mask names; the locomotion rows keep it on the axis.
+            // A round down the world's y axis at x = 0.8 strikes the HEAD only
+            // if the producer names the aim clip at full weight AND the
+            // resolver samples the collector with both layers -- the sampler
+            // alone was witnessed in T6a.
+            SimConfig cfg = TestConfigs.OpenField();
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Head, "сборщик");
+            const float Aside = 0.8f;
+            PoseTable table = CollectorTableWithEveryClip();
+            table = TestConfigs.WithBoneMoved(in table, BakedClips.Collector.AimNeutral, head.BoneA, new float3(Aside, 0f, 0f));
+            table = TestConfigs.WithBoneMoved(in table, BakedClips.Collector.AimNeutral, head.BoneB, new float3(Aside, 0f, 0f));
+            table.UpperLayerMask = new[] { (1UL << head.BoneA) | (1UL << head.BoneB) };
+            cfg.Hero.Poses = TestConfigs.Sealed(table);
+            float headHeight = 0.5f * (cfg.Hero.Poses.Bones[head.BoneA].y + cfg.Hero.Poses.Bones[head.BoneB].y);
+
+            var w = new SimulationWorld(21, cfg);
+            var p = w.PlayerAt(0);
+            p.Dir = new float2(0f, -1f);   // the identity yaw of a -z rig: the table's plan is the world's
+            w.SetPlayerForTest(0, p);
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(Aside, -1.6f),
+                new float2(0f, cfg.Weapon.ProjectileSpeed), headHeight, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
+                ownerIndex: ProjectileIds.NoOwner);
+            TestWorlds.RunUntilProjectilesDie(w);
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e),
+                "голова, отведённая слоем прицела, не встретила выстрел — верхний слой сборщика выброшен (M348)");
+            Assert.AreEqual(HitZone.Head, e.Zone, "встречен не тот объём");
+            Assert.AreEqual(255, w.PlayerAt(0).UpperWeight, "живой сборщик держит слой прицела на полном весе");
+            Assert.AreEqual(BakedClips.Collector.AimNeutral, w.PlayerAt(0).UpperClip, "клип прицела не назван");
+        }
+
+        [Test]
+        public void TheCollectorsLocomotionPairFollowsTheTreesThresholds()   // the pair, the share and the loop
+        {
+            // The lower layer of a moving collector: the pair of tree children
+            // around the damped parameter s, the SHARE within that pair from
+            // the thresholds (not s itself -- PlayerState's own block), and a
+            // phase that walks the pair's rows and WRAPS. Two rows per tree
+            // clip, so the wrap is observable; the fixture's expectation is
+            // its own arithmetic over the table's thresholds.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.Poses = CollectorTableWithEveryClip(rows: 2);
+            float[] t = cfg.Hero.Poses.BlendThresholds;
+            Assert.AreEqual(BakedClips.Collector.Tree.Length, t.Length,
+                "премисса фикстуры: у дерева столько же порогов, сколько детей");
+            var w = new SimulationWorld(19, cfg);
+            var input = new SimInput[1];
+            input[0].MoveDir = new float2(1f, 0f);
+
+            int inTheMiddle = 0;
+            int phasesSeenPastRest = 0;   // a bit per phase value seen while the pair is off the rest clip
+            for (int tick = 1; tick <= 12; tick++)
+            {
+                w.TickAll(input);
+                PlayerState p = w.PlayerAt(0);
+                float s = p.LowerBlend;
+                int i = t.Length - 1;
+                for (int k = 0; k + 1 < t.Length; k++) if (s >= t[k] && s < t[k + 1]) { i = k; break; }
+                int a = BakedClips.Collector.Tree[i];
+                int b = BakedClips.Collector.Tree[math.min(i + 1, t.Length - 1)];
+                Assert.AreEqual(a, p.LowerClipA, $"тик {tick}, s = {s:F4}: не тот клип A");
+                Assert.AreEqual(b, p.LowerClipB, $"тик {tick}, s = {s:F4}: не тот клип B");
+                float share = a == b ? 0f : (s - t[i]) / (t[i + 1] - t[i]);
+                Assert.AreEqual(share, p.LowerShare / 255f, 1f / 255f + 1e-5f,
+                    $"тик {tick}, s = {s:F4}: доля в паре не по порогам дерева");
+                if (i > 0 && i + 1 < t.Length) inTheMiddle++;
+                // The phase walks the pair's rows and wraps: two rows a clip
+                // on this table, so it alternates once the pair has left the
+                // one-row rest clip.
+                if (a != BakedClips.Rest)
+                {
+                    Assert.Less(p.LowerPhase, PoseTable.RowsOf(in cfg.Hero.Poses, a),
+                        $"тик {tick}: фаза {p.LowerPhase} вышла за строки клипа {a} — петли нет");
+                    phasesSeenPastRest |= 1 << p.LowerPhase;
+                }
+            }
+            Assert.Greater(inTheMiddle, 0,
+                "премисса фикстуры: за двенадцать тиков s обязано побывать между внутренними порогами");
+            Assert.AreEqual(0b11, phasesSeenPastRest,
+                "фаза локомоции не идёт по строкам клипа (0, 1, 0, 1 на двухстрочных клипах) — производитель её не двигает (M341)");
+            // And the share is the SHARE, not s: at the last tick s sits past
+            // the second threshold, where the two numbers differ by construction.
+            // ⛔ THE LAST TICK'S PAIR IS WRITTEN BY HAND, not by the loop above
+            // (which re-spells the producer's bracket and would agree with it
+            // on a shared mistake): after twelve ticks flat out s is past
+            // 0.66 -- 0.95 on the fixture numbers (T6a's own chain) -- and
+            // under 1, so the pair is the tree's THIRD and FOURTH children,
+            // Jog_Fwd_Loop and Sprint_Loop.
+            PlayerState last = w.PlayerAt(0);
+            Assert.That(last.LowerBlend, Is.InRange(t[2], 1f - 1e-6f),
+                "премисса: к концу разгона s между третьим порогом и единицей");
+            Assert.AreEqual(BakedClips.Collector.Tree[2], last.LowerClipA, "последний тик: клип A — не третий ребёнок дерева");
+            Assert.AreEqual(BakedClips.Collector.Tree[3], last.LowerClipB, "последний тик: клип B — не четвёртый ребёнок дерева");
+            Assert.Greater(last.LowerBlend, t[1], "премисса: к концу разгона s выше первого внутреннего порога");
+            Assert.AreNotEqual((byte)math.round(last.LowerBlend * 255f), last.LowerShare,
+                "доля равна s — она обязана считаться по порогам пары, а не копировать параметр дерева");
+        }
+
+        [Test]
+        public void ATiltedMobIsShotWhereItLies()   // fixture 26, witness of M353
+        {
+            // ⭐⭐ THE TILT ENTERS THE POSE AND THE VOLUMES FOLLOW IT: a mob
+            // lying at 85 degrees is shot LYING, not standing. The lying
+            // chaser's chest capsule (0.83 m wide) rests 0.12 m above the
+            // ground, spread along the side he fell to, 0.6 m wide of his axis
+            // on either side; standing, that same lateral line at that height
+            // meets nothing -- his shins end 0.55 m out and his chest floor is
+            // 0.40 m up. ⚠ THE PLAN'S NUMBERS (0.185 / 0.511 / 0.695) WERE OF AN
+            // OLDER TABLE and put the shot down the axis, where the standing
+            // shins are hit at any height under 0.6; recomputed on the T4b rig.
+            const int ChestBone = 2;                               // Chest in ChaserRestPose
+            const float Tilt85 = 1.4835f;                          // 85 degrees, past TiltFallAngle 0.9
+            const float Aside = -0.6f;                             // plan y of the line
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);   // BEFORE the constructor
+            float3 chest = cfg.Chaser.Poses.Bones[ChestBone];
+            // The chest bone's height once laid over towards +x: its height
+            // times cos, LESS its plan offset along the fall times sin (the
+            // side of the axis it stands on rises as the body goes down) --
+            // 1.3567 * cos 85 + 0.0182 * sin 85 = 0.136 on this rig. The line
+            // through it hits the 0.83 m capsule with 0.5 m to spare either way.
+            float lyingHeight = chest.y * math.cos(Tilt85) - chest.x * math.sin(Tilt85);
+
+            int ShotsLanded(float2 tilt)
+            {
+                var w = new SimulationWorld(26, cfg);
+                w.SpawnMobForTest(MobType.Chaser, new float2(8f, 0f));
+                var m = w.Mobs[0];
+                m.Dir = new float2(0f, 1f);   // the table's own orientation
+                m.Tilt = tilt;
+                m.TiltVel = float2.zero;
+                w.SetMobForTest(0, m);
+                int before = w.StatsAt(0).ShotsHit;
+                // Spawned CLOSE: the tilt spring keeps settling the lean
+                // every tick (FreezeArchetype zeroes MaxSpeed/Accel, not the
+                // spring), so the round has to judge the lean it was given.
+                ShootAlongX(w, in cfg, fromX: 7.2f, y: Aside, height: lyingHeight);
+                TestWorlds.RunUntilProjectilesDie(w);
+                return w.StatsAt(0).ShotsHit - before;
+            }
+
+            // PREMISE, A WORLD OF ITS OWN: standing, the same round is a miss,
+            // or the fixture is green without any tilt in the pose.
+            Assert.AreEqual(0, ShotsLanded(float2.zero),
+                "премисса фикстуры: по стоящему телу этот выстрел обязан быть промахом");
+            Assert.AreEqual(1, ShotsLanded(new float2(Tilt85, 0f)),
+                "выстрел в грудь лежащего тела прошёл мимо — объёмы остались стоять, крен в позу не вошёл (M353)");
+        }
+
+        [Test]
+        public void ATiltedMobIsNotImmuneToFlatFire()   // fixture 26a, witness of M441 (spec risk Р-K)
+        {
+            // ⛔ THE PRICE OF WITHDRAWING Р375, PAID IN FULL: with the volumes
+            // going down with the body, a toppled mob MUST NOT become
+            // unhittable by flat fire -- and the way it WOULD is not the
+            // volumes but the BROAD PHASE. The gather circle (GatherRadius,
+            // rule 9) is the reach of a STANDING body; at exactly
+            // TiltFallAngle (0.9 rad, the number "toppled" means here) the
+            // chaser's chest lies 1.06 m along the fall, past that circle,
+            // and a round fired ACROSS the fallen body through its chest at
+            // muzzle height never enters the standing circle at all. A gather
+            // that keeps the standing circle for a leaning body never asks
+            // the volumes about him: immune. ⚠ The plan's 26a fired DOWN the
+            // axis from behind the body, through the standing circle, where
+            // the lying chest (0.83 m wide) is met from inside the circle on
+            // any gather -- and an upright body is met at 1.0 m too, so it
+            // witnessed nothing and had no red phase. This one has both.
+            const int ChestBone = 2;
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            float3 chest = cfg.Chaser.Poses.Bones[ChestBone];
+            float fall = cfg.Chaser.TiltFallAngle;
+            float2 body = new float2(8f, 0f);
+
+            // Premises IN NUMBERS: the lying chest's crown covers the muzzle
+            // line (or a miss would be physics), and the line across it lies
+            // OUTSIDE the standing gather circle (or the broad phase would
+            // find it standing and the witness would be blind).
+            float chestTop = chest.y * math.cos(fall) + cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius;
+            Assert.Greater(chestTop, cfg.Hero.MuzzleHeight,
+                "премисса фикстуры: на этом крене линия дула обязана пересекать корпус");
+            float chestAlong = chest.y * math.sin(fall) + chest.x * math.cos(fall);
+            Assert.Greater(chestAlong + 0.3f, cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: линия поперёк лежащего корпуса проходит ВНЕ круга охвата стоящего тела");
+
+            var w = new SimulationWorld(26, cfg);
+            w.SpawnMobForTest(MobType.Chaser, body);
+            var m = w.Mobs[0];
+            m.Dir = new float2(0f, 1f);   // the table's own orientation
+            m.Tilt = new float2(fall, 0f);   // exactly the fall threshold, towards +x
+            m.TiltVel = float2.zero;
+            w.SetMobForTest(0, m);
+            int before = w.StatsAt(0).ShotsHit;
+            // Flat fire ACROSS the fallen body: down +y, through the chest's
+            // plan, at the collector's muzzle height, spawned close for the
+            // reason fixture 26 gives.
+            // 0.3 m further along the fall than the chest bone itself: still
+            // deep inside the 0.83 m capsule, and 0.3 m clear of the standing
+            // circle's edge rather than a hundredth.
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(body.x + chestAlong + 0.3f, -1.2f),
+                new float2(0f, cfg.Weapon.ProjectileSpeed), cfg.Hero.MuzzleHeight, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
+            TestWorlds.RunUntilProjectilesDie(w);
+            Assert.AreEqual(before + 1, w.StatsAt(0).ShotsHit,
+                "опрокинутый моб стал непоражаемым настильным огнём — широкая фаза держит круг стоящего тела (M441)");
+        }
+
+        [Test]
+        public void TheMemoAnswersFreshOnceAndForgetsOnInvalidate()   // PoseMemo's contract, witness of M445
+        {
+            // The memo's whole contract on one screen: an entry is fresh only
+            // for a second reader in the same generation, each (slot, depth)
+            // pair is its own entry, and Invalidate forgets them all at once.
+            // The world bumps the generation after PoseSystem moves the mobs'
+            // keys (a catch-up step inside the weapon phase samples before
+            // that) and on RestoreState; a memo that forgot to forget would
+            // hand a round yesterday's pose with today's stamp.
+            var memo = new PoseMemo(bodies: 2, depths: 3, maxBones: 4);
+            float3[] a = memo.Entry(1, 2, out bool fresh);
+            Assert.IsFalse(fresh, "первое чтение записи обязано быть несвежим");
+            Assert.AreEqual(4, a.Length, "буфер записи — на самое широкое тело");
+            Assert.AreSame(a, memo.Entry(1, 2, out fresh), "второе чтение той же пары — тот же буфер");
+            Assert.IsTrue(fresh, "второе чтение той же пары в том же поколении обязано быть свежим");
+            memo.Entry(1, 1, out fresh);
+            Assert.IsFalse(fresh, "другая глубина того же тела — другая запись (ключ — пара)");
+            memo.Invalidate();
+            memo.Entry(1, 2, out fresh);
+            Assert.IsFalse(fresh, "после Invalidate ни одна запись не свежа (M445)");
+        }
+
+        [Test]
+        public void TheBakedClipPositionsAreTheBakersOwn()   // instrument: BakedClips against PoseBaker.BakeSet
+        {
+            // ⛔⛔ THE POSITIONS THE PRODUCER NAMES, RE-MEASURED. BakedClips is
+            // a list of numbers the baker's ordering fixes; nothing in a table
+            // can confirm them, so this reads the CONTROLLERS the baker walks
+            // (the same BakeSet, the same take names) and the COMMITTED tables'
+            // clip counts, and prints the whole order on every mismatch -- the
+            // measurement itself, not a hint. ⚠ AN INSTRUMENT, green on the
+            // committed tree by construction; what it guards is a controller
+            // gaining or losing a clip.
+            SimConfig shipped = EditorBootstrapUtils.BuildShippedConfig();
+            foreach (AnimatorCatalog.BodyEntry body in AnimatorCatalog.Bodies)
+            {
+                var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(body.PrefabPath);
+                Assert.IsNotNull(prefab, $"{body.Kind}: префаб не найден");
+                GameObject instance = Object.Instantiate(prefab);
+                try
+                {
+                    var animator = instance.GetComponentInChildren<Animator>(true);
+                    var takes = new List<string>();
+                    foreach (AnimationClip c in PoseBaker.BakeSet(animator))
+                        takes.Add(AnimatorCatalog.TakeOf(c.name));
+                    string order = string.Join(", ", takes);
+
+                    ref readonly PoseTable table = ref ShippedTableOf(in shipped, body.Kind);
+                    Assert.AreEqual(takes.Count, PoseTable.ClipCount(in table),
+                        $"{body.Kind}: коммитнутая таблица несёт не столько клипов, сколько набор пекаря [{order}]");
+
+                    if (body.Kind == AnimatorCatalog.BodyKind.Collector)
+                    {
+                        Assert.AreEqual(AnimatorCatalog.CollectorIdleClip, takes[BakedClips.Rest],
+                            $"сборщик: клип покоя не на месте [{order}]");
+                        Assert.AreEqual(AnimatorCatalog.PackClipOf(Ring.Presentation.AnimIds.SlideLoopName),
+                            takes[BakedClips.Collector.Slide], $"сборщик: слайд не на месте [{order}]");
+                        int child = 0;
+                        foreach (AnimatorCatalog.Entry e in AnimatorCatalog.LocomotionChildren())
+                        {
+                            Assert.AreEqual(e.PackClip, takes[BakedClips.Collector.Tree[child]],
+                                $"сборщик: ребёнок дерева {child} не на месте [{order}]");
+                            child++;
+                        }
+                        Assert.AreEqual(BakedClips.Collector.Tree.Length, child, "сборщик: детей дерева четыре");
+                        Assert.AreEqual(Ring.Presentation.AnimIds.PistolAimNeutralName,
+                            takes[BakedClips.Collector.AimNeutral], $"сборщик: поза прицела не на месте [{order}]");
+                        Assert.AreEqual(takes.Count - 1, BakedClips.Collector.Death,
+                            $"сборщик: смерть обязана быть последней [{order}]");
+                        Assert.AreEqual(AnimatorCatalog.PackClipOf(Ring.Presentation.AnimIds.DeathName),
+                            takes[BakedClips.Collector.Death], $"сборщик: клип смерти не на месте [{order}]");
+                        continue;
+                    }
+
+                    // The mobs: which pack a body's controller came out of is
+                    // measured against the generated controllers (AnimIds' own
+                    // doc): the mechs for the two wave mobs, the Sci-Fi kit for
+                    // the elite and the Director.
+                    MobType type = MobTypeOf(body.Kind);
+                    Ring.Presentation.AnimIds.MobClipSet clips = Ring.Presentation.AnimIds.ClipsFor(
+                        type == MobType.Chaser || type == MobType.Gunner
+                            ? Ring.Presentation.AnimIds.MobClipFamily.Mech
+                            : Ring.Presentation.AnimIds.MobClipFamily.SciFiEnemy);
+                    Assert.AreEqual(clips.Idle, Animator.StringToHash(takes[BakedClips.Rest]),
+                        $"{body.Kind}: клип покоя не на месте [{order}]");
+                    Assert.AreEqual(clips.Melee, Animator.StringToHash(takes[BakedClips.MeleeOf(type)]),
+                        $"{body.Kind}: удар не на месте [{order}]");
+                    Assert.AreEqual(clips.Ranged, Animator.StringToHash(takes[BakedClips.RangedOf(type)]),
+                        $"{body.Kind}: выстрел не на месте [{order}]");
+                    Assert.AreEqual(clips.Death, Animator.StringToHash(takes[takes.Count - 1]),
+                        $"{body.Kind}: смерть обязана быть последней [{order}]");
+                }
+                finally
+                {
+                    Object.DestroyImmediate(instance);
+                }
+            }
+        }
+
+        static ref readonly PoseTable ShippedTableOf(in SimConfig cfg, AnimatorCatalog.BodyKind kind)
+        {
+            switch (kind)
+            {
+                case AnimatorCatalog.BodyKind.Collector: return ref cfg.Hero.Poses;
+                default: return ref SimConfig.MobConfigFor(in cfg, MobTypeOf(kind)).Poses;
+            }
+        }
+
+        static MobType MobTypeOf(AnimatorCatalog.BodyKind kind) => kind switch
+        {
+            AnimatorCatalog.BodyKind.Chaser => MobType.Chaser,
+            AnimatorCatalog.BodyKind.Gunner => MobType.Gunner,
+            AnimatorCatalog.BodyKind.Elite => MobType.Elite,
+            AnimatorCatalog.BodyKind.Director => MobType.Director,
+            _ => throw new System.ArgumentOutOfRangeException(nameof(kind), kind, "not a mob"),
+        };
     }
 }

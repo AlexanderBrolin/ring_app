@@ -148,6 +148,10 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.Open();
             cfg.Gunner.MaxSpeed = 0f; cfg.Gunner.Accel = 0f;   // the ONLY freeze — see class doc
             cfg.Elite.MaxSpeed = 0f; cfg.Elite.Accel = 0f;
+            // app-94sk T6b: both fight at range and square up to the shooter
+            // by the course law (T5c) whatever FaceTheTable sets; a zero turn
+            // rate (a config number since T5b) holds them as their tables stand.
+            cfg.Gunner.MobTurnDegPerSec = 0f; cfg.Elite.MobTurnDegPerSec = 0f;
             var w = new SimulationWorld(7, cfg);
             TestWorlds.SpawnMobsAt(w,
                 (MobType.Gunner, new float2(6f, 0f)),
@@ -157,6 +161,11 @@ namespace Ring.Simulation.Tests
                 var mi = w.Mobs[i];
                 mi.Vel = float2.zero;
                 w.SetMobForTest(i, mi);
+                // app-94sk T6b: both bodies stand as their tables stand -- the
+                // level round at 1.0 m meets their LEGS, which straddle the
+                // line while the table faces +y and step aside once the body
+                // turns to face the shooter (TestWorlds.FaceTheTable's doc).
+                TestWorlds.FaceTheTable(w, i);
             }
 
             TestWorlds.FireAimed3D(w, float2.zero, muzzleH: 1f,

@@ -31,7 +31,7 @@ namespace Ring.Simulation.Tests
             // calls BuildShipped would go red ON SOMEBODY ELSE'S SUBJECT.
             // ⚠ THE COLLECTOR NEEDS TWO CLIPS, and that is not decoration:
             // rule 16 reads the crown of the SLIDE clip through
-            // ClipFirstRow[SlideClipIndex], and on a one-clip table that index
+            // ClipFirstRow[BakedClips.Collector.Slide], and on a one-clip table that index
             // is the row-count sentinel — the read would run past the bones.
             // ⛔⛔ app-saqr (T4b): A TABLE MUST MATCH THE LAYOUT THAT ADDRESSES
             // IT, and that is what decides which one goes here — not the slot's
@@ -729,9 +729,9 @@ namespace Ring.Simulation.Tests
             // green for the wrong reason.
             hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
             ref PoseTable t = ref PoseTableFor(hero);
-            int slideRow = t.ClipFirstRow[TestConfigs.SlideClipIndex];
+            int slideRow = t.ClipFirstRow[BakedClips.Collector.Slide];
             float slideCrown = Ring.Simulation.Combat.HitParts.PoseTop(
-                hero.Parts, in t, slideRow, float2.zero);
+                hero.Parts, in t, slideRow);
             Assert.Greater(slideCrown, 0f,
                 "премисса фикстуры: у клипа слайда есть крона, иначе нарушать нечего");
             hero.SlideMuzzleHeight = slideCrown + 0.1f;

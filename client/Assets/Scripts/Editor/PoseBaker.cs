@@ -41,9 +41,9 @@ namespace Ring.Editor
     ///                       validation rule 16 can ask for the slide's crown
     ///                       at all. A table carries no clip NAMES, so "which
     ///                       row is the slide" has to be a POSITION;
-    ///                       `SimConfigBuilder.SlideClipIndex` and
-    ///                       `TestConfigs.SlideClipIndex` are the two readers
-    ///                       of this half of the contract, and the rule stands
+    ///                       `BakedClips.Collector.Slide` is the one home
+    ///                       of this half of the contract (rule 16 and the
+    ///                       fixtures both read it), and the rule stands
     ///                       down on a body whose table never reached clip 1
     ///                       (every mob);
     ///   the LAST clip     — death / shutdown, so "every row except the last
@@ -779,7 +779,7 @@ namespace Ring.Editor
         /// DEAD body is read by `PersistentPropsDirector` for the heights it
         /// spawns debris at, so the death take has to be IN the table — while
         /// staying OUT of the `GatherRadius` maximum.
-        static List<AnimationClip> BakeSet(Animator animator)
+        internal static List<AnimationClip> BakeSet(Animator animator)
         {
             var set = new List<AnimationClip>();
             if (animator == null) return set;

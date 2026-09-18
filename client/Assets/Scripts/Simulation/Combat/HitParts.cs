@@ -138,14 +138,20 @@ namespace Ring.Simulation.Combat
         ///
         /// ⚠ HEIGHT IS `.y` HERE because the bones are in the BODY frame; the
         /// answer is a height, which is frame-free.
-        /// ⛔ `bodyTilt` IS DECLARED AND NOT READ — SAID PLAINLY RATHER THAN
-        /// IMPLIED. It will matter in T6b, where a leaning body stops presenting
-        /// an upright crown; it is carried from here so the call sites of Resolve
-        /// and this method are not re-signed twice. Until then it changes
-        /// nothing, and every caller passes float2.zero.
-        /// ⛔ ITS POSE PARAMETERS MIGRATE TOGETHER WITH HitVolumes.Resolve: in
-        /// T6b `int poseRow` becomes the blended `float3[] pose` in BOTH.
-        public static float PoseTop(HitPart[] parts, in PoseTable table, int poseRow, float2 bodyTilt)
+        ///
+        /// ⛔ TWO FORMS SINCE app-94sk T6b, AND THEY ANSWER TWO READERS. This
+        /// one takes a ROW of the table and serves validation rule 16
+        /// (SimConfigBuilder asks the slide's crown at
+        /// `ClipFirstRow[BakedClips.Collector.Slide]`, in the rest of a state
+        /// with no tilt and no blend) and the fixtures that pin that rule. The
+        /// overload below takes a READY pose -- the blend of two rows with
+        /// the aim layer over it, which one row index cannot name -- and
+        /// serves the height gate inside HitVolumes.Resolve. The `bodyTilt`
+        /// parameter T2 carried here "for T6b" is gone: a leaning body's crown
+        /// is not a function of the untilted pose's heights (every bone turns
+        /// by its own plan offset), and Resolve answers that case by not
+        /// asking the gate at all (its own doc).
+        public static float PoseTop(HitPart[] parts, in PoseTable table, int poseRow)
         {
             if (parts == null || parts.Length == 0) return 0f;
             if (table.Bones == null || table.BoneCount <= 0) return 0f;
@@ -170,6 +176,26 @@ namespace Ring.Simulation.Combat
                 float a = table.Bones[rowBase + part.BoneA].y;
                 float b = table.Bones[rowBase + part.BoneB].y;
                 top = math.max(top, math.max(a, b) + part.Radius);
+            }
+            return top;
+        }
+
+        /// The crown of a READY pose -- `pose[0..boneCount)` as PoseTable.Sample
+        /// wrote it (body frame, height in `.y`). Same guards as the row form
+        /// above and for the same reason; `boneCount` is the table's, because
+        /// a memo buffer is as wide as the widest body and keeps a previous
+        /// tenant's bones past this body's count.
+        public static float PoseTop(HitPart[] parts, float3[] pose, int boneCount)
+        {
+            if (parts == null || parts.Length == 0) return 0f;
+            if (pose == null || boneCount <= 0 || pose.Length < boneCount) return 0f;
+
+            float top = float.NegativeInfinity;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                HitPart part = parts[i];
+                if (part.BoneA >= boneCount || part.BoneB >= boneCount) continue;
+                top = math.max(top, math.max(pose[part.BoneA].y, pose[part.BoneB].y) + part.Radius);
             }
             return top;
         }

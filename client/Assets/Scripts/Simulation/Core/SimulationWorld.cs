@@ -209,6 +209,17 @@ namespace Ring.Simulation.Core
         // array to its last slot and still not overflow. It is the one slot of
         // slack described above, kept rather than quietly spent.
         readonly (float t, int kind, int index)[] _projCandidates;
+        // app-94sk T6b (spec §3.7): the per-tick memo of sampled poses the
+        // narrow phase reads its READY pose from -- one bone buffer per
+        // (rewind slot, rewind depth), stamped by GENERATION (not by tick --
+        // PoseMemo's own doc on the catch-up step). RECOMPUTED FROM
+        // SCRATCH EVERY TICK, i.e. NOT canonical state, and DELIBERATELY
+        // EXCLUDED FROM SaveState/RestoreState AND StateHash, exactly as
+        // _sepForces and _projCandidates above (the exclusion is stated per
+        // field, spec §3.7 B-M1); RestoreState only forgets its stamps. Sized
+        // to the arena's caps and the widest body of the configuration, never
+        // grown -- see PoseMemo's own doc.
+        readonly PoseMemo _poseMemo;
         // Stage 3 Task 3 (spec §3.6): ground pickups — same capped-array/
         // swap-remove shape as _mobs/_projectiles above (rule 4). Sized to
         // Arena.MaxPickups at construction; ArenaTopologyMatches rejects a
@@ -436,6 +447,13 @@ namespace Ring.Simulation.Core
             _projectiles = new ProjectileState[config.Arena.MaxProjectiles];
             _projCandidates = new (float t, int kind, int index)[
                 config.Arena.MaxMobs + config.Arena.MaxPlayers + 3];
+            // app-94sk T6b: one entry per body per rewind depth (the present
+            // plus RewindCapTicks ticks back -- the same row count the history
+            // ring is built with a few lines up), each as wide as the widest
+            // body. At least one bone, so a table-less fixture configuration
+            // still builds a world.
+            _poseMemo = new PoseMemo(config.Arena.MaxMobs + config.Arena.MaxPlayers,
+                config.Arena.RewindCapTicks + 1, math.max(1, SimConfig.MaxBoneCount(in config)));
             // Stage 3 Task 3: same "preallocated to the arena cap, never
             // grown" contract as _mobs/_projectiles above.
             _pickups = new PickupState[config.Arena.MaxPickups];
@@ -523,6 +541,13 @@ namespace Ring.Simulation.Core
             // renegotiation).
             MobAiSystem.Update(this);
             SeparationSystem.Apply(this, _players);
+            // app-94sk T6b (spec §3.7): the mobs' pose keys, AFTER the FSM has
+            // decided this tick's state and BEFORE the rounds are judged --
+            // the pose a round meets is this tick's, and _history.Write at
+            // the tail of the method finds it ready. The collector's key
+            // steps inside TickMovement above, on the path prediction shares
+            // (PoseSystem's own doc on the split).
+            PoseSystem.Update(this);
             ProjectileSystem.Update(this);
             // app-88jb Т5 (spec §3.2): the tilt spring steps HERE -- after
             // this tick's hits are resolved, so a body integrates from the
@@ -1394,6 +1419,13 @@ namespace Ring.Simulation.Core
         /// for where that bound comes from and for why the extra slot is slack
         /// rather than the difference between fitting and throwing.
         internal (float t, int kind, int index)[] ProjCandidates => _projCandidates;
+
+        /// app-94sk T6b (spec §3.7): the projectile system's pose memo -- the
+        /// buffer HitVolumes.Resolve reads a ready pose from, handed to it as a
+        /// parameter by the one system that owns the world's copy. See the
+        /// field's own doc for what it is not (state) and PoseMemo for what
+        /// it is.
+        internal PoseMemo PoseMemo => _poseMemo;
 
         /// WaveSystem's seam into ONE RING's wave director state (Task 22) —
         /// same ref-return pattern as SpreadRng/WaveRng, so the system
@@ -3083,6 +3115,14 @@ namespace Ring.Simulation.Core
                     $"SimulationWorld.RestoreState: save.Players.Length ({save.Players.Length}) must " +
                     $"match this world's PlayerCount ({_players.Length}).", nameof(save));
             }
+            // app-94sk T6b: the pose memo is not state and is not restored --
+            // its entries are forgotten, so that a world stepped back to tick
+            // T and forward again cannot find an entry already fresh and read
+            // a pose sampled off state a fixture changed in between (PoseMemo's
+            // own doc). Before the guards below can throw, because a memo that
+            // outlives a refused restore is as stale as one that outlives an
+            // accepted one.
+            _poseMemo.Invalidate();
             if (save.Stats.Length != _matchStats.Length)
             {
                 throw new System.ArgumentException(
@@ -3545,9 +3585,14 @@ namespace Ring.Simulation.Core
             // ⚠ THIS MOVES THE THREE GOLDEN DIGESTS AGAIN -- expected (plan 1
             // §3.2's class of movement); the pins are Н44's and move once, at
             // T-W1.
+            // ⚠ ELEVEN SINCE app-94sk T6b: `LowerShare`, the share within the
+            // pair, folded beside the pair it qualifies (PlayerState's own
+            // block for why it is a second quantity and not `LowerBlend`
+            // rounded).
             h = StateHash64.Add(h, p.LowerPhase); h = StateHash64.Add(h, p.ReactionPhase);
             h = StateHash64.Add(h, p.LowerBlend);
             h = StateHash64.Add(h, (int)p.LowerClipA); h = StateHash64.Add(h, (int)p.LowerClipB);
+            h = StateHash64.Add(h, (int)p.LowerShare);
             h = StateHash64.Add(h, (int)p.UpperClip); h = StateHash64.Add(h, (int)p.UpperWeight);
             h = StateHash64.Add(h, (int)p.ReactionClip); h = StateHash64.Add(h, (int)p.ReactionDir);
             h = StateHash64.Add(h, p.ReactionCooldown);
@@ -3599,10 +3644,12 @@ namespace Ring.Simulation.Core
             //      later, and the sanctioned re-pins are counted. Joining now
             //      spends the re-pin this epic has already budgeted (Т34)
             //      instead of asking for a second one.
-            // None of that contradicts Р375/Р383 -- tilt still decides no hit
-            // resolution and still never rides the wire; the digest is about
-            // what the SERVER must replay identically, not about what the
-            // client is told.
+            // None of that contradicts Р383 -- tilt still never rides the
+            // wire; the digest is about what the SERVER must replay
+            // identically, not about what the client is told. (Р375 is
+            // WITHDRAWN since app-94sk T6b: the hit volumes go down with the
+            // body, HitVolumes.Place, so tilt decides hit resolution now --
+            // one more reason it has to be in the digest.)
             // Both components since app-94sk T5a, on HashPlayer's own account
             // above — the `float2` overload, not `.x` (mutation M391).
             // ⚠ "CLOSES THE FOLD" STOPPED BEING TRUE AT app-94sk T6a: the pose

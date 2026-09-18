@@ -451,6 +451,15 @@ namespace Ring.Simulation.Movement
             float speed01 = math.saturate(math.length(p.Vel) / hero.MaxSpeed);
             float k = hero.SpeedDampTime > dt ? dt / hero.SpeedDampTime : 1f;
             p.LowerBlend += (speed01 - p.LowerBlend) * k;
+
+            // app-94sk T6b (spec §3.6/§3.7): THE REST OF THE POSE KEY -- the
+            // clips, the phase, the share and the aim layer -- off the damper
+            // and the slide clock this method just settled, HERE and not in
+            // TickAll, because this is the path PlayerPrediction.Step runs
+            // too: a producer on the world's side alone would leave the
+            // predicted copy in the rest pose and turn the parity sweep red
+            // on the first written tick (PoseSystem's own doc).
+            PoseSystem.StepCollector(ref p, in hero);
             return result;
         }
 
@@ -497,6 +506,10 @@ namespace Ring.Simulation.Movement
             float2 target = p.Pos + p.Vel * dt;
             MoveWithCollisions(ref p.Pos, ref p.Vel, target, hero.Radius, cfg.Arena,
                 out _, out _, out _);
+            // app-94sk T6b (spec §3.5а): a corpse has a pose too -- the death
+            // take, counted from the tick of death -- and it is stepped from
+            // the same producer the live body uses, which reads `Alive`.
+            PoseSystem.StepCollector(ref p, in hero);
         }
 
         /// ONE TICK OF A BODY'S COURSE (app-94sk T5c): turns `dir` towards

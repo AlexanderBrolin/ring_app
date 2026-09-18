@@ -2,6 +2,7 @@ using NUnit.Framework;
 using Ring.Simulation.Combat;
 using Ring.Simulation.Core;
 using Unity.Mathematics;
+using UnityEngine;   // app-94sk T6b: Quaternion/Vector3, the doll's own arithmetic, replicated by two pins
 
 namespace Ring.Simulation.Tests
 {
@@ -129,7 +130,7 @@ namespace Ring.Simulation.Tests
             // body stands at plan (6, 0); the ray crosses it along y from -1.2 to
             // +1.2 while climbing from 1.6 to 2.4.
             float3 p0 = new float3(6f, -1.2f, 1.6f), p1 = new float3(6f, 1.2f, 2.4f);
-            bool hit = HitVolumes.Resolve(parts, in table, poseRow: 0, bodyTilt: float2.zero,
+            bool hit = HitVolumes.Resolve(parts, in table, TestWorlds.RestPoseOf(in table), bodyTilt: float2.zero,
                 bodyOrigin: new float3(6f, 0f, 0f), bodyFacingSin: 0f, bodyFacingCos: 1f,
                 p0, p1, projRadius: cfg.Weapon.ProjectileRadius,
                 out HitZone zone, out _, out _, out _, out float t);
@@ -137,7 +138,7 @@ namespace Ring.Simulation.Tests
             Assert.AreEqual(HitZone.Head, zone, "корпус отобрал попадание у головы — приоритета зоны нет");
             // Premise AS A PROPERTY: the torso must be struck EARLIER, or the test
             // is green without a priority ladder at all.
-            bool torsoFirst = HitVolumes.Resolve(new[] { parts[1] }, in table, 0, float2.zero,
+            bool torsoFirst = HitVolumes.Resolve(new[] { parts[1] }, in table, TestWorlds.RestPoseOf(in table), float2.zero,
                 new float3(6f, 0f, 0f), 0f, 1f, p0, p1, cfg.Weapon.ProjectileRadius,
                 out _, out _, out _, out _, out float tTorso);
             Assert.IsTrue(torsoFirst && tTorso < t,
@@ -170,14 +171,14 @@ namespace Ring.Simulation.Tests
             // ⛔⛔ THE PREMISE IS "BOTH ARE STRUCK, AND BOTH AT t == 0", AND WITHOUT
             // IT MUTANT M334 SURVIVES: if only one capsule is struck, the answer
             // "3" is right on a reversed comparison too. So each is asked alone.
-            bool hitFirst = HitVolumes.Resolve(new[] { parts[0] }, in table, 0, float2.zero,
+            bool hitFirst = HitVolumes.Resolve(new[] { parts[0] }, in table, TestWorlds.RestPoseOf(in table), float2.zero,
                 float3.zero, 0f, 1f, p0, p1, 0f, out _, out _, out _, out _, out float tFirst);
-            bool hitSecond = HitVolumes.Resolve(new[] { parts[1] }, in table, 0, float2.zero,
+            bool hitSecond = HitVolumes.Resolve(new[] { parts[1] }, in table, TestWorlds.RestPoseOf(in table), float2.zero,
                 float3.zero, 0f, 1f, p0, p1, 0f, out _, out _, out _, out _, out float tSecond);
             Assert.IsTrue(hitFirst && hitSecond, "премисса: обе капсулы обязаны быть задеты");
             Assert.AreEqual(tFirst, tSecond, 1e-6f, "премисса: t обеих совпадают — иначе решает не PartId");
 
-            bool hit = HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+            bool hit = HitVolumes.Resolve(parts, in table, TestWorlds.RestPoseOf(in table), float2.zero, float3.zero, 0f, 1f,
                 p0, p1, 0f, out _, out _, out _, out byte partId, out float t);
             Assert.IsTrue(hit, "ни одна из двух капсул не задета — фикстура мерит не свой предмет");
             Assert.AreEqual(0f, t, 1e-6f, "шаг начинается внутри обеих: солвер обязан отдать t = 0");
@@ -213,24 +214,24 @@ namespace Ring.Simulation.Tests
             // ⛔ THE POSITIVE CONTROL FIRST, or all three refusals below are
             // true for the wrong reason -- a step that misses anyway refuses
             // with parts and a table just as readily as without them.
-            Assert.IsTrue(HitVolumes.Resolve(parts, in table, 0, float2.zero, origin, 0f, 1f,
+            Assert.IsTrue(HitVolumes.Resolve(parts, in table, TestWorlds.RestPoseOf(in table), float2.zero, origin, 0f, 1f,
                     p0, p1, projR, out HitZone zone, out _, out _, out _, out _),
                 "премисса фикстуры: с частями и таблицей этот шаг обязан попадать");
             Assert.AreNotEqual(HitZone.None, zone, "премисса фикстуры: попадание названо зоной");
 
-            Assert.IsFalse(HitVolumes.Resolve(System.Array.Empty<HitPart>(), in table, 0,
+            Assert.IsFalse(HitVolumes.Resolve(System.Array.Empty<HitPart>(), in table, TestWorlds.RestPoseOf(in table),
                     float2.zero, origin, 0f, 1f, p0, p1, projR,
                     out zone, out _, out _, out _, out _),
                 "пустой набор объёмов разрешён в попадание");
             Assert.AreEqual(HitZone.None, zone, "пустой набор вернул небезразличную зону");
 
-            Assert.IsFalse(HitVolumes.Resolve(null, in table, 0, float2.zero, origin, 0f, 1f,
+            Assert.IsFalse(HitVolumes.Resolve(null, in table, TestWorlds.RestPoseOf(in table), float2.zero, origin, 0f, 1f,
                     p0, p1, projR, out zone, out _, out _, out _, out _),
                 "отсутствующий набор объёмов разрешён в попадание");
             Assert.AreEqual(HitZone.None, zone, "отсутствующий набор вернул небезразличную зону");
 
             PoseTable empty = default;
-            Assert.IsFalse(HitVolumes.Resolve(parts, in empty, 0, float2.zero, origin, 0f, 1f,
+            Assert.IsFalse(HitVolumes.Resolve(parts, in empty, System.Array.Empty<float3>(), float2.zero, origin, 0f, 1f,
                     p0, p1, projR, out zone, out _, out _, out _, out _),
                 "тело без таблицы поз разрешено в попадание — кости объёмов не названы ничем");
             Assert.AreEqual(HitZone.None, zone, "тело без таблицы вернуло небезразличную зону");
@@ -274,7 +275,7 @@ namespace Ring.Simulation.Tests
             };
 
             // HIGH and a little ASIDE — where the bone actually stands.
-            Assert.IsTrue(HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+            Assert.IsTrue(HitVolumes.Resolve(parts, in table, TestWorlds.RestPoseOf(in table), float2.zero, float3.zero, 0f, 1f,
                     new float3(-2f, lateral, boneHeight), new float3(2f, lateral, boneHeight), projR,
                     out _, out _, out float hitHeight, out _, out _),
                 "кость не найдена там, где она стоит: высота тела не доехала до высоты мира");
@@ -283,10 +284,158 @@ namespace Ring.Simulation.Tests
 
             // ...and LOW, FAR ASIDE — where the bone would have gone had the two
             // components changed places.
-            Assert.IsFalse(HitVolumes.Resolve(parts, in table, 0, float2.zero, float3.zero, 0f, 1f,
+            Assert.IsFalse(HitVolumes.Resolve(parts, in table, TestWorlds.RestPoseOf(in table), float2.zero, float3.zero, 0f, 1f,
                     new float3(-2f, boneHeight, lateral), new float3(2f, boneHeight, lateral), projR,
                     out _, out _, out _, out _, out _),
                 "попадание засчитано по ЛЕЖАЩЕЙ кости — .y и .z обменялись местами в ToWorld");
+        }
+
+        // ------------------------------------------------ app-94sk T6b (spec §3.6/§3.8)
+
+        [Test]
+        public void ATurnedBodyPresentsItsLegsWhereItFaces()   // fixture 6, witness of M331
+        {
+            // ⭐⭐ THE TURN CHANGES THE OUTCOME. A chaser's legs stand 0.36-0.40 m
+            // off his axis, one to each side of his FORWARD; a level shot down
+            // the world's x axis through his origin crosses both legs while he
+            // faces +y (the table's own orientation) and passes BETWEEN them
+            // once he faces +x -- his legs now stand at y = +/-0.38, a
+            // shoulder-width off the line. Through the world, so the witness
+            // covers the caller handing the course to the resolver, not the
+            // resolver alone; the direct pin of the turn's arithmetic against
+            // the doll's is the next fixture.
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);   // BEFORE the constructor
+            const float shotHeight = 0.30f;   // under the chest capsule's floor (0.52 - 0.12), across the shins
+
+            HitZone Shoot(float2 course)
+            {
+                var w = new SimulationWorld(6, cfg);
+                w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+                var m = w.Mobs[0]; m.Dir = course; w.SetMobForTest(0, m);
+                w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(3f, 0f),
+                    new float2(cfg.Weapon.ProjectileSpeed, 0f), shotHeight, velZ: 0f,
+                    cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime);
+                TestWorlds.RunUntilProjectilesDie(w);
+                return TestEvents.TryFirstOf(w, SimEventKind.ProjectileHit, out SimEvent e)
+                    ? e.Zone : HitZone.None;
+            }
+
+            // PREMISE AS A PROPERTY: every leg volume the shot's height can
+            // meet stands further off the axis than the round reaches, or
+            // facing +x would still be a hit -- asked of the table, not
+            // written as a number.
+            int legsAtHeight = 0;
+            foreach (HitPart part in cfg.Chaser.Parts)
+            {
+                if (part.Zone != HitZone.Legs) continue;
+                if (part.RestBottom > shotHeight + cfg.Weapon.ProjectileRadius
+                    || part.RestTop < shotHeight - cfg.Weapon.ProjectileRadius) continue;
+                legsAtHeight++;
+                float offset = math.min(math.abs(cfg.Chaser.Poses.Bones[part.BoneA].x),
+                    math.abs(cfg.Chaser.Poses.Bones[part.BoneB].x));
+                // ⚠ TIGHT, AND SAID: the binding volume is the right shin,
+                // whose lower-leg bone stands 0.3605 off the axis against
+                // 0.2019 + 0.12 = 0.3219 -- 0.039 m; the actual crossing at
+                // 0.30 m clears the line by 0.048 m. Exact arithmetic on
+                // fixed numbers, not a flaky margin -- but a rig re-measure
+                // could close it, and this message is where that will show.
+                Assert.Greater(offset, part.Radius + cfg.Weapon.ProjectileRadius,
+                    $"премисса фикстуры: объём ног {part.PartId} стоит дальше от оси, чем достаёт снаряд "
+                    + $"(запас {offset - part.Radius - cfg.Weapon.ProjectileRadius:F3} м)");
+            }
+            Assert.Greater(legsAtHeight, 0, "премисса фикстуры: на высоте выстрела есть объёмы ног");
+
+            Assert.AreEqual(HitZone.Legs, Shoot(new float2(0f, 1f)),
+                "премисса фикстуры: тело курсом +y (ориентация таблицы) обязано подставить ноги под выстрел вдоль x");
+            Assert.AreEqual(HitZone.None, Shoot(new float2(1f, 0f)),
+                "тело курсом +x всё ещё подставляет ноги под выстрел вдоль x — объёмы не поворачиваются с телом (M331)");
+        }
+
+        [Test]
+        public void TheVolumesTurnTheWayTheDollTurns()   // the yaw law against Presentation's
+        {
+            // ⛔⛔ TWO HOMES OF ONE FACT, PINNED AGAINST EACH OTHER. The doll
+            // turns by `LookRotation(dirUnity, up) * AngleAxis(YawOffsetDeg,
+            // up)` (PlayerVisual.FacingAlong / MobVisual.Sync), with 180 deg
+            // for the collector's UAL2 rig and 0 for the mechs
+            // (GameFeelConfig's C# defaults, the test-side source of those two
+            // numbers). The hit volumes turn by HitVolumes.YawOf over
+            // BakedClips' rig forwards. If the two disagree, a collector's
+            // slide presents its legs where the doll shows its head.
+            // The doll's arithmetic is REPLICATED here on purpose (lesson 427):
+            // a pin that called Presentation's own method would prove that
+            // Presentation agrees with itself.
+            var feel = ScriptableObject.CreateInstance<Ring.Data.GameFeelConfig>();
+            try
+            {
+                // An off-axis, asymmetric bone and an off-axis, asymmetric
+                // course: a mirror or a 90-degree slip is visible on every
+                // component.
+                var bone = new float3(0.30f, 1.00f, 0.70f);
+                float2 course = math.normalize(new float2(0.6f, -0.8f));
+                AssertTurnsLikeTheDoll(bone, course, BakedClips.CollectorForward,
+                    feel.PlayerYawOffsetDeg, "сборщик");
+                AssertTurnsLikeTheDoll(bone, course, BakedClips.MobForward,
+                    feel.MechYawOffsetDeg, "мех");
+                // And the rest orientation is what every caller before T6b
+                // handed in: a mob facing +y turns by the identity.
+                HitVolumes.YawOf(new float2(0f, 1f), BakedClips.MobForward, out float s, out float c);
+                Assert.AreEqual(0f, s, 1e-6f, "курс +y у рига +z — тождественный поворот (sin)");
+                Assert.AreEqual(1f, c, 1e-6f, "курс +y у рига +z — тождественный поворот (cos)");
+            }
+            finally
+            {
+                Object.DestroyImmediate(feel);
+            }
+        }
+
+        static void AssertTurnsLikeTheDoll(float3 bone, float2 course, float2 rigForward,
+            float yawOffsetDeg, string body)
+        {
+            Vector3 dirUnity = new Vector3(course.x, 0f, course.y);   // SimSpace.ToWorld's own mapping
+            Quaternion facing = Quaternion.LookRotation(dirUnity, Vector3.up)
+                * Quaternion.AngleAxis(yawOffsetDeg, Vector3.up);
+            Vector3 doll = facing * new Vector3(bone.x, bone.y, bone.z);
+
+            HitVolumes.YawOf(course, rigForward, out float s, out float c);
+            float3 ours = HitVolumes.ToWorld(bone, float3.zero, s, c, float2.zero);
+            Assert.AreEqual(doll.x, ours.x, 1e-4f, $"{body}: план x объёма разошёлся с куклой");
+            Assert.AreEqual(doll.z, ours.y, 1e-4f, $"{body}: план y объёма разошёлся с куклой (Unity z)");
+            Assert.AreEqual(doll.y, ours.z, 1e-4f, $"{body}: высота объёма разошлась с куклой");
+        }
+
+        [Test]
+        public void ALeanIsAppliedInTheWorldAfterTheTurn()   // the tilt's order and sign against the doll's
+        {
+            // ⛔⛔ THE ORDER IS A CONTRACT, AND THE PLAN'S SNIPPET HAD IT
+            // BACKWARDS: the doll composes `TiltRotation(m.Tilt) * facing`,
+            // tilt OUTERMOST, about an axis fixed in the WORLD (Cross(up,
+            // tiltDir)) -- because `Tilt` says which way in the world the body
+            // goes down, not which way in its own frame. Applied in the body
+            // frame first, a turned body would fall a quarter turn off the
+            // side the blow sent it. A body turned to face +x and leaning
+            // towards +x: a bone standing on its axis at height 1 has to land
+            // sin(0.9) towards +x and cos(0.9) high, whichever way the body
+            // faces. Replicated, not called, for the reason the pin above
+            // gives.
+            var bone = new float3(0f, 1f, 0f);
+            float2 course = new float2(1f, 0f);
+            float2 tilt = new float2(0.9f, 0f);
+            Vector3 tiltDirUnity = new Vector3(1f, 0f, 0f);
+            Quaternion facing = Quaternion.LookRotation(new Vector3(course.x, 0f, course.y), Vector3.up)
+                * Quaternion.AngleAxis(0f, Vector3.up);
+            Quaternion lean = Quaternion.AngleAxis(0.9f * Mathf.Rad2Deg,
+                Vector3.Cross(Vector3.up, tiltDirUnity));
+            Vector3 doll = (lean * facing) * new Vector3(bone.x, bone.y, bone.z);
+            Assert.AreEqual(math.sin(0.9f), doll.x, 1e-4f,
+                "премисса реплики: кукла кладёт макушку в сторону крена");
+
+            HitVolumes.YawOf(course, BakedClips.MobForward, out float s, out float c);
+            float3 ours = HitVolumes.ToWorld(bone, float3.zero, s, c, tilt);
+            Assert.AreEqual(doll.x, ours.x, 1e-4f, "крен положил кость не туда, куда кладёт кукла (план x)");
+            Assert.AreEqual(doll.z, ours.y, 1e-4f, "крен положил кость не туда, куда кладёт кукла (план y)");
+            Assert.AreEqual(doll.y, ours.z, 1e-4f, "крен не опустил кость на высоту куклы");
         }
     }
 }
