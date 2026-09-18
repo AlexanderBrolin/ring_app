@@ -3623,6 +3623,65 @@ p.LowerBlend += (speed01 - p.LowerBlend) * k;
   `Simulation/Combat/ProjectileSystem.cs` (передача ключа)
 - Modify: `Tests/EditMode/PoseTableTests.cs`, `HitVolumeTests.cs`, `HitPartsTests.cs`
 
+> ⛔⛔ **ЭРРАТА T6b — внесена сессией 114 при исполнении** (рулинг 419: эррата в разделе таска).
+> Найдено чтением кода до первой правки и кругом ревью; эвиденс — `$SDD/task-94sk-6b-t6b.md`.
+> - ⛔⛔ **Формула рыскания фикстуры 6 (`sin = Dir.y, cos = Dir.x`) НЕВЕРНА на 90°, для сборщика —
+>   на 270°.** Пекарь меряет кости в кадре корня префаба при identity, где риг мехов/Sci-Fi смотрит
+>   в +z (план симуляции +y), а UAL2 сборщика — в −z (`GameFeelConfig.PlayerYawOffsetDeg = 180`
+>   против `MechYawOffsetDeg = 0`); кукла поворачивается `LookRotation(dir) * AngleAxis(offset)`.
+>   Закон — `HitVolumes.YawOf(dir, rigForward)`: `cos = f·d`, `sin = f × d` над вперёд рига
+>   (`BakedClips.CollectorForward = (0, −1)`, `MobForward = (0, 1)`); пин против арифметики куклы —
+>   `HitVolumeTests.TheVolumesTurnTheWayTheDollTurns`; мутант M442 — формула плана.
+> - ⛔⛔ **Порядок «сперва крен, потом рыскание» в сниппете `ToWorld` ОБРАТЕН презентации**
+>   (`_visual.rotation = TiltRotation(m.Tilt) * facing` — крен внешний, ось фиксирована в мире):
+>   сниппет применял мировой вектор крена в кадре тела, и повёрнутое тело падало бы на четверть
+>   оборота в сторону. Реализовано: рыскание, потом крен в мире; пин —
+>   `ALeanIsAppliedInTheWorldAfterTheTurn`; мутант M443 — порядок сниппета.
+> - ⛔ **Широкая фаза слепа к крену:** `GatherRadius` снят со стоящих строк, а лежащая грудь чейзера на
+>   0.9 рад — на 1.05 м вдоль завала, за кругом 0.92. Заведён `HitVolumes.GatherRadiusFor` (охват по
+>   готовой позе, только для накренённых тел) в обеих широких фазах (`ProjectileSystem`, `AimLine`).
+>   **26а переписана:** плановая форма (вдоль оси из-за тела) зелена на любой реализации; теперь —
+>   выстрел ПОПЕРЁК лежащего корпуса вне стоящего круга, красная фаза есть, мутант — **M441**.
+>   **M354 в формулировке круга 4 эквивалентна M353** на всём наборе — не гоняется, названо.
+> - ⛔ **Развилка «`LowerBlend` = параметр дерева, `Sample` считает долю по порогам за одну строку»
+>   неисполнима:** пороги индексируются по ДЕТЯМ дерева, ключ несёт ИНДЕКСЫ КЛИПОВ (дети дерева
+>   сборщика — клипы 0/14/4/13). ⇒ +1 поле `PlayerState.LowerShare` (byte, доля в паре; Predicted; в
+>   хеше; расписка `WorldLifecycleTests` 198 → 200 скриптом); ключ пакует `LowerBlend = LowerShare`
+>   байт в байт. Спека §3.6 приравнивала float и byte — верно лишь на дереве {0, 1}.
+> - ⛔ **Индексы клипов — один дом `Simulation/Core/BakedClips.cs` (Create)**, по замеру порядка
+>   `PoseBaker.BakeSet` (приборная фикстура `TheBakedClipPositionsAreTheBakersOwn` перемеряет по
+>   пяти телам и коммитнутым таблицам); `SimConfigBuilder.SlideClipIndex` и `TestConfigs.SlideClipIndex`
+>   сняты. Там же — вперёд рига.
+> - ⛔ **Не названы, а обязательны:** `Simulation/Core/PoseSystem.cs` (Create — производитель),
+>   `Simulation/Core/PoseMemo.cs` (Create — мемо по паре `(HistorySlot, depth)`, штамп — поколение, не
+>   тик: catch-up шаги фазы оружия идут ДО сдвига ключей мобов), `PlayerMovementSystem.cs` (вызов
+>   производителя на общем пути + `UpdateDead`), `AimLine.cs` (+ `float3[] poseScratch`),
+>   **`Presentation/AimProvider.cs`** (чужая зона — контракт `app-j4fl`, поле + передача),
+>   `HitParts.cs` (форма `PoseTop` по готовой позе; `bodyTilt` у строковой формы снят),
+>   `SimConfig.cs` (`ClipCount/HasClip/RowsOf`, `MaxBoneCount`), `SimStates.cs`, `PoseKey.cs`,
+>   `Data/SimConfigBuilder.cs`, `Editor/PoseBaker.cs` (`BakeSet` internal), тесты `TestConfigs.cs`
+>   (`PaddedToClips`, `WithBoneMoved`, `Sealed` public), `TestWorlds.cs` (`RestPoseOf`,
+>   `FaceTheTable`), `AimLineTests.cs`, `AllocationTests.cs`, `PoseKeyTests.cs`,
+>   `PredictionParityTests.cs`, `WorldLifecycleTests.cs`, `ConfigTests.cs`, `ImpactKnockbackTests.cs`,
+>   `ProjectileHeightTests.cs`.
+> - ⚠ **Плановые числа фикстуры 26 (0.185 / 0.511 / 0.695) — от старой таблицы:** на T4b-риге
+>   выстрел вдоль оси задевает стоящие голени на любой высоте до 0.6; линия перенесена вбок на
+>   0.6 м (грудь r 0.83 накрывает, голени кончаются на 0.55). `ChestBone = 3` плана — это шея; грудь — 2.
+> - ⚠ **Курс тела теперь двигает объёмы, и фикстуры, заявляющие геометрию в кадре ТАБЛИЦЫ, говорят
+>   это явно:** `TestWorlds.FaceTheTable` (курс (0, 1)) в пяти фикстурах; у тел дальнего боя —
+>   `MobTurnDegPerSec = 0` (закон T5c доворачивает их к цели независимо от фикстуры).
+> - ⚠ **Клип локомоции моба симуляция не выбирает** (пороги `MobWalkEnterSpeed/MobRunEnterSpeed` —
+>   game feel по решению спеки §3.8) и выстрел (`Fire`) не играет (у состояния нет часов входа):
+>   покой + удар по часам `Telegraph` — side-quest `app-pks5`.
+> - ⚠ **Премисса `ExtractionScenario_ReachesTheWholeLoop` («стоит на DirectorActive») сдвинулась —
+>   сценарий доходит до `GateOpen`:** класс рулинга 377, обновляется замером первым шагом T-W1 (файл
+>   `DeterminismTests.cs` не тронут); красных на T-W1 — три эталона + она. `GoldenScenario_…Coverage`
+>   позеленела (peakTilt ушёл под 0.9).
+> - ⚠ **Бюджет «5 фикстур / 5 мутаций» устарел:** фикстур **12** (5 плана + пин рыскания против куклы,
+>   пин порядка крена, пара/доля/петля дерева, мёртвое тело, тейк/Downed моба, прибор позиций клипов,
+>   контракт мемо; `TiltedMob_KeepsItsUprightParts` переписана ±0), мутаций **11** (M331, M341, M348,
+>   M353 + M441–M447; M354 эквивалентна).
+
 - [ ] **Step 1 (RED, СЕМЬ фикстур):** 6 (поворот тела меняет исход), 17 (поза меняет исход + две
       строки: **мёртвое** и **опрокинутое** тело), 21 (два слоя сборщика), 23а (ключ несёт крен
       **на момент судейства**), 26 (крен входит в позу: лежащий моб простреливается лёжа),
