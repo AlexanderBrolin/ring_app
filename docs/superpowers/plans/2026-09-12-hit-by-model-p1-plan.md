@@ -3283,6 +3283,49 @@ public void TheMobsHeadingTurnsAtAFiniteRate()   // тест 32в, M364
   круга 2): файл заводит **T4** под фикстуры 27 и 28, и второй `Create` на тот же путь означал бы
   либо перезапись чужих тестов, либо `.meta`-конфликт
 
+> ⛔⛔ **ЭРРАТА СПИСКА `Files:` И БЮДЖЕТА — внесена сессией 113 при исполнении, как на T5b/T5c**
+> (рулинг 419: эррата в разделе таска, не перепись плана). Найдено чтением кода и кругом ревью:
+> - ⛔ **`Simulation/Core/PoseTable.cs` В ДЕРЕВЕ НЕТ ВОВСЕ** (урок 846): структура `PoseTable` живёт в
+>   `Simulation/Core/SimConfig.cs`, и `PoseTable.Sample` лёг туда же — статическим методом на самой
+>   структуре, по прецеденту `SimConfig.MobConfigFor` (правило 4).
+> - ⛔ **НЕ НАЗВАНЫ, А ОБЯЗАТЕЛЬНЫ:** `Simulation/Core/ByteCodecs.cs` (**Create**) и
+>   `Networking/Protocol/Quantize.cs`. `PoseKey.Facing` и байт веса — тот же закон, что `Quantize.Dir`/
+>   `Unit`, а `Ring.Simulation` не видит `Ring.Networking` ⇒ четыре тела (`Dir/DirBack/Unit/UnitBack`)
+>   переехали в `ByteCodecs`, `Quantize` делегирует (правило 2; байты не изменились, `QuantizeTests`
+>   21/21 через делегацию). Первый вариант клал их в `Geometry` — круг ревью отклонил дом.
+> - ⛔ **НЕ НАЗВАН `Tests/EditMode/PoseKeyTests.cs` (Create):** план объявляет упаковщик и `Fold` в T6a,
+>   а их свидетели отдаёт T6b/T7; по правилу этого дерева (конструктор `PositionHistory.Record`) код без
+>   свидетеля не едет ⇒ пять фикстур: упаковщик поле-в-поле КОНКРЕТНЫМИ кодами (192/128/30/−12/0),
+>   кламп крена ПО ДЛИНЕ, каждое поле в `Fold`, пин **14 байт и порядка** (`Marshal.SizeOf`/`OffsetOf`;
+>   ⛔-контракт доки ничем не пинился), NaN-рельс как контракт.
+> - ⚠ **Interfaces:** `Fold` — `static ulong Fold(ulong h, in PoseKey k)` (форма `PositionHistory.
+>   FoldRecord` и всех `Hash*` мира), не `ref ulong`; параметра `tiltQuantStep` у упаковщика нет —
+>   единственное законное значение есть `const PoseKey.TiltQuantStep` (правило 3).
+> - ⛔ **Step 3 «`MobState` +8, 14 → 22» ПРОТИВОРЕЧИТ Step 2 («`LowerBlend` моб не получает, расписка
+>   +7») — прав Step 2:** `MobState` **14 → 21**, `PlayerState` 39 → 49, расписка `WorldLifecycleTests`
+>   **171 → 198** (выведена скриптом, воспроизведшим 171 на `HEAD`).
+> - ⛔ **`HotTweakTests.ceilingByField["LowerBlend"]` = `float.PositiveInfinity`, а не `1f`:** `1f`
+>   требует клампа-константы в `ApplyConfig`, который ни одно состояние игры не тронет (вес в [0,1]
+>   каждый тик по построению) — «литерал PI», отказанный Т7 для `Tilt`; форма `RecoilOffset`.
+> - ⛔ **Фикстура 20 переписана в двух местах, и оба — находки кода:** (1) плановый «`> 0.5` за 10
+>   тиков» мутанта **M347** не ловит — квантование в байт внутри симуляции залипает у ЦЕЛИ (≈0.994,
+>   гап < 1.5/255), не ниже половины ⇒ добавлен ассерт «вес НЕ на сетке 1/255» (на чистом коде 242.29
+>   кода, до сетки 0.29; под M347 — ровно 242.0); (2) плановый `Is.InRange(1e-4f, 0.9f)` за один тик
+>   НЕ ловит «демпфера нет»: цель первого тика — `speed01 = (40/30)/7 = 0.19`, не 1, и мутант даёт
+>   0.190476 внутри окна ⇒ ассерт стал свойством — цель тика ИЗМЕРЯЕТСЯ из мира, вес `> 0` и СТРОГО
+>   МЕНЬШЕ её (мутант **M438** убит равенством `Less(0.190476, 0.190476)`).
+> - ⚠ **`PoseTableTests` получил ещё три фикстуры** (круг ревью, Major A2/B8): все вызовы `Sample` шли с
+>   `singleLayer: true`, и ветка верхнего слоя с тремя именованными отказами не имела свидетеля в T6a
+>   ⇒ `TheAimLayerMovesOnlyTheMaskedBones_AndNoneOfASingleLayerBody` (+ `TestConfigs.AimLayerPose` с
+>   маской), `SampleRefusesByName_NotByIndexOutOfRange` (пять отказов, включая **новые** «row past the
+>   bones» и «mask too short» — сентинел CSR, заявляющий строк больше, чем есть, ронял бы
+>   `IndexOutOfRange` из середины цикла), `APhasePastTheClipsEndHoldsItsLastRow`.
+> - ⛔ **Бюджет «19, 20 (2) / M346, M347 (2)» устарел:** фикстур привезено **десять** (2 плана + 3 в
+>   `PoseTableTests` + 5 в `PoseKeyTests`), мутаций **девять** (M346, M347 + **M433–M439**), все
+>   убиты предсказанными жертвами; M440 (NaN-рельс снят) на Mono эквивалентен — не гоняется, названо.
+> - ⚠ **Step 4 — классов больше:** + `PoseKeyTests`, `QuantizeTests`, `SnapshotAssemblerTests`,
+>   `MovementTests` (кодеки и производитель веса).
+
 **Interfaces:**
 
 ```csharp
