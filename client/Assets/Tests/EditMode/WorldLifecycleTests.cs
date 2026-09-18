@@ -315,6 +315,20 @@ namespace Ring.Simulation.Tests
             //   39 x 2 = 78, 13 x 2 = 26, 7 x 3 = 21,
             //   5 + 14 + 15 + 5 + 2 + 5 = 46          -> 168 -> 171.
             //
+            // app-94sk T6a: THE POSE, flat -- TEN fields on PlayerState and
+            // SEVEN on MobState (no blend share and no aim layer on a mob;
+            // SimStates.cs' own blocks say why each absence is a decision),
+            // folded into HashPlayer and HashMob as trailing groups in
+            // declaration order. Re-derived from fresh typeof(X).GetFields()
+            // readings of ALL NINE structs by a script first made to
+            // reproduce 171 on the committed tree, never adjusted from it;
+            // every other line came back unchanged (MatchStats 13, WaveState
+            // 7, WorldStats 5, ProjectileState 15, PickupState 5, MatchState
+            // 2, ContainerState 5). Two lines move, by TWENTY and by SEVEN --
+            // the player line still carries the "x 2 players" multiplier:
+            //   49 x 2 = 98, 13 x 2 = 26, 7 x 3 = 21,
+            //   5 + 21 + 15 + 5 + 2 + 5 = 53          -> 171 -> 198.
+            //
             // AND, AS AT Т7, THE RECEIPT IS NOT WHAT MOVES THIS TEST -- SAID OF
             // Т24, whose paragraph it closes. (Т28's own paragraph was inserted
             // above it and left this one reading as if it described Т28, which

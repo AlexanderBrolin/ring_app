@@ -843,11 +843,140 @@ namespace Ring.Simulation.Core
         // that lives in `PoseBaker.FastTakes`, inside `Ring.Editor`, which
         // `Ring.Simulation` cannot see. Neither `ClipFirstRow` nor the clip
         // lengths restore it.
-        // ⇒ THE FIRST READER OF THAT MAPPING IS T6a (the pose key), and it is
-        // the task that has to decide: a seventh field here, or a rate the
-        // simulation is told some other way. Deciding it now would be guessing
-        // at a consumer that does not exist yet; leaving it UNSAID would cost
-        // a re-bake of five committed artifacts nobody predicted.
+        // ⇒ THE FIRST READER OF THAT MAPPING, `Sample` below (T6a), maps a
+        // phase to a row ONE-TO-ONE and holds the clip's last row past its
+        // end, so it needs no rate yet; the decision -- a seventh field here,
+        // or a rate the simulation is told some other way -- falls to T6c,
+        // whose fixture 18a is the first reader of a 24-frame pack (the
+        // gunner's). Deciding it earlier would be guessing at that consumer;
+        // leaving it UNSAID would cost a re-bake of five committed artifacts
+        // nobody predicted.
+
+        /// One body's bone positions IN ITS POSE (app-94sk T6a, spec §3.6):
+        /// the two rows of the lower layer's blend tree mixed by the key's
+        /// weight, and the collector's aim layer laid over them on the bones
+        /// the mask names. Written into the caller's buffer -- ⛔ THE SCRATCH
+        /// BUFFER ARRIVES AS A PARAMETER and nothing is allocated here
+        /// (AimLine's convention, and what keeps fixture 41's zero-allocation
+        /// claim true once T6b routes ProjectileSystem through this).
+        /// A static method ON THE STRUCT rather than a class of its own, the
+        /// shape SimConfig.MobConfigFor already has in this file: a pure
+        /// function over one section, taking it by `in`.
+        ///
+        /// ⛔⛔ THREE SOURCES, NOT TWO, and the order is named ONCE, here
+        /// (spec §3.6): `mask( lerp( tree, reaction, w(phase) ), aim )`.
+        ///   1) the LOWER layer -- the rows of LowerClipA and LowerClipB at
+        ///      LowerPhase, mixed by LowerBlend;
+        ///   2) the AIM layer over it, on the masked bones only, by
+        ///      UpperWeight; sampled at the clip's FIRST row, because the key
+        ///      carries no phase for it (spec §3.6's layout) -- an aim pose is
+        ///      held, not played;
+        ///   3) the REACTION -- plan 2's (`app-xuk1`). `singleLayer` is the
+        ///      seam it will need: a mob has one layer, so its reaction
+        ///      REPLACES the lower layer, while the collector's is mixed in
+        ///      (spec §3.6) -- passed explicitly today so that plan 2 changes
+        ///      no existing call.
+        /// `singleLayer` also skips source 2 outright: a mob's mask has no bit
+        /// set (all-zero words -- PoseBaker.ReadUpperLayerMask says so in as
+        /// many words), so the pass would touch nothing, and skipping it is
+        /// the statement rather than the shortcut.
+        /// ⛔ THE MASK IS DEREFERENCED ONLY UNDER `!= null && Length > 0`: a
+        /// hand-built fixture table may leave it null or empty, and that
+        /// means "no aim layer" -- a NullReferenceException here would be a
+        /// crashed run rather than a red (plan round 4). A mask that is
+        /// present but too SHORT for the table is a different thing, a
+        /// malformed table, and it is refused by name below rather than
+        /// read as far as it goes (review finding).
+        ///
+        /// ⚠ THE ROW MAP IS ONE-TO-ONE FOR NOW: phase `p` of a clip is its
+        /// row `p`, held at the clip's last row past its end. T6c makes it
+        /// rate-aware (the gunner's pack is baked at 24 frames a second) and
+        /// interpolating -- fixtures 18/18a, mutants M342/M343 -- and the
+        /// comment block right above hands it that decision.
+        ///
+        /// ONLY `[0, BoneCount)` OF THE BUFFER IS WRITTEN. A scratch buffer
+        /// sized for the widest body keeps a previous body's bones past that
+        /// index, so a caller loops to `table.BoneCount`, never to
+        /// `into.Length`.
+        ///
+        /// NAMED REFUSALS, NOT SILENT CLIPPING: a buffer shorter than
+        /// BoneCount, a clip past ClipFirstRow, an empty clip, a row past the
+        /// bones and a mask too short for the table all throw with the number
+        /// in the message -- the shape of every refusal in this file
+        /// (ItemCatalogLookup.Find), and unlike HitParts.PoseTop's benign
+        /// `return`, because a writer that filled half a buffer would have
+        /// nothing honest to return. Validation rule 15 (T6c) keeps the clip
+        /// and row refusals from ever being reached from a built
+        /// configuration.
+        public static void Sample(in PoseTable table, in PoseKey key, bool singleLayer, float3[] into)
+        {
+            int n = table.BoneCount;
+            if (into == null || into.Length < n)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: the buffer holds {(into == null ? 0 : into.Length)} bones, "
+                    + $"the table has {n}", nameof(into));
+            }
+
+            int rowA = RowBase(in table, key.LowerClipA, key.LowerPhase);
+            int rowB = RowBase(in table, key.LowerClipB, key.LowerPhase);
+            float w = ByteCodecs.UnitBack(key.LowerBlend, 1f);
+            for (int b = 0; b < n; b++)
+                into[b] = math.lerp(table.Bones[rowA + b], table.Bones[rowB + b], w);
+
+            if (singleLayer) return;
+            ulong[] mask = table.UpperLayerMask;
+            if (mask == null || mask.Length == 0) return;
+            int words = (n + 63) / 64;
+            if (mask.Length < words)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: the aim mask has {mask.Length} words, a table of {n} bones "
+                    + $"needs {words}");
+            }
+            int rowU = RowBase(in table, key.UpperClip, 0);
+            float wu = ByteCodecs.UnitBack(key.UpperWeight, 1f);
+            for (int b = 0; b < n; b++)
+            {
+                // Bone `b` is bit `b % 64` of word `b / 64` -- the way
+                // PoseBaker.ReadUpperLayerMask writes it.
+                if ((mask[b >> 6] & (1UL << (b & 63))) == 0UL) continue;
+                into[b] = math.lerp(into[b], table.Bones[rowU + b], wu);
+            }
+        }
+
+        /// Where the row that clip `clip` shows at `phase` starts in Bones.
+        /// The clip's length is the CSR subtraction its own field doc
+        /// describes; a phase past it holds the last row. The row is checked
+        /// against the bones actually present: a sentinel claiming more rows
+        /// than Bones holds is the one malformation neither the checksum nor
+        /// rule 6 sees, and it would otherwise surface as an
+        /// IndexOutOfRangeException from the middle of the bone loop.
+        static int RowBase(in PoseTable table, int clip, int phase)
+        {
+            int clips = table.ClipFirstRow == null ? 0 : table.ClipFirstRow.Length - 1;
+            if (clip < 0 || clip >= clips)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: clip {clip} is not in a table of {clips} clips");
+            }
+            int first = table.ClipFirstRow[clip];
+            int last = table.ClipFirstRow[clip + 1] - 1;
+            if (last < first)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: clip {clip} has no rows (ClipFirstRow {first}..{last + 1})");
+            }
+            int row = first + math.min(phase, last - first);
+            int bones = table.Bones == null ? 0 : table.Bones.Length;
+            if (row < 0 || (row + 1) * table.BoneCount > bones)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: clip {clip} row {row} lies past the bones "
+                    + $"({bones} entries for {table.BoneCount} bones a row)");
+            }
+            return row * table.BoneCount;
+        }
     }
 
     /// Stage 3 Task 13 (spec §3.7): what one catalog entry IS — the ONLY

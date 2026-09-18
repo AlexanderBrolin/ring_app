@@ -421,6 +421,36 @@ namespace Ring.Simulation.Movement
                 ? hero.VisualTurnDegPerSec
                 : hero.IdleAimTurnDegPerSec;
             p.Dir = TurnTowards(p.Dir, courseTarget, courseDegPerSec, dt);
+
+            // app-94sk T6a (spec §3.6/§3.8): THE BLEND TREE'S WEIGHT, one tick
+            // of it -- the last of the four picture quantities spec §3.8
+            // moves into the simulation. The picture computed it as
+            // `speed01 = |displacement of the frame| / dt / MaxSpeed` handed
+            // to `Animator.SetFloat(Speed, speed01, SpeedDampTime, dt)`, a
+            // filter with memory on FRAME time; here it is the same
+            // first-order damper on the tick, off this tick's post-collision
+            // Vel -- the operand the course above reads, for the same reason
+            // (lesson 694: both operands from one phase of the tick).
+            //
+            // ⛔ AN EXPLICIT EULER STEP, NOT math.exp: Ring.Simulation carries
+            // no exp/log/pow anywhere, its one other damper (Impact.SpringStep)
+            // is written the same way, and this number rides into PoseKey,
+            // the rewind history and three golden digests -- `exp` in
+            // IEEE-754 is not required to be correctly rounded. `k = dt /
+            // SpeedDampTime` is the small-dt limit of `1 - exp(-dt/T)`: 0.333
+            // against 0.283 at the shipped 0.1 s, a feel difference the owner
+            // tunes by the number, not a contract. A damping time at or below
+            // one tick means "no damping" and snaps to the target instead of
+            // overshooting it with a k above one.
+            //
+            // ⛔ KEPT IN FLOAT. The key quantizes it to a byte
+            // (PoseKey.FromPlayer), and only the key: at TickDt 1/30 against
+            // 0.1 s a step of this damper can be under 1/255, and a weight
+            // rounded to a byte HERE would stop short of its target every
+            // time (spec §3.6; PoseTableTests' fixture 20 measures both).
+            float speed01 = math.saturate(math.length(p.Vel) / hero.MaxSpeed);
+            float k = hero.SpeedDampTime > dt ? dt / hero.SpeedDampTime : 1f;
+            p.LowerBlend += (speed01 - p.LowerBlend) * k;
             return result;
         }
 

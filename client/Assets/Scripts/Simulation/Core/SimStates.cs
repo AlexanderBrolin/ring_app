@@ -314,6 +314,74 @@ namespace Ring.Simulation.Core
         /// and HotTweakTests would fail on a different assert than the one
         /// whose remedy is documented.
         public int ShotOrdinal;
+
+        /// app-94sk T6a (spec §3.6): THE POSE, FLAT IN THE STATE, and until
+        /// this task the simulation carried none of it -- the collector's
+        /// pose lived in the Animator, a blend tree stepped on FRAME time
+        /// that no server can replay. It has to be state because the hit
+        /// volumes sit on bones (spec §3.2), and a bone is somewhere only
+        /// once the pose says where. Ten fields in three groups:
+        ///   * LOWER LAYER -- locomotion. `LowerClipA`/`LowerClipB` are the
+        ///     two neighboring clips of the blend tree (Simple1D over speed,
+        ///     four clips, thresholds baked into PoseTable.BlendThresholds),
+        ///     `LowerBlend` the share of B in [0, 1], `LowerPhase` the
+        ///     playhead in WHOLE TICKS (determinism: a fractional position
+        ///     arises only at the row mapping, spec §3.6);
+        ///   * UPPER LAYER -- the aim layer, the collector's alone (a mob has
+        ///     one layer): `UpperClip` and its weight `UpperWeight`, laid over
+        ///     the lower layer on the bones PoseTable.UpperLayerMask names;
+        ///   * REACTION -- the hit gesture of spec §3.19 (`ReactionClip`,
+        ///     `ReactionDir`, `ReactionPhase`) and its `ReactionCooldown`.
+        ///     ⚠ Plan 2 (`app-xuk1`) gives these four their writers; in plan
+        ///     1 they are declared, hashed, classified and carried, and stay
+        ///     zero.
+        ///
+        /// ⛔ FLAT, NOT A NESTED STRUCT (Р548, spec §3.6 finding D-C3): a
+        /// nested struct breaks two reflective guards STRUCTURALLY --
+        /// PredictionParityTests' comparer and its DistinctValueFor know
+        /// float/float2/bool/int/byte and Assert.Fail on anything else, and
+        /// RoleByField holds ONE role per field where a pose MIXES roles
+        /// (`ReactionCooldown` is the server's, the other nine are predicted).
+        /// ⛔⛔ AND THE TYPES ARE A DECISION TOO: `ushort` and `sbyte` HARD-FAIL
+        /// five sites in three guards (Assert.Fail / NotSupportedException,
+        /// never a RED) -- the two above, WorldLifecycleTests.Bump, and both
+        /// walkers of ReconcileCodecTests. Only int, float, byte and float2
+        /// live in the state; `ushort`/`sbyte` live in PoseKey, the packed
+        /// copy the reflection never touches. `ReactionCooldown` is therefore
+        /// an `int` and costs four bytes a body rather than two (5.3 KiB over
+        /// 1353 bodies, 2.6 of them the excess over a ushort) -- cheaper than
+        /// teaching five sites a type for two bytes.
+        ///
+        /// WHO WRITES WHAT AS OF T6a. `LowerBlend` has its producer: the
+        /// trailing block of PlayerMovementSystem.Update, the same shared
+        /// body that turns `Dir`, so world and prediction step one damper off
+        /// one Vel (Predicted for RoleByField). ⛔ COMPUTED IN FLOAT AND
+        /// QUANTIZED TO A BYTE ONLY IN THE KEY: at TickDt 1/30 against
+        /// SpeedDampTime 0.1 a damper step can be smaller than 1/255, and a
+        /// weight rounded to a byte inside the simulation would stop short of
+        /// its target (spec §3.6; PoseTableTests' fixture 20). The clips and
+        /// the phases get their producer in T6b, in tick order ahead of
+        /// ProjectileSystem and on the same shared path -- which is what keeps
+        /// their Predicted classification true rather than vacuous.
+        ///
+        /// ON THE WIRE THE SAME WAY `Dir` AND `HistorySlot` ARE: nothing puts
+        /// any of these in the snapshot (`SnapshotBlocks.PlayerRecord` is
+        /// hand-written), but `ReconcileData` carries THE WHOLE PlayerState,
+        /// so FishNet's generated serializer writes all ten -- 22 bytes per
+        /// reconcile (three ints, one float, six bytes). Spec §3.11's fourth
+        /// trigger already covers the class; plan 1 keeps `ProtocolVersion`
+        /// at 5 (Global Constraints) and plan 2 raises it.
+        ///
+        /// IN THE DIGEST FROM THIS TASK, as a trailing group in declaration
+        /// order (HashPlayer, RULING 129: a new subsystem with no neighbor to
+        /// sit beside). The packed copy, PoseKey, joins the digest a second
+        /// time through PositionHistory in T7, when the record grows.
+        public int LowerPhase, ReactionPhase;
+        public float LowerBlend;
+        public byte LowerClipA, LowerClipB;
+        public byte UpperClip, UpperWeight;
+        public byte ReactionClip, ReactionDir;
+        public int ReactionCooldown;
     }
 
     /// Stage 3 Task 10 (spec Р213/Р251): Elite and Director are the third
@@ -495,6 +563,36 @@ namespace Ring.Simulation.Core
         /// needs a byte. Р383 stands -- the PAIR still never rides the wire,
         /// it is still rebuilt from an event.
         public float2 Tilt, TiltVel;
+
+        /// app-94sk T6a (spec §3.6): THE POSE, FLAT -- see PlayerState's block
+        /// of the same name for the layout, the type decision and the
+        /// reflective guards it answers to. SEVEN fields against the
+        /// collector's ten, and each absence is a decision rather than an
+        /// omission:
+        ///   * no `UpperClip`/`UpperWeight` -- a mob has ONE layer; the aim
+        ///     mask of every mob table is empty by its build
+        ///     (PoseBaker.ReadUpperLayerMask says so in as many words);
+        ///   * no `LowerBlend` -- a mob has no blend tree: MobVisual
+        ///     CrossFades between clips over the WalkEnterSpeed/RunEnterSpeed
+        ///     thresholds, and `SpeedDampTime` is the collector's number
+        ///     alone (HeroSimConfig, T5b). The PAIR of clips stays, because
+        ///     that CrossFade is between two clips; PoseKey.FromMob packs the
+        ///     share as zero, and spec §3.7 names the cross-fade itself as
+        ///     the one thing the key does not express.
+        /// The writers arrive in T6b (clips and phases, in tick order) and in
+        /// plan 2 (the reaction group); as of T6a every one of these stays
+        /// zero -- clip 0, row 0, the rest pose, which is exactly the row
+        /// HitVolumes.Resolve has been handed since T2.
+        ///
+        /// NOT ON THE WIRE, precedent SpawnZone above: MobRecord is exactly
+        /// 9 bytes and carries none of these. IN THE DIGEST from this task
+        /// (HashMob, a trailing group in declaration order), on HistorySlot's
+        /// argument: canonical server state that survives a tick and rides
+        /// SaveState/RestoreState.
+        public int LowerPhase, ReactionPhase;
+        public byte LowerClipA, LowerClipB;
+        public byte ReactionClip, ReactionDir;
+        public int ReactionCooldown;
     }
 
     /// Stage 3 Т24: the values PlayerState.ExtractKind carries, named ONCE

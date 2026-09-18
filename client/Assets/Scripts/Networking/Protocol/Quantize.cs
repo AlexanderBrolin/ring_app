@@ -1,3 +1,4 @@
+using Ring.Simulation.Core;
 using Unity.Mathematics;
 
 namespace Ring.Networking.Protocol
@@ -15,6 +16,14 @@ namespace Ring.Networking.Protocol
     /// — the actual numbers (ArenaConfig.Radius, HeroConfig.MaxAimHeight,
     /// ...) live in .asset data (spec §0's "two homes for numbers"); this
     /// class only implements the mapping.
+    ///
+    /// ⚠ FOUR OF THE EIGHT BODIES LIVE IN Simulation.Core.ByteCodecs SINCE
+    /// app-94sk T6a -- `Dir`/`DirBack` and `Unit`/`UnitBack` are forwarders
+    /// here, because the pose key packs the same bytes and Ring.Simulation
+    /// cannot see this assembly. Everything this doc says about clamping,
+    /// NaN-safe `saturate`, idempotency and round-to-even describes those
+    /// four bodies exactly as it describes `Pos`/`Aim`, and QuantizeTests
+    /// still pins all eight through these names.
     ///
     /// IDEMPOTENCY (Р34) is a contract, not a side effect: `Q(D(q)) == q`
     /// for every representable code `q`, for every method pair below. This
@@ -96,53 +105,25 @@ namespace Ring.Networking.Protocol
             return PosBack(q, 3f * radius);
         }
 
-        /// Heading angle -> `[0, 255]`, step `1.40625` deg. `atan2(0, 0)`
-        /// is `0` radians by convention (`System.Math.Atan2`'s own
-        /// documented special case), so `Dir(float2.zero)` encodes
-        /// identically to `Dir(+X)`. That is deliberate, not a defect: on
-        /// the wire `MoveDir` is angle + magnitude (Task 25), and at
-        /// magnitude 0 nothing ever reads the angle back.
-        ///
-        /// `atan2`'s range is `[-pi, +pi]` — BOTH rails are attainable:
-        /// `+pi` from `Dir(new float2(-1f, 0f))` and `-pi` from
-        /// `Dir(new float2(-1f, -0f))`, because a negative-zero `y` selects
-        /// the lower branch (fix-round F3: the first draft claimed the range
-        /// was half-open `(-pi, +pi]`, which is false). So the raw code
-        /// before wrapping spans `[0, 256]` — 257 values, one MORE than a
-        /// byte holds. The cast through `int` before the explicit `& 0xFF`
-        /// mask folds the top value (`256`) onto `0`, which is exactly the
-        /// code the other rail already produces: `+pi` and `-pi` are the
-        /// same direction, and without this fold they would encode to two
-        /// different codes for it. A raw `(byte)` cast straight from the rounded FLOAT (instead
-        /// of `(byte)((int)... & 0xFF)`) does not reliably reproduce this:
-        /// C# only defines integer-to-byte narrowing as truncation, not a
-        /// float-to-byte cast of an out-of-range value.
-        public static byte Dir(float2 v)
-        {
-            float angle = math.atan2(v.y, v.x);
-            int raw = (int)math.round((angle + math.PI) / (2f * math.PI) * 256f);
-            return (byte)(raw & 0xFF);
-        }
+        /// Heading angle -> `[0, 255]`, step `1.40625` deg. ⛔ THE ARITHMETIC
+        /// LIVES IN Simulation.Core.ByteCodecs SINCE app-94sk T6a, and this is
+        /// a forwarder: the pose key packs the SAME heading into the SAME byte
+        /// for the rewind history, and Ring.Simulation cannot reference this
+        /// assembly, so the one home both can reach is there (rule 2 -- one
+        /// mapping, not two spellings). The contract -- the `atan2(0,0)`
+        /// convention, the fold of the `+pi`/`-pi` rails onto one code -- is
+        /// documented there and still pinned here by QuantizeTests through
+        /// this call.
+        public static byte Dir(float2 v) => ByteCodecs.Dir(v);
 
-        public static float2 DirBack(byte q)
-        {
-            float angle = q / 256f * (2f * math.PI) - math.PI;
-            return new float2(math.cos(angle), math.sin(angle));
-        }
+        public static float2 DirBack(byte q) => ByteCodecs.DirBack(q);
 
-        /// One-sided `[0, max] -> [0, 255]` — all three current consumers
-        /// (HP, analog stick magnitude, `AimHeight` in `[0, Hero.
-        /// MaxAimHeight]`, Р84) are non-negative, so unlike `Pos`/`Aim`
-        /// there is no negative half of the range to spend codes on.
-        public static byte Unit(float v, float max)
-        {
-            float t = math.saturate(v / max);
-            return (byte)math.round(t * 255f);
-        }
+        /// One-sided `[0, max] -> [0, 255]` for the non-negative quantities
+        /// (HP, analog stick magnitude, `AimHeight`, Р84). ⛔ FORWARDER, for
+        /// Dir's reason above: PoseKey quantizes its blend weight with the
+        /// same mapping at `max` 1.
+        public static byte Unit(float v, float max) => ByteCodecs.Unit(v, max);
 
-        public static float UnitBack(byte q, float max)
-        {
-            return q / 255f * max;
-        }
+        public static float UnitBack(byte q, float max) => ByteCodecs.UnitBack(q, max);
     }
 }

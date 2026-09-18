@@ -57,8 +57,10 @@ namespace Ring.Simulation.Tests
                 else if (f.FieldType == typeof(bool)) f.SetValue(box, true);
                 else if (f.FieldType == typeof(int)) f.SetValue(box, (int)n);
                 // Stage 3 Task 1: PlayerState's first byte fields
-                // (ExtractKind, LootTargetSlot). `n` never exceeds the
-                // struct's own field count (in the thirties), well inside
+                // (ExtractKind, LootTargetSlot; app-94sk T6a's pose bytes
+                // joined them). `n` never exceeds the struct's own field
+                // count -- `PlayerStateFields.Length` above is that number,
+                // this sentence deliberately is not -- which sits well inside
                 // byte's range, so no wraparound risk here the way a longer
                 // run might have.
                 else if (f.FieldType == typeof(byte)) f.SetValue(box, (byte)n);

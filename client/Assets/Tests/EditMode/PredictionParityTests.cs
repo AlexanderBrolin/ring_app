@@ -146,8 +146,9 @@ namespace Ring.Simulation.Tests
         /// TWO CLAIMS, NOT ONE (bd app-fi3f, owner decision R-209, form
         /// R-210). This sweep used to demand bit equality of all 32 fields
         /// against the world, which is a claim `PlayerPrediction.Step` cannot
-        /// satisfy for the ELEVEN the SERVER owns (nine when R-209 landed, ten
-        /// from app-88jb Т7's `Tilt`, eleven from Т24's `HistorySlot`): Step
+        /// satisfy for the TWELVE the SERVER owns (nine when R-209 landed, ten
+        /// from app-88jb Т7's `Tilt`, eleven from Т24's `HistorySlot`, twelve
+        /// from app-94sk T6a's `ReactionCooldown`): Step
         /// does not write them and
         /// the world does, so the two are equal only while nothing has moved
         /// them — i.e. only in a vacuum. Every scenario in this file happened
@@ -160,7 +161,7 @@ namespace Ring.Simulation.Tests
         ///     honest statement about them is "Step left this alone" (CRITICAL
         ///     RULE 3), and unlike the old one it stays checkable however far
         ///     the world moves on.
-        /// The sweep still visits all 39; nothing is skipped (there is no
+        /// The sweep still visits all 49; nothing is skipped (there is no
         /// skip-list anywhere in this suite, and this is not the place to
         /// start one).
         /// ⚠ THE NUMBER IS RE-READ FROM `typeof(PlayerState).GetFields()`,
@@ -170,8 +171,8 @@ namespace Ring.Simulation.Tests
         /// and left every count in this file untouched. Т24 then added
         /// `HistorySlot`. 32 -> 34 (Т7's `Tilt`/`TiltVel`) -> 35 (Т22) -> 36
         /// (Т24) -> 38 (app-8dv's `BurstShots`/`ShotOrdinal`) -> 39
-        /// (app-94sk T5c's `Dir`, the body's course), each reading taken fresh
-        /// rather than incremented.
+        /// (app-94sk T5c's `Dir`, the body's course) -> 49 (app-94sk T6a's ten
+        /// pose fields), each reading taken fresh rather than incremented.
         /// The same miss, on the same field, is what RULING 125 had to
         /// correct in `WorldLifecycleTests`' receipt; naming it here is how the
         /// next reader stops inheriting it.
@@ -870,9 +871,9 @@ namespace Ring.Simulation.Tests
         /// WorldLifecycleTests' own header records that its PendingHashFields
         /// were TEMPORARY, carried a named addressee, and were removed by
         /// Т10/Т13. A skip-list here would be the first one in the project and
-        /// would say "we do not look at these eleven fields" — while the honest
+        /// would say "we do not look at these twelve fields" — while the honest
         /// statement about them is stronger and just as cheap: prediction must
-        /// not have touched them. So the sweep still visits all 39 (see
+        /// not have touched them. So the sweep still visits all 49 (see
         /// `AssertPlayerStateBitEqual`'s own note on where both numbers come
         /// from and why neither is ever incremented from memory).
         ///
@@ -1071,18 +1072,51 @@ namespace Ring.Simulation.Tests
                 // every scenario in this file rather than on that one fixture.
                 ["BurstShots"] = PredictionRole.Predicted,
                 ["ShotOrdinal"] = PredictionRole.Predicted,
+                // app-94sk T6a (spec §3.6): the ten pose fields, classified by
+                // reading the bodies (rule 17). NINE are Predicted. LowerBlend's
+                // only writer is the trailing block of PlayerMovementSystem.
+                // Update, the shared body Step calls, so both paths step one
+                // damper off one post-collision Vel. The other eight have NO
+                // writer yet: T6b gives the clips and the phases theirs on
+                // that same shared path -- and this entry is what commits T6b
+                // to it, since a producer on a server-only path would turn
+                // the sweep red the tick it first wrote -- and plan 2 gives
+                // the reaction trio its own, re-reading their role then (a
+                // reaction is armed by a blow, which the client may or may
+                // not predict; that is plan 2's classification to make, not
+                // this task's). Until then "the two paths agree" holds at
+                // zero on both, which is a true statement rather than a
+                // vacuous one only because nothing anywhere writes them.
+                ["LowerPhase"] = PredictionRole.Predicted,
+                ["LowerBlend"] = PredictionRole.Predicted,
+                ["LowerClipA"] = PredictionRole.Predicted,
+                ["LowerClipB"] = PredictionRole.Predicted,
+                ["UpperClip"] = PredictionRole.Predicted,
+                ["UpperWeight"] = PredictionRole.Predicted,
+                ["ReactionClip"] = PredictionRole.Predicted,
+                ["ReactionDir"] = PredictionRole.Predicted,
+                ["ReactionPhase"] = PredictionRole.Predicted,
+                // AND THE COOLDOWN IS THE SERVER'S (CRITICAL RULE 3): plan 2
+                // arms it on the damage path when a reaction fires (spec
+                // §3.19), and the client predicts no damage -- the claim Hp
+                // and Tilt make above, on the same evidence: Step never
+                // mentions it. Classified now so that a future Step cannot
+                // start writing it with nothing to object.
+                ["ReactionCooldown"] = PredictionRole.Server,
             };
 
         [Test]
         public void ServerOwnedFields_AreNotMovedByPrediction_AndTheRestStayBitEqual()
         {
             // bd app-fi3f. RunParity's blanket comparer demands bit equality
-            // of ALL 39 fields, which is a claim about ELEVEN of them that
+            // of ALL 49 fields, which is a claim about TWELVE of them that
             // PlayerPrediction.Step could never satisfy — it does not write
             // them, and the world does. (Nine when R-209 landed; app-88jb Т7's
             // PlayerState.Tilt was the tenth, stepped every tick by
             // TiltSystem's collector pass; Т24's HistorySlot is the eleventh,
-            // written once by the world's constructor.) Every scenario in this file is green
+            // written once by the world's constructor; app-94sk T6a's
+            // ReactionCooldown is the twelfth, written by nobody until plan 2
+            // arms the reaction.) Every scenario in this file is green
             // on that claim for one reason only, and it is a fixture accident:
             // none of them ever stands anywhere the world would move a
             // server-owned field. The moment one does — Т38's own lag rig
@@ -1150,7 +1184,7 @@ namespace Ring.Simulation.Tests
 
             // --- the three premises, without which the sweep above is theatre
 
-            // 1. The scenario really is non-vacuum. Without this the eleven
+            // 1. The scenario really is non-vacuum. Without this the twelve
             //    server-field assertions would be comparing zero to zero and
             //    would pass on a build where prediction DID move them.
             Assert.IsTrue(sawServerFieldMove,

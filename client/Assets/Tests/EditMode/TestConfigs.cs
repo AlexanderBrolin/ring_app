@@ -241,6 +241,47 @@ namespace Ring.Simulation.Tests
             BlendThresholds = new[] { 0f },
         });
 
+        /// app-94sk T6a (fixture 19): TWO CLIPS OF ONE ROW EACH -- "standing"
+        /// and "step". ⛔ They differ ONLY in the foot, and only along z, so
+        /// the fixture's assert reads as one line and depends on nothing but
+        /// the blend weight. Row 0 is clip 0, row 1 is clip 1, and the
+        /// sentinel `ClipFirstRow[2] == 2` closes the second clip (the CSR
+        /// shape PoseTable.ClipFirstRow's own doc describes).
+        /// ⚠ Through `Sealed` like every table here, NOT with a hand-written
+        /// zero checksum: the sealing pass is the one home of the sum and the
+        /// one place the aim mask is filled in empty rather than left null.
+        public static PoseTable TwoClipWalkPose() => Sealed(new PoseTable
+        {
+            BoneCount = 3,
+            ClipFirstRow = new[] { 0, 1, 2 },
+            Bones = new[]
+            {
+                new float3(0f, 0f, 0f), new float3(0f, 0.05f, 0f),   new float3(0f, 0.9f, 0f),   // standing
+                new float3(0f, 0f, 0f), new float3(0f, 0.05f, 0.6f), new float3(0f, 0.9f, 0f),   // the step
+            },
+            BlendThresholds = new[] { 0f, 1f },
+        });
+
+        /// app-94sk T6a (the aim-layer witness): ONE locomotion row and ONE
+        /// aim row, differing in bones 1 and 2 only, with the aim mask naming
+        /// bone 2 alone -- so a bone the mask names, a bone it does not, and
+        /// a bone the rows agree on are all present at once. ⚠ The mask is
+        /// handed in rather than left for `Sealed` to fill empty: this is the
+        /// one fixture table with an aim layer, and `Sealed` keeps a mask it
+        /// is given.
+        public static PoseTable AimLayerPose() => Sealed(new PoseTable
+        {
+            BoneCount = 3,
+            ClipFirstRow = new[] { 0, 1, 2 },
+            Bones = new[]
+            {
+                new float3(0f, 0f, 0f), new float3(0f, 1f, 0f),   new float3(0f, 1.5f, 0f),     // locomotion
+                new float3(0f, 0f, 0f), new float3(0.4f, 1f, 0f), new float3(0.4f, 1.5f, 0f),   // the aim pose
+            },
+            BlendThresholds = new[] { 0f },
+            UpperLayerMask = new[] { 1UL << 2 },
+        });
+
         /// The index of the collector's SLIDE clip in his own table. ⛔ A NAMED
         /// CONSTANT, NOT THE LITERAL 1: on a one-clip table `ClipFirstRow[1]` is
         /// the sentinel "number of rows", so the literal reads past the bones of

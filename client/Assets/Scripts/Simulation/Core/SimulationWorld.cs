@@ -3485,11 +3485,13 @@ namespace Ring.Simulation.Core
             // SpawnZone third out of a tenth-place declaration. The rule these
             // helpers actually follow is that A FIELD IS FOLDED BESIDE WHAT IT
             // QUALIFIES -- SpawnZone beside Type, SlideSpeedPenalty beside the
-            // dash speed it taxes. HistorySlot happens to be last in both the
-            // struct and the fold, and that is a coincidence of one field, not
-            // a law to derive the next placement from. (In HashMob the tilt
-            // pair does still close the fold: that HistorySlot went in beside
-            // SpawnZone, ahead of the tilt.)
+            // dash speed it taxes. HistorySlot was last in both the struct and
+            // the fold when this was written (Т24) and is neither since
+            // app-8dv's counters; that it ever was is a coincidence of one
+            // field, not a law to derive the next placement from. (In HashMob the tilt
+            // pair closed the fold until app-94sk T6a -- that HistorySlot went
+            // in beside SpawnZone, ahead of the tilt -- and the pose group
+            // closes it since.)
             // Both are live
             // per-tick state that survives across ticks (TiltSystem's collector
             // pass integrates them, DamagePlayer adds into TiltVel), so a
@@ -3530,6 +3532,25 @@ namespace Ring.Simulation.Core
             // claim the same hash.
             h = StateHash64.Add(h, p.BurstShots);
             h = StateHash64.Add(h, p.ShotOrdinal);
+            // app-94sk T6a (spec §3.6): THE POSE, as a trailing group in
+            // declaration order -- a new subsystem with no neighbor to sit
+            // beside, the placement RULING 129's own precedent gave the Т6
+            // timer group above. Ten fields: the lower layer's phase, weight
+            // and pair of clips, the aim layer's clip and weight, the
+            // reaction's clip, direction, phase and cooldown. Canonical state
+            // on the tilt pair's own three counts: it survives a tick, rides
+            // SaveState/RestoreState, and from T6b it decides where a hit
+            // volume IS. Bytes widen to `int` the way ExtractKind's fold above
+            // does (StateHash64 has no byte overload).
+            // ⚠ THIS MOVES THE THREE GOLDEN DIGESTS AGAIN -- expected (plan 1
+            // §3.2's class of movement); the pins are Н44's and move once, at
+            // T-W1.
+            h = StateHash64.Add(h, p.LowerPhase); h = StateHash64.Add(h, p.ReactionPhase);
+            h = StateHash64.Add(h, p.LowerBlend);
+            h = StateHash64.Add(h, (int)p.LowerClipA); h = StateHash64.Add(h, (int)p.LowerClipB);
+            h = StateHash64.Add(h, (int)p.UpperClip); h = StateHash64.Add(h, (int)p.UpperWeight);
+            h = StateHash64.Add(h, (int)p.ReactionClip); h = StateHash64.Add(h, (int)p.ReactionDir);
+            h = StateHash64.Add(h, p.ReactionCooldown);
             return h;
         }
 
@@ -3584,7 +3605,19 @@ namespace Ring.Simulation.Core
             // client is told.
             // Both components since app-94sk T5a, on HashPlayer's own account
             // above — the `float2` overload, not `.x` (mutation M391).
+            // ⚠ "CLOSES THE FOLD" STOPPED BEING TRUE AT app-94sk T6a: the pose
+            // group below closes both the struct and the fold now, on the
+            // same trailing-group placement HashPlayer gives the collector's.
             h = StateHash64.Add(h, m.Tilt); h = StateHash64.Add(h, m.TiltVel);
+            // app-94sk T6a (spec §3.6): the mob's pose -- SEVEN fields, the
+            // collector's ten minus the blend share and the aim layer a mob
+            // does not carry (MobState's own block says why each absence is
+            // a decision). Trailing group in declaration order, bytes widened
+            // to `int`, for exactly HashPlayer's reasons above.
+            h = StateHash64.Add(h, m.LowerPhase); h = StateHash64.Add(h, m.ReactionPhase);
+            h = StateHash64.Add(h, (int)m.LowerClipA); h = StateHash64.Add(h, (int)m.LowerClipB);
+            h = StateHash64.Add(h, (int)m.ReactionClip); h = StateHash64.Add(h, (int)m.ReactionDir);
+            h = StateHash64.Add(h, m.ReactionCooldown);
             return h;
         }
 

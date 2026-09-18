@@ -334,6 +334,27 @@ namespace Ring.Simulation.Tests
                 // ceiling" has to be spelled as a value it can compare with.
                 ["BurstShots"] = float.PositiveInfinity,
                 ["ShotOrdinal"] = float.PositiveInfinity,
+                // app-94sk T6a (spec §3.6): the pose's four float/int fields.
+                // LowerPhase and ReactionPhase are PLAYHEADS -- positions in a
+                // clip -- and ReactionCooldown a countdown plan 2 arms; none
+                // is a magnitude with a config ceiling, and ApplyConfig leaves
+                // all three alone, same form and reasoning as BurstShots/
+                // ShotOrdinal above. LowerBlend IS bounded, to [0, 1], but by
+                // its PRODUCER (PlayerMovementSystem.Update saturates the
+                // target and the damper never overshoots it) rather than by
+                // ApplyConfig -- the "clamped elsewhere" shape RecoilOffset
+                // carries above. ⚠ THE PLAN WROTE `1f` HERE, and that line
+                // would need a constant clamp in ApplyConfig's player loop
+                // that no game state can ever trip (the value is inside [0, 1]
+                // every tick by construction) -- the literal-PI ceiling Т7
+                // refused for Tilt, on the reasoning this map's own Tilt note
+                // keeps. A hot-tweak changes no number the weight is measured
+                // against: MaxSpeed only moves the damper's input, and the
+                // damper re-converges within a handful of ticks.
+                ["LowerPhase"] = float.PositiveInfinity,
+                ["ReactionPhase"] = float.PositiveInfinity,
+                ["ReactionCooldown"] = float.PositiveInfinity,
+                ["LowerBlend"] = float.PositiveInfinity,
             };
 
             var w = new SimulationWorld(5, cfg);
@@ -370,7 +391,11 @@ namespace Ring.Simulation.Tests
                 // extraction route; LootTargetSlot: which backpack slot a
                 // loot channel targets) — small fixed-range values, not
                 // magnitudes with a config-driven ceiling ApplyConfig would
-                // ever clamp against.
+                // ever clamp against. app-94sk T6a adds six of the same kind:
+                // the pose's clip indices (LowerClipA/B, UpperClip,
+                // ReactionClip -- addresses into a PoseTable, whose range
+                // validation rule 15 of T6c owns), ReactionDir (a sector code)
+                // and UpperWeight (a 0..255 share).
                 typeof(byte),
             };
 
