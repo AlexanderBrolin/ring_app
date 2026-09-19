@@ -388,8 +388,8 @@ namespace Ring.Simulation.Core
         public static ulong PoseTableChecksum(in PoseTable t) =>
             HashPoseTable(StateHash64.Begin(), t);
 
-        /// A pose table folds as its shape, its rows and the two float arrays
-        /// beside them. ⛔ `Checksum` IS NOT IN THE DIGEST: it is a cache of the
+        /// A pose table folds as its shape, its rows, its rates and the two
+        /// arrays beside them. ⛔ `Checksum` IS NOT IN THE DIGEST: it is a cache of the
         /// loaded bytes (Р514), not a balance number, and the config build is
         /// what compares it (validation rule 27). Folding it here would make
         /// the identity of a config depend on a field the config recomputes.
@@ -397,6 +397,10 @@ namespace Ring.Simulation.Core
         {
             h = StateHash64.Add(h, t.BoneCount);
             h = HashInt32Array(h, t.ClipFirstRow);
+            // app-94sk T6c: the rates, beside the CSR they are indexed like --
+            // a substituted rate is a table that plays at the wrong speed, and
+            // rule 27 has to see it as a different table.
+            h = HashInt32Array(h, t.ClipRate);
             h = StateHash64.Add(h, t.Bones == null ? -1 : t.Bones.Length);
             if (t.Bones != null)
             {

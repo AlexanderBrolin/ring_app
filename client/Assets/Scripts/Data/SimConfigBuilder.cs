@@ -720,8 +720,8 @@ namespace Ring.Data
             ReqAtLeast(errors, "Weapon.SpreadSlideMult", cfg.Weapon.SpreadSlideMult, 1f);
             ReqInRange(errors, "Weapon.RunSpreadSpeedFrac", cfg.Weapon.RunSpreadSpeedFrac, 0f, 1f);
 
-            ValidateMob(errors, "Chaser", cfg.Chaser, cfg.Hero.Radius);
-            ValidateMob(errors, "Gunner", cfg.Gunner, cfg.Hero.Radius);
+            ValidateMob(errors, "Chaser", MobType.Chaser, cfg.Chaser, cfg.Hero.Radius);
+            ValidateMob(errors, "Gunner", MobType.Gunner, cfg.Gunner, cfg.Hero.Radius);
             // Stage 3 Т22 (coordinator R-186, debt named by Т12's own report):
             // the two archetypes Т10 added were left out of this sweep because
             // ninety call sites could legally omit them and would have thrown
@@ -729,8 +729,8 @@ namespace Ring.Data
             // all five sections, the omission has no excuse left — and a
             // Director with MaxHp 0 or Radius 0 is exactly the kind of silent
             // nonsense the rest of this method exists to refuse.
-            ValidateMob(errors, "Elite", cfg.Elite, cfg.Hero.Radius);
-            ValidateMob(errors, "Director", cfg.Director, cfg.Hero.Radius);
+            ValidateMob(errors, "Elite", MobType.Elite, cfg.Elite, cfg.Hero.Radius);
+            ValidateMob(errors, "Director", MobType.Director, cfg.Director, cfg.Hero.Radius);
 
             // Stage 3 Т22 (spec §3.5/§3.4, coordinator R-181): the match-flow
             // block. Т12 delivered these five numbers and nothing checked them;
@@ -1180,6 +1180,9 @@ namespace Ring.Data
             // ValidateMob — one body, every caller.
             ValidateParts(errors, "Hero", cfg.Hero.Parts, in cfg.Hero.Poses,
                 cfg.Hero.Radius, cfg.Hero.GatherRadius);
+            // Rule 15 (app-94sk T6c): the collector's producer names positions
+            // up to the death take, last by the baker's contract.
+            ValidatePoseTableShape(errors, "Hero", in cfg.Hero.Poses, BakedClips.Collector.HighestPosition);
             // Rule 6, REWRITTEN BY Т13 exactly as its Т1 form promised: the
             // center of mass cannot sit above the body it belongs to, and the
             // body is now the stack of parts rather than the old zone column. The
@@ -2177,7 +2180,8 @@ namespace Ring.Data
         static bool RingSlotBlocked(in ArenaSimConfig arena, float2 pos, float bodyRadius)
             => SpawnPlacement.GeometryBlocked(in arena, pos, bodyRadius, doorsPassable: true);
 
-        static void ValidateMob(List<string> errors, string name, MobSimConfig m, float heroRadius)
+        static void ValidateMob(List<string> errors, string name, MobType type, MobSimConfig m,
+            float heroRadius)
         {
             ReqPositive(errors, $"{name}.MaxSpeed", m.MaxSpeed);
             ReqPositive(errors, $"{name}.Accel", m.Accel);
@@ -2264,6 +2268,9 @@ namespace Ring.Data
             // against the old zone column — see the Hero block's own note for why
             // the rewrite is load-bearing rather than cosmetic.
             ValidateParts(errors, name, m.Parts, in m.Poses, m.Radius, m.GatherRadius);
+            // Rule 15 (app-94sk T6c): this archetype's producer names its two
+            // takes -- the later of them is the position the table must reach.
+            ValidatePoseTableShape(errors, name, in m.Poses, BakedClips.HighestPositionOf(type));
             // Rule 10 (app-94sk T2): only an archetype has a strike, so this rule
             // has no counterpart in the Hero block.
             ValidateSwingPart(errors, name, in m);
@@ -2274,6 +2281,23 @@ namespace Ring.Data
                 minExclusive: true, maxExclusive: true);
             ReqPositive(errors, $"{name}.TiltSettleSeconds", m.TiltSettleSeconds);
             ReqPositive(errors, $"{name}.TiltFallAngle", m.TiltFallAngle);
+            // ⛔ RULE 15a (app-94sk T6c, spec §3.13): THE KEY CAN SAY THE FALL
+            // ANGLE. PoseKey packs a lean as two sbytes of TiltQuantStep and
+            // clamps it BY LENGTH at PoseKey.TiltCeiling (1.27 rad); a body
+            // fallen to exactly this threshold has to rewind to where it fell,
+            // so the clamp must not bite at the threshold. ⚠ Not the live
+            // tilt: TiltSystem clamps nothing, and a knocked body's lean past
+            // the threshold saturates the key by design (the body is Downed
+            // and its pose frozen, spec §3.5а) -- what is guarded is the
+            // number the state machine compares against, the one the owner
+            // tunes. MobConfig's [Range] offers the Inspector the same
+            // constant, so the slider never proposes what this line refuses.
+            // ⚠ AND THE CEILING IS REACHABLE, measured rather than feared: a
+            // `1.27` typed into YAML parses to the very float `127 * 0.01f`
+            // folds to (0x3FA28F5C, both), so the hand-typed value and the
+            // slider's maximum sit ON the ceiling and pass -- `ReqAtMost` is
+            // inclusive, and 127 codes express 1.27 exactly.
+            ReqAtMost(errors, $"{name}.TiltFallAngle", m.TiltFallAngle, PoseKey.TiltCeiling);
             ReqPositive(errors, $"{name}.DownedSeconds", m.DownedSeconds);
             // Rule 8 (ReqStableSpring's own doc carries the rationale).
             ReqStableSpring(errors, name, m.TiltDampingRatio, m.TiltSettleSeconds);
@@ -2464,6 +2488,89 @@ namespace Ring.Data
                             $"(Parts[{j}] and Parts[{i}]) — the id is the wire's name for this volume, " +
                             "and two volumes under one name are two answers to one question.");
                     }
+                }
+            }
+        }
+
+        /// ⛔ RULE 15 (app-94sk T6c, spec §3.13), READ AT THE CONFIGURATION:
+        /// the table has the SHAPE that lets every key the producer can name
+        /// resolve without a refusal. Spec §3.13 states it over the key's
+        /// fields (valid clip indices of THIS archetype, phases within their
+        /// clip); the key is produced from BakedClips' positions and the table
+        /// alone, so at build time the same rule is three checks on the table:
+        ///   (a) the CSR is honest -- the first clip starts at row 0 (rule 13
+        ///       stands on row 0 being the rest pose), every clip has at least
+        ///       one row (Sample refuses an empty one by name, from the middle
+        ///       of the combat path), and the sentinel IS the row count (a
+        ///       sentinel past the bones is the one malformation neither the
+        ///       checksum nor rule 6 sees);
+        ///   (b) every POSITION the producer names for this body exists -- the
+        ///       highest one, since positions are indices: the collector's
+        ///       death take (last by the baker's contract), a mob's later
+        ///       take. A table short of one makes PoseSystem hold the rest
+        ///       pose for that take IN SILENCE (ClipOrRest) -- deliberate on a
+        ///       fixture table, a defect on a shipped one, and the build is the
+        ///       one gate the shipped game runs;
+        ///   (c) a baking rate for every clip, positive: RowOf/TicksOf refuse
+        ///       a missing one by name.
+        /// ⚠ WHAT IT DOES NOT BOUND: a key read back OUT OF THE REWIND HISTORY
+        /// (the reader spec §3.13 names). Rule 11 keeps the table such a key
+        /// indexes the same one it was written against; the bound on the key
+        /// itself arrives with that reader (T7, RewoundBody).
+        /// ⚠ NOT CHECKED, AND WHY: the aim mask's length against the table's
+        /// words -- Sample refuses a short one, but on every rig of 64 bones or
+        /// fewer the word is one and an empty mask means "no layer", so a
+        /// check no shipped or fixture table can fail would have no witness.
+        /// Stands down on an empty table: rule 12 has already refused it by
+        /// name, and the checks below index into it.
+        static void ValidatePoseTableShape(List<string> errors, string name, in PoseTable poses,
+            int highestPosition)
+        {
+            int clips = PoseTable.ClipCount(in poses);
+            int rowStride = poses.BoneCount;
+            if (clips <= 0 || rowStride <= 0 || poses.Bones == null) return;
+            int rows = poses.Bones.Length / rowStride;
+            int[] first = poses.ClipFirstRow;
+
+            if (first[0] != 0)
+            {
+                errors.Add($"{name}.Poses first clip must start at row 0 (its first row is {first[0]}) — " +
+                    "row 0 is the rest pose every extent and rule 13 stand on.");
+            }
+            for (int c = 0; c < clips; c++)
+            {
+                if (first[c + 1] > first[c]) continue;
+                errors.Add($"{name}.Poses clip {c} has no rows (ClipFirstRow {first[c]}..{first[c + 1]}) — " +
+                    "a phase of it would be refused from the middle of the combat path.");
+                break;
+            }
+            if (first[clips] != rows)
+            {
+                errors.Add($"{name}.Poses row count disagrees with its bones: the clips claim " +
+                    $"{first[clips]} rows, the bones hold {rows} — a row past the bones is read as an " +
+                    "exception, not as a pose.");
+            }
+            if (clips <= highestPosition)
+            {
+                errors.Add($"{name}.Poses carries {clips} clips, and the producer names position " +
+                    $"{highestPosition} (BakedClips) — a clip the table does not carry is held at the rest " +
+                    "pose in silence (run Ring/Bootstrap/Pose Table, or check the controller's clip set).");
+            }
+            int[] rates = poses.ClipRate;
+            if (rates == null || rates.Length != clips)
+            {
+                errors.Add($"{name}.Poses carries rates for {(rates == null ? 0 : rates.Length)} clips, " +
+                    $"the table has {clips} — every clip needs its baking rate (re-bake: the table " +
+                    "predates the rate field).");
+            }
+            else
+            {
+                for (int c = 0; c < clips; c++)
+                {
+                    if (rates[c] > 0) continue;
+                    errors.Add($"{name}.Poses clip {c} has a baking rate of {rates[c]} rows a second — " +
+                        "must be > 0.");
+                    break;
                 }
             }
         }

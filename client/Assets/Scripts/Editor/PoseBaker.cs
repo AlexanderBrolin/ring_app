@@ -27,8 +27,8 @@ namespace Ring.Editor
     /// table stores POSITIONS WITHOUT NAMES, while "is this a body bone" is a
     /// question about the NAME — so a table holding fingers and IK targets
     /// could not answer its own `GatherRadius` afterwards, and the number would
-    /// need either a seventh field on `PoseTable` (whose shape is pinned at
-    /// six) or a sidecar file (a second home). Dropping them costs nothing that
+    /// need either an eighth field on `PoseTable` (whose shape is pinned at
+    /// seven since T6c's `ClipRate`) or a sidecar file (a second home). Dropping them costs nothing that
     /// is read: no hit volume hangs on a knuckle — eleven volumes for the
     /// collector and not one of them on a finger — while the gunner's
     /// `PoleTarget.L` travels 6.42 m from his own axis in the death clip.
@@ -62,7 +62,9 @@ namespace Ring.Editor
     /// radius for a limb turning at ~20000 deg/s^2, and 0.36 cm at 60 Hz; calm
     /// locomotion at 30 Hz costs 0.15 cm. ⇒ locomotion and rest bake at 30 Hz,
     /// the fast takes — reactions, melee, shots, the slide's entry and exit —
-    /// at 60.
+    /// at 60. ⛔ AND THE RATE IS WRITTEN INTO THE TABLE, per clip (`ClipRate`,
+    /// app-94sk T6c): the simulation maps its whole-tick phases onto rows by
+    /// it, and a 60 Hz take it did not know the rate of played at half speed.
     public static class PoseBaker
     {
         const string PosesDir = "Assets/Data/Poses";
@@ -144,11 +146,14 @@ namespace Ring.Editor
                         $"{prefab.name}: its controller reaches no clip this body can be baked "
                         + "from — an empty table is an unhittable body (rule 12)");
 
-                // Row plan first, so the arrays are allocated once.
+                // Row plan first, so the arrays are allocated once -- and the
+                // rate of every clip beside it (app-94sk T6c).
                 var firstRow = new int[clips.Count + 1];
+                var rates = new int[clips.Count];
                 for (int c = 0; c < clips.Count; c++)
                 {
                     firstRow[c + 1] = firstRow[c] + RowsOf(clips[c]);
+                    rates[c] = RateOf(clips[c]);
                 }
                 int rows = firstRow[clips.Count];
 
@@ -159,6 +164,7 @@ namespace Ring.Editor
                     Bones = new float3[rows * bones.Count],
                     BlendThresholds = ReadBlendThresholds(animator),
                     UpperLayerMask = ReadUpperLayerMask(animator, bones),
+                    ClipRate = rates,
                     Checksum = 0UL,
                 };
 
@@ -171,10 +177,10 @@ namespace Ring.Editor
                     {
                         AnimationClip clip = clips[c];
                         int n = firstRow[c + 1] - firstRow[c];
-                        float rate = RateOf(clip);
+                        int rate = rates[c];
                         for (int r = 0; r < n; r++)
                         {
-                            float t = math.min(r / rate, clip.length);
+                            float t = math.min(r / (float)rate, clip.length);
                             PoseSampling.SamplePose(sampleTarget, instance.transform,
                                 bones, clip, t, row);
                             System.Array.Copy(row, 0, table.Bones,
@@ -835,7 +841,9 @@ namespace Ring.Editor
             return false;
         }
 
-        static float RateOf(AnimationClip clip)
+        /// The rate a clip bakes at, rows a second -- and the number written
+        /// into the table for it (`PoseTable.ClipRate`, app-94sk T6c).
+        static int RateOf(AnimationClip clip)
         {
             string take = AnimatorCatalog.TakeOf(clip.name);
             for (int i = 0; i < FastTakes.Length; i++)
@@ -1002,8 +1010,10 @@ namespace Ring.Editor
 
             report.AppendLine();
             report.AppendLine($"########## {body.Kind} — {body.PrefabPath}");
+            int fast = 0;
+            for (int c = 0; c < t.ClipRate.Length; c++) if (t.ClipRate[c] == FastRateHz) fast++;
             report.AppendLine(
-                $"  bones {stride}, clips {t.ClipFirstRow.Length - 1}, rows {rows}, "
+                $"  bones {stride}, clips {t.ClipFirstRow.Length - 1} ({fast} at {FastRateHz} Hz), rows {rows}, "
                 + $"{bytes / 1024f:F1} KB, thresholds {t.BlendThresholds.Length}, "
                 + $"aim-layer bones {MaskBits(t.UpperLayerMask)}, "
                 + $"checksum 0x{t.Checksum:X16}");

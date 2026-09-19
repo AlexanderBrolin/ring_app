@@ -832,25 +832,29 @@ namespace Ring.Simulation.Core
         /// An array, not a scalar: 65 bones do not fit in a `ulong`, so the
         /// length is `(BoneCount + 63) / 64`.
         public ulong[] UpperLayerMask;
+        /// app-94sk T6c (spec §3.5): ROWS A SECOND, PER CLIP -- the rate each
+        /// clip was baked at, `PoseBaker.RateOf`: 30 for locomotion and rest,
+        /// 60 for the fast takes (strikes, shots, hit reactions, the slide's
+        /// entry and exit). Length is ClipCount. The phase in a key counts
+        /// whole TICKS, so a row is `phase * rate / TickRate` (RowOf below) and
+        /// a clip is over after `ceil(rows * TickRate / rate)` ticks (TicksOf);
+        /// at the tick rate both are the identity. ⚠ A fixture table gets the
+        /// tick rate on every clip from TestConfigs.Sealed.
+        /// ⛔ THE SEVENTH FIELD, and the importer's layout moved with it
+        /// (PoseTableImporter, magic `RPT2`): a table that does not say how
+        /// fast its rows go by cannot be played at the doll's speed, and T6a's
+        /// one-to-one map read every 60 Hz take at half of it.
+        public int[] ClipRate;
         /// Checksum OF THE LOADED BYTES (Р514). ⛔ The asset's field is a cache,
         /// not the source of truth: the config build recomputes and compares.
         public ulong Checksum;
 
-        // ⛔⛔ WHAT THIS TABLE DOES NOT CARRY, NAMED SO THE NEXT READER DOES NOT
-        // LOOK FOR IT: THE BAKING RATE. Spec §3.5 maps a phase to a row as
-        // `row = phase_in_ticks * (bake_fps / 30)`, and `bake_fps` is 30 for
-        // locomotion and rest and 60 for the fast takes — a per-CLIP number
-        // that lives in `PoseBaker.FastTakes`, inside `Ring.Editor`, which
-        // `Ring.Simulation` cannot see. Neither `ClipFirstRow` nor the clip
-        // lengths restore it.
-        // ⇒ THE FIRST READER OF THAT MAPPING, `Sample` below (T6a), maps a
-        // phase to a row ONE-TO-ONE and holds the clip's last row past its
-        // end, so it needs no rate yet; the decision -- a seventh field here,
-        // or a rate the simulation is told some other way -- falls to T6c,
-        // whose fixture 18a is the first reader of a 24-frame pack (the
-        // gunner's). Deciding it earlier would be guessing at that consumer;
-        // leaving it UNSAID would cost a re-bake of five committed artifacts
-        // nobody predicted.
+        // ⛔ WHAT THIS TABLE STILL DOES NOT CARRY, NAMED SO THE NEXT READER
+        // DOES NOT LOOK FOR IT: CLIP NAMES (positions are BakedClips'
+        // contract) and whether a clip LOOPS (looping is the producer's
+        // business, PoseSystem). The baking rate it did not carry through T6a
+        // arrived as `ClipRate` in T6c, with the re-bake of the five committed
+        // artifacts that decision was known to cost.
 
         /// One body's bone positions IN ITS POSE (app-94sk T6a, spec §3.6):
         /// the two rows of the lower layer's blend tree mixed by the key's
@@ -888,11 +892,15 @@ namespace Ring.Simulation.Core
         /// malformed table, and it is refused by name below rather than
         /// read as far as it goes (review finding).
         ///
-        /// ⚠ THE ROW MAP IS ONE-TO-ONE FOR NOW: phase `p` of a clip is its
-        /// row `p`, held at the clip's last row past its end. T6c makes it
-        /// rate-aware (the gunner's pack is baked at 24 frames a second) and
-        /// interpolating -- fixtures 18/18a, mutants M342/M343 -- and the
-        /// comment block right above hands it that decision.
+        /// ⚠ THE ROW MAP IS RATE-AWARE AND INTERPOLATING (app-94sk T6c, spec
+        /// §3.5): a whole-tick phase lands on row `phase * rate / TickRate` of
+        /// its clip (RowOf), a row that falls BETWEEN two baked rows is the
+        /// linear mix of the two (fixture 18, mutant M342), and a phase past
+        /// the clip's end holds the last row (T6a's contract). On the shipped
+        /// rates, 30 and 60, the fraction is always zero and a 60 Hz take
+        /// advances two rows a tick (fixture 18a, mutant M343); a rate the
+        /// tick rate does not divide is where the mix is observable, and the
+        /// format admits one.
         ///
         /// ONLY `[0, BoneCount)` OF THE BUFFER IS WRITTEN. A scratch buffer
         /// sized for the widest body keeps a previous body's bones past that
@@ -905,9 +913,11 @@ namespace Ring.Simulation.Core
         /// in the message -- the shape of every refusal in this file
         /// (ItemCatalogLookup.Find), and unlike HitParts.PoseTop's benign
         /// `return`, because a writer that filled half a buffer would have
-        /// nothing honest to return. Validation rule 15 (T6c) keeps the clip
-        /// and row refusals from ever being reached from a built
-        /// configuration.
+        /// nothing honest to return. Validation rule 15
+        /// (SimConfigBuilder.ValidatePoseTableShape) keeps the clip, row and
+        /// rate refusals from ever being reached by a key THIS TICK'S PRODUCER
+        /// made on a built configuration; a key read back out of the rewind
+        /// history is its reader's to bound (T7, spec §3.13).
         public static void Sample(in PoseTable table, in PoseKey key, bool singleLayer, float3[] into)
         {
             int n = table.BoneCount;
@@ -918,11 +928,19 @@ namespace Ring.Simulation.Core
                     + $"the table has {n}", nameof(into));
             }
 
-            int rowA = RowBase(in table, key.LowerClipA, key.LowerPhase);
-            int rowB = RowBase(in table, key.LowerClipB, key.LowerPhase);
+            int rowA = RowOf(in table, key.LowerClipA, key.LowerPhase, out int nextA, out float fracA);
+            int rowB = RowOf(in table, key.LowerClipB, key.LowerPhase, out int nextB, out float fracB);
             float w = ByteCodecs.UnitBack(key.LowerBlend, 1f);
             for (int b = 0; b < n; b++)
-                into[b] = math.lerp(table.Bones[rowA + b], table.Bones[rowB + b], w);
+            {
+                // Each slot's row first -- the mix of two baked rows by the
+                // phase's fraction; `lerp(x, x, 0)` is `x` to the bit, so a
+                // whole row costs nothing and moves no digest -- then the
+                // tree's mix of the two slots.
+                float3 a = math.lerp(table.Bones[rowA + b], table.Bones[nextA + b], fracA);
+                float3 c = math.lerp(table.Bones[rowB + b], table.Bones[nextB + b], fracB);
+                into[b] = math.lerp(a, c, w);
+            }
 
             if (singleLayer) return;
             ulong[] mask = table.UpperLayerMask;
@@ -934,7 +952,7 @@ namespace Ring.Simulation.Core
                     $"PoseTable.Sample: the aim mask has {mask.Length} words, a table of {n} bones "
                     + $"needs {words}");
             }
-            int rowU = RowBase(in table, key.UpperClip, 0);
+            int rowU = RowOf(in table, key.UpperClip, 0, out _, out _);   // held, phase 0: no fraction
             float wu = ByteCodecs.UnitBack(key.UpperWeight, 1f);
             for (int b = 0; b < n; b++)
             {
@@ -953,8 +971,9 @@ namespace Ring.Simulation.Core
         /// walk on it would send Sample to its "clip N is not in a table of M
         /// clips" refusal from the middle of the combat path. `HasClip` is
         /// what it asks first; a clip the table does not carry is held at the
-        /// rest clip, and validation rule 15 (T6c) is what keeps a SHIPPED
-        /// table from ever being that short.
+        /// rest clip, and validation rule 15 (SimConfigBuilder.
+        /// ValidatePoseTableShape) is what keeps a SHIPPED table from ever
+        /// being that short.
         public static int ClipCount(in PoseTable table)
             => table.ClipFirstRow == null ? 0 : math.max(0, table.ClipFirstRow.Length - 1);
 
@@ -966,14 +985,25 @@ namespace Ring.Simulation.Core
         public static int RowsOf(in PoseTable table, int clip)
             => table.ClipFirstRow[clip + 1] - table.ClipFirstRow[clip];
 
-        /// Where the row that clip `clip` shows at `phase` starts in Bones.
-        /// The clip's length is the CSR subtraction its own field doc
-        /// describes; a phase past it holds the last row. The row is checked
-        /// against the bones actually present: a sentinel claiming more rows
-        /// than Bones holds is the one malformation neither the checksum nor
-        /// rule 6 sees, and it would otherwise surface as an
-        /// IndexOutOfRangeException from the middle of the bone loop.
-        static int RowBase(in PoseTable table, int clip, int phase)
+        /// Where the row that clip `clip` shows at a whole-tick `phase`
+        /// starts in Bones, with the row after it (itself, on a whole row) and
+        /// the fraction of the way towards it (app-94sk T6c, spec §3.5): row `phase * rate / TickRate`
+        /// of the clip, IN INTEGERS -- `phase * rate` counts in rows per tick
+        /// rate, the quotient is the row and the remainder over TickRate the
+        /// fraction -- so a rate the tick rate divides gives a fraction of
+        /// exactly zero, and `24 / 30` is never a float rounding. A phase past
+        /// the clip's end holds the last row, fraction zero; the last row's
+        /// "next" is itself, so a mix on it is the identity. The clip's
+        /// length is the CSR subtraction its own field doc describes.
+        /// The rows are checked against the bones actually present: a
+        /// sentinel claiming more rows than Bones holds is the one
+        /// malformation neither the checksum nor rule 6 sees, and it would
+        /// otherwise surface as an IndexOutOfRangeException from the middle
+        /// of the bone loop. A rate the table does not carry for the clip is
+        /// refused by name too (RateOf). Every one of these is a BUILD refusal
+        /// first (validation rule 15), and a throw from here means a table
+        /// that never went through it.
+        static int RowOf(in PoseTable table, int clip, int phase, out int nextBase, out float frac)
         {
             int clips = table.ClipFirstRow == null ? 0 : table.ClipFirstRow.Length - 1;
             if (clip < 0 || clip >= clips)
@@ -988,15 +1018,62 @@ namespace Ring.Simulation.Core
                 throw new System.ArgumentException(
                     $"PoseTable.Sample: clip {clip} has no rows (ClipFirstRow {first}..{last + 1})");
             }
-            int row = first + math.min(phase, last - first);
+            int stepped = phase * RateOf(in table, clip);          // rows, in units of 1/TickRate
+            int offset = stepped / SimulationWorld.TickRate;
+            int row, next;
+            if (offset >= last - first)
+            {
+                row = last; next = last; frac = 0f;                 // held at the clip's end
+            }
+            else
+            {
+                int rem = stepped % SimulationWorld.TickRate;
+                row = first + offset;
+                // A whole row reads ONE row: on the shipped rates (30 and 60,
+                // both multiples of the tick rate) the remainder is always
+                // zero, and a second row fetched for a lerp by zero would be
+                // half the bone traffic of every sample for nothing (review).
+                next = rem == 0 ? row : row + 1;
+                frac = rem / (float)SimulationWorld.TickRate;
+            }
             int bones = table.Bones == null ? 0 : table.Bones.Length;
-            if (row < 0 || (row + 1) * table.BoneCount > bones)
+            if (row < 0 || (next + 1) * table.BoneCount > bones)
             {
                 throw new System.ArgumentException(
-                    $"PoseTable.Sample: clip {clip} row {row} lies past the bones "
+                    $"PoseTable.Sample: clip {clip} row {next} lies past the bones "
                     + $"({bones} entries for {table.BoneCount} bones a row)");
             }
+            nextBase = next * table.BoneCount;
             return row * table.BoneCount;
+        }
+
+        /// The rate clip `clip` was baked at, rows a second -- refused by name
+        /// when the table carries none for it (a table from before the field,
+        /// or a hand-built one that forgot it), the shape of every refusal in
+        /// this file.
+        static int RateOf(in PoseTable table, int clip)
+        {
+            int[] rates = table.ClipRate;
+            if (rates == null || clip >= rates.Length || rates[clip] <= 0)
+            {
+                throw new System.ArgumentException(
+                    $"PoseTable.Sample: clip {clip} has no baking rate (the table carries rates for "
+                    + $"{(rates == null ? 0 : rates.Length)} clips)");
+            }
+            return rates[clip];
+        }
+
+        /// How many TICKS clip `clip` lasts -- its rows at its own rate,
+        /// rounded up (app-94sk T6c): the number a looping producer wraps its
+        /// phase at and a one-shot ends on. At the tick rate it is RowsOf; a
+        /// 60 Hz take of four rows lasts two ticks. ⛔ ONE HOME of "rows to
+        /// ticks", beside RowOf's "ticks to rows": PoseSystem asks here, and a
+        /// producer that counted rows for ticks played every fast take at half
+        /// speed (fixture 18a, mutant M449).
+        public static int TicksOf(in PoseTable table, int clip)
+        {
+            int rate = RateOf(in table, clip);
+            return (RowsOf(in table, clip) * SimulationWorld.TickRate + rate - 1) / rate;
         }
     }
 

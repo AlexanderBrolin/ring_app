@@ -40,8 +40,9 @@ namespace Ring.Simulation.Core
     /// ⛔ THE CLIPS ARE NAMED BY POSITION (BakedClips), and a table that does
     /// not carry a position holds the REST clip for it -- every fixture table
     /// carries one phase per body and none of the walks, takes or death
-    /// (TestConfigs' own doc); validation rule 15 (T6c) keeps a SHIPPED table
-    /// from being that short. Said once, in `ClipOrRest`.
+    /// (TestConfigs' own doc); validation rule 15 (SimConfigBuilder.
+    /// ValidatePoseTableShape) keeps a SHIPPED table from being that short.
+    /// Said once, in `ClipOrRest`.
     ///
     /// ⛔ WHAT A MOB'S LOWER LAYER DOES NOT DO YET, SAID RATHER THAN IMPLIED
     /// (bd app-pks5). Its locomotion clip stays the REST clip whatever its
@@ -98,15 +99,17 @@ namespace Ring.Simulation.Core
             // THE MELEE TAKE PLAYS ON TELEGRAPH'S OWN CLOCK: StateTimer is
             // zeroed on entry (MobAiSystem's Chase arm) and grows a tick at a
             // time, so its tick count IS the take's phase -- no second clock,
-            // nothing to remember, and a take that has run out of rows hands
-            // the body back to the rest loop for as long as the state lasts,
-            // the way MobVisual's one-shot returns to locomotion when it ends.
+            // nothing to remember, and a take that has run out of TICKS (its
+            // rows at its own rate, PoseTable.TicksOf: the strikes are baked
+            // at 60 Hz and last half as many ticks as rows, app-94sk T6c)
+            // hands the body back to the rest loop for as long as the state
+            // lasts, the way MobVisual's one-shot returns to locomotion.
             if (m.Ai == MobAiState.Telegraph)
             {
                 int melee = ClipOrRest(in table, BakedClips.MeleeOf(m.Type));
                 int phase = (int)math.round(m.StateTimer / SimulationWorld.TickDt);
-                int rows = PoseTable.RowsOf(in table, melee);
-                if (melee != BakedClips.Rest && phase < rows)
+                int ticks = PoseTable.TicksOf(in table, melee);
+                if (melee != BakedClips.Rest && phase < ticks)
                 {
                     m.LowerClipA = (byte)melee;
                     m.LowerClipB = (byte)melee;
@@ -117,8 +120,8 @@ namespace Ring.Simulation.Core
                 // counted on from where the take left off.
                 m.LowerClipA = BakedClips.Rest;
                 m.LowerClipB = BakedClips.Rest;
-                m.LowerPhase = Wrap(melee == BakedClips.Rest ? phase : phase - rows,
-                    PoseTable.RowsOf(in table, BakedClips.Rest));
+                m.LowerPhase = Wrap(melee == BakedClips.Rest ? phase : phase - ticks,
+                    PoseTable.TicksOf(in table, BakedClips.Rest));
                 return;
             }
 
@@ -170,10 +173,14 @@ namespace Ring.Simulation.Core
                 // SLIDING: the slide loop, the pose validation rule 16
                 // measures the collector's crown in. ⚠ Slide_Start and
                 // Slide_Exit, the one-shots the doll plays into and out of the
-                // loop, are not carried: they are fast takes baked at 60 Hz,
-                // whose row mapping arrives with T6c (fixture 18a), and the
-                // slide's silhouette is defined by the loop (rule 16). Said
-                // here so the next reader does not look for them.
+                // loop, are not carried. The 60 Hz row mapping they need
+                // exists since T6c; what does not is a producer's CLOCK for
+                // them (the entry could count SlideDuration - SlideTimer, the
+                // exit has no simulation state at all) and the DECISION which
+                // take defines the slide's silhouette -- at the shipped
+                // SlideDuration the doll never reaches the loop at all
+                // (bd app-tjre, the owner's). Said here so the next reader
+                // does not look for them.
                 int slide = ClipOrRest(in table, BakedClips.Collector.Slide);
                 Loop(ref p.LowerClipA, ref p.LowerPhase, slide, in table);
                 p.LowerClipB = (byte)slide;
@@ -260,19 +267,20 @@ namespace Ring.Simulation.Core
 
         /// One tick of a looping clip in the FIRST lower slot: a change of
         /// clip starts it at its first row, otherwise the phase advances one
-        /// row and wraps at the clip's length (Sample holds the last row past
-        /// the end; looping is this producer's business, its doc says). The
-        /// caller sets the second slot -- the same clip for a mob or a slide,
-        /// the pair's other child for the blend tree.
+        /// tick and wraps at the clip's length IN TICKS (PoseTable.TicksOf --
+        /// its rows at its own rate, app-94sk T6c; Sample holds the last row
+        /// past the end, looping is this producer's business, its doc says).
+        /// The caller sets the second slot -- the same clip for a mob or a
+        /// slide, the pair's other child for the blend tree.
         static void Loop(ref byte clipA, ref int phase, int clip, in PoseTable table)
         {
-            phase = clipA == clip ? Wrap(phase + 1, PoseTable.RowsOf(in table, clip)) : 0;
+            phase = clipA == clip ? Wrap(phase + 1, PoseTable.TicksOf(in table, clip)) : 0;
             clipA = (byte)clip;
         }
 
-        /// A phase folded into a clip's rows. A clip with NO rows (a CSR that
-        /// starts and ends a clip on one row -- Sample refuses it by name,
-        /// this producer must not divide by it) holds phase 0.
-        static int Wrap(int phase, int rows) => rows > 0 ? phase % rows : 0;
+        /// A phase folded into a clip's length in ticks. A clip of NO ticks (a
+        /// CSR that starts and ends a clip on one row -- Sample refuses it by
+        /// name, this producer must not divide by it) holds phase 0.
+        static int Wrap(int phase, int ticks) => ticks > 0 ? phase % ticks : 0;
     }
 }

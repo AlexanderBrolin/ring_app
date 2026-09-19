@@ -81,6 +81,15 @@ namespace Ring.Simulation.Tests
         public static PoseTable Sealed(PoseTable t)
         {
             t.UpperLayerMask ??= new ulong[(t.BoneCount + 63) / 64];
+            // app-94sk T6c: a fixture table's rows ARE ticks -- every clip at
+            // the tick rate unless the fixture says otherwise (18 and 18a do).
+            // Filled here for the same reason the mask is: the fold hashes a
+            // null array as -1 and a real one as its length.
+            if (t.ClipRate == null)
+            {
+                t.ClipRate = new int[PoseTable.ClipCount(in t)];
+                for (int c = 0; c < t.ClipRate.Length; c++) t.ClipRate[c] = SimulationWorld.TickRate;
+            }
             t.Checksum = SimConfigHash.PoseTableChecksum(in t);
             return t;
         }
@@ -320,9 +329,15 @@ namespace Ring.Simulation.Tests
                 }
                 first[c + 1] = first[c] + rowsPerClip;
             }
+            // app-94sk T6c: the rates travel with the clips -- the source's
+            // for the clips it had, the tick rate for the added ones.
+            var rates = new int[clipCount];
+            for (int c = 0; c < clipCount; c++)
+                rates[c] = t.ClipRate != null && c < t.ClipRate.Length ? t.ClipRate[c] : SimulationWorld.TickRate;
             PoseTable wide = t;
             wide.Bones = bones;
             wide.ClipFirstRow = first;
+            wide.ClipRate = rates;
             return Sealed(wide);
         }
 
@@ -419,14 +434,70 @@ namespace Ring.Simulation.Tests
             BlendThresholds = new[] { 0f, 0.33f, 0.66f, 1f },
         });
 
-        // ⛔ `PoseTableOfSection` AND `WithOneMoreRow` ARE NOT WRITTEN HERE,
-        // AND THAT IS A DECISION RATHER THAN AN OMISSION (app-94sk T4). The
-        // plan's helper-home table names both as this file's, but their only
-        // consumers are fixtures 18в/18г, which live in T6c. Written now they
-        // would be dead code whose doc has to claim readers it does not have —
-        // and the first draft of `WithOneMoreRow` did exactly that ("the
-        // fixtures run this over all five bodies", run by nobody). T6c adds
-        // them together with the fixtures that call them.
+        /// app-94sk T6c: THE DOOR TO THE BUILDER. Validation rule 15 requires a
+        /// table that reaches SimConfigBuilder to carry every position a
+        /// producer names (BakedClips) -- the collector's death take at 15, a
+        /// mob's later take -- while every fixture table above carries one
+        /// phase per body on purpose (their own doc), and the producer holds
+        /// the rest pose for a position a fixture table lacks
+        /// (PoseSystem.ClipOrRest, by design since T6b). A fixture table headed
+        /// for the builder is therefore widened here with copies of its rest
+        /// row up to the WIDEST need, the collector's: rules 9/13/16 read the
+        /// same rows they read before, and a padded mob table is as legal as a
+        /// padded collector's. An empty table is left alone -- rule 12 is
+        /// about it, and this door must not repair it. A fixture that means to
+        /// drive rule 15 itself hands its table past this door (18ж, 18з).
+        /// ⚠ AND THE PRODUCER SEES THE DIFFERENCE: a padded mob table HAS its
+        /// strike positions (one rest row each), so PoseSystem's Telegraph arm
+        /// names the take for one tick instead of holding Rest (ClipOrRest) --
+        /// a change of KEY, not of pose, on every world built from
+        /// BuildShipped. Said so that T7 does not read it as a regression.
+        public static PoseTable ForTheBuilder(in PoseTable t)
+        {
+            int have = PoseTable.ClipCount(in t);
+            int need = BakedClips.Collector.HighestPosition + 1;
+            return have <= 0 || have >= need ? t : PaddedToClips(t, need);
+        }
+
+        /// app-94sk T6c: THE SAME RIG, ONE MORE PHASE -- a copy of the table
+        /// whose LAST clip has one more row (a copy of its final row),
+        /// re-sealed. "Another table of one body" for fixtures 18в/18г: the
+        /// bones and the clips are the same, so nothing but the sentinel and
+        /// the checksum tells the two apart -- which is exactly what
+        /// ArenaTopologyMatches has to see. Written together with the fixtures
+        /// that call it (the T4 note that stood here said why not earlier).
+        public static PoseTable WithOneMoreRow(in PoseTable t)
+        {
+            int clips = PoseTable.ClipCount(in t);
+            if (clips <= 0 || t.BoneCount <= 0 || t.Bones == null)
+                throw new System.ArgumentException("WithOneMoreRow: the table has no clips");
+            int rows = t.Bones.Length / t.BoneCount;
+            var bones = new float3[(rows + 1) * t.BoneCount];
+            System.Array.Copy(t.Bones, bones, t.Bones.Length);
+            System.Array.Copy(t.Bones, (rows - 1) * t.BoneCount, bones, rows * t.BoneCount, t.BoneCount);
+            var first = (int[])t.ClipFirstRow.Clone();
+            first[clips] += 1;
+            PoseTable more = t;
+            more.Bones = bones;
+            more.ClipFirstRow = first;
+            return Sealed(more);
+        }
+
+        /// app-94sk T6c: one body's table BY REFERENCE, by the section's name,
+        /// so fixture 18г walks the five bodies with one loop. Refuses an
+        /// unknown name rather than answering with somebody's table.
+        public static ref PoseTable PoseTableOfSection(ref SimConfig cfg, string body)
+        {
+            switch (body)
+            {
+                case "Hero": return ref cfg.Hero.Poses;
+                case "Chaser": return ref cfg.Chaser.Poses;
+                case "Gunner": return ref cfg.Gunner.Poses;
+                case "Elite": return ref cfg.Elite.Poses;
+                case "Director": return ref cfg.Director.Poses;
+                default: throw new System.ArgumentException($"PoseTableOfSection: no body named '{body}'");
+            }
+        }
 
         /// The world midpoint of a volume's capsule, for a body standing at
         /// `bodyPlan` AS ITS TABLE STANDS -- the identity yaw, which since

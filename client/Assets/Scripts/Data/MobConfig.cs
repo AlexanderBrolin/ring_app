@@ -68,7 +68,13 @@ namespace Ring.Data
         [Range(0f, 50f)] public float TiltGain = 10.5f;
         /// Knockdown (owner decision Н23, variant 3a): above TiltFallAngle
         /// the mob goes down for DownedSeconds and neither shoots nor strikes.
-        [Range(0.1f, 3.14f)] public float TiltFallAngle = 0.9f;
+        /// ⚠ THE CEILING IS THE POSE KEY'S (app-94sk T6c, validation rule 15a):
+        /// a threshold the key cannot express would rewind a fallen body to a
+        /// lean it never had. The same constant the build refuses above, so
+        /// the slider never offers it -- the one [Range] in this folder that
+        /// reads a constant rather than a literal, because the number has a
+        /// home (PoseKey.TiltCeiling) and a second spelling would drift.
+        [Range(0.1f, PoseKey.TiltCeiling)] public float TiltFallAngle = 0.9f;
         [Range(0.1f, 10f)] public float DownedSeconds = 1.2f; // Was the sync-marker key until app-88jb Т13.
 
         /// app-88jb Т13 (spec §3.3, owner decision Н8): this archetype's body as

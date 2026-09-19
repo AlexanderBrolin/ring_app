@@ -46,14 +46,30 @@ namespace Ring.Simulation.Core
         /// ArenaTopologyMatches does not compare it: a comparison that cannot
         /// fail is dead code, and a negative test for it cannot be written.
         /// ⚠ AND THE NUMBER HAS A CEILING: an sbyte saturates at 127 codes =
-        /// 1.27 rad = 72.8 deg, while MobConfig declares TiltFallAngle up to
-        /// 3.14. A saturated tilt in the history is a rewound pose that
-        /// disagrees with the one the shot was judged against, and the more
-        /// interesting the situation the more it disagrees. Validation rule
-        /// 15a (T6c) refuses a configuration whose fall angle the key cannot
-        /// express; QuantizeTilt below clamps by LENGTH, so the direction of a
-        /// lean survives the clamp even when its magnitude does not.
+        /// 1.27 rad = 72.8 deg, while MobConfig declared TiltFallAngle up to
+        /// 3.14 until app-94sk T6c. A saturated tilt in the history is a
+        /// rewound pose that disagrees with the one the shot was judged
+        /// against, and the more interesting the situation the more it
+        /// disagrees. Validation rule 15a (SimConfigBuilder.ValidateMob,
+        /// against TiltCeiling below) refuses a configuration whose fall angle
+        /// the key cannot express, and MobConfig's [Range] offers the
+        /// Inspector the same ceiling. ⚠ THAT COVERS THE FOUR ARCHETYPES,
+        /// because only they carry a threshold: the collector has no fall
+        /// angle (HeroConfig carries his spring and no knockdown), so his
+        /// lean is bounded by that spring rather than by a validated number,
+        /// and past 1.27 rad his key saturates the same way -- said here
+        /// rather than implied closed. QuantizeTilt below clamps by LENGTH,
+        /// so the direction of a lean survives the clamp even when its
+        /// magnitude does not.
         public const float TiltQuantStep = 0.01f;   // 127 * 0.01 = 1.27 rad = 72.8 deg
+
+        /// The longest lean the key can hold: 127 codes of the step, the
+        /// length QuantizeTilt clamps at. ⛔ PUBLIC AND ONE HOME (app-94sk T6c):
+        /// validation rule 15a asks the same comparison of every archetype's
+        /// TiltFallAngle, and MobConfig's [Range] offers the Inspector the same
+        /// ceiling -- a second spelling of `127 * step` in either would be the
+        /// drift TiltQuantStep exists to prevent.
+        public const float TiltCeiling = sbyte.MaxValue * TiltQuantStep;   // 1.27 rad
 
         /// The collector's key. `Facing` goes through the SAME codec the wire
         /// uses (ByteCodecs.Dir -- one mapping, not two spellings of it), the
@@ -135,10 +151,9 @@ namespace Ring.Simulation.Core
         /// invented there would be the drift the constant exists to prevent.
         static void QuantizeTilt(float2 tilt, out sbyte x, out sbyte z)
         {
-            const float Ceiling = sbyte.MaxValue * TiltQuantStep;   // 1.27 rad
             float len = math.length(tilt);
             if (!math.isfinite(len)) { x = 0; z = 0; return; }
-            if (len > Ceiling) tilt *= Ceiling / len;
+            if (len > TiltCeiling) tilt *= TiltCeiling / len;
             x = (sbyte)math.round(tilt.x / TiltQuantStep);
             z = (sbyte)math.round(tilt.y / TiltQuantStep);
         }

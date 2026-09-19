@@ -139,6 +139,13 @@ namespace Ring.Editor
                     return $"blend threshold {i}: {a.BlendThresholds[i]} committed against "
                         + $"{b.BlendThresholds[i]} fresh";
 
+            // app-94sk T6c: the rates, per clip.
+            if (a.ClipRate.Length != b.ClipRate.Length)
+                return $"{a.ClipRate.Length} clip rates committed against {b.ClipRate.Length} fresh";
+            for (int i = 0; i < a.ClipRate.Length; i++)
+                if (a.ClipRate[i] != b.ClipRate[i])
+                    return $"clip {i} rate: {a.ClipRate[i]} committed against {b.ClipRate[i]} fresh";
+
             if (a.UpperLayerMask.Length != b.UpperLayerMask.Length)
                 return $"{a.UpperLayerMask.Length} mask words committed against "
                     + $"{b.UpperLayerMask.Length} fresh";

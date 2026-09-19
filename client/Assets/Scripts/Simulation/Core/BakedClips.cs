@@ -29,8 +29,9 @@ namespace Ring.Simulation.Core
     /// therefore none of the clips named here past the slide. That is by
     /// design (TestConfigs' own doc), and it is why the producer asks
     /// `PoseTable.HasClip` before naming a clip and holds the rest clip for one
-    /// the table does not have -- validation rule 15 (T6c) is what keeps a
-    /// SHIPPED table from ever being that short.
+    /// the table does not have -- validation rule 15 (SimConfigBuilder.
+    /// ValidatePoseTableShape, against `HighestPosition` / `HighestPositionOf`
+    /// below) is what keeps a SHIPPED table from ever being that short.
     public static class BakedClips
     {
         /// Every body: clip 0 is the rest clip, so row 0 is the rest pose
@@ -49,6 +50,13 @@ namespace Ring.Simulation.Core
             public const int Slide = 1;              // Slide_Loop -- the pose rule 16 measures
             public const int AimNeutral = 6;         // Pistol_Aim_Neutral
             public const int Death = 15;             // Death01, last by the contract
+
+            /// The highest position the collector's producer can put in a
+            /// key -- the death take, last by the contract, so every other
+            /// position lies below it. Validation rule 15 (app-94sk T6c)
+            /// requires a shipped table to reach it; the test-side door to the
+            /// builder widens a fixture table to it (TestConfigs.ForTheBuilder).
+            public const int HighestPosition = Death;
 
             /// The blend tree's children, threshold order. A span over constant
             /// data rather than an array field: nothing can write into it, and
@@ -79,6 +87,13 @@ namespace Ring.Simulation.Core
             MobType.Director => 1,   // Attack
             _ => throw new System.ArgumentOutOfRangeException(nameof(type), type, "unknown archetype"),
         };
+
+        /// The highest position this archetype's producer can put in a key --
+        /// the later of its two takes (the rest clip is 0 by contract). What
+        /// validation rule 15 (app-94sk T6c) requires a shipped table to reach:
+        /// a table short of it makes PoseSystem hold the rest pose for the
+        /// take in silence (ClipOrRest).
+        public static int HighestPositionOf(MobType type) => math.max(MeleeOf(type), RangedOf(type));
 
         /// ⛔⛔ WHICH WAY A RIG FACES IN ITS OWN TABLE, in the body frame's
         /// plan `(x, z)`. The baker measures bones in the prefab root's frame

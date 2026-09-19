@@ -14,8 +14,13 @@ namespace Ring.Simulation.Core
     /// No UnityEngine (asmdef: noEngineReferences) — Critical Rule 1.
     public sealed class SimulationWorld
     {
-        /// ADR-002 T5: simulation runs at 30 Hz. The single source of dt.
-        public const float TickDt = 1f / 30f;
+        /// ADR-002 T5: simulation runs at 30 Hz. The single source of the
+        /// rate, AS A WHOLE NUMBER (app-94sk T6c): a pose table's rows are
+        /// mapped onto ticks by integer arithmetic (PoseTable.RowOf/TicksOf),
+        /// and `24 / 30` in float is not one number but a rounding. TickDt is
+        /// derived from it, and `1f / 30` is `1f / 30f` bit for bit.
+        public const int TickRate = 30;
+        public const float TickDt = 1f / TickRate;
 
         /// A length stated in SECONDS, expressed in the only unit a
         /// deterministic comparison may use: WHOLE TICKS (Stage 3, R-178 and
@@ -703,10 +708,13 @@ namespace Ring.Simulation.Core
         /// half-width, player cap, spawn ring fraction, the three per-match
         /// entity caps, (Stage 3 Task 4, owner decision R-19) the backpack's
         /// two capacity numbers, (Stage 3 Task 13, spec §3.7 Р264) the
-        /// item catalog itself and (app-88jb Т24, RULING 134) the rewind
+        /// item catalog itself, (app-88jb Т24, RULING 134) the rewind
         /// window Arena.RewindCapTicks, which sizes PositionHistory's rows at
-        /// construction (see ArenaTopologyMatches below for the full field
-        /// list) — must stay identical: a change there invalidates
+        /// construction, and (app-94sk T6c, spec §3.5а rule 11) the five pose
+        /// tables and the number of hit volumes on each body, which the keys
+        /// in those rows and the part ids in the journal index (see
+        /// ArenaTopologyMatches below for the full field list) — must stay
+        /// identical: a change there invalidates
         /// collision/spawn geometry or array sizing that isn't reconciled here,
         /// so it throws instead; Presentation reacts by restarting the world.
         /// Migration: Hp clamps down to the new max, every player timer clamps into
@@ -740,15 +748,20 @@ namespace Ring.Simulation.Core
 
         public void ApplyConfig(in SimConfig next)
         {
-            if (!ArenaTopologyMatches(in _config.Arena, in next.Arena, in _config.Hero, in next.Hero,
-                    _config.Items, next.Items))
+            if (!ArenaTopologyMatches(in _config, in next))
             {
                 throw new System.ArgumentException("SimulationWorld.ApplyConfig: arena topology " +
                     "changed (radius/obstacles/walls/player cap/spawn ring/entity caps/backpack " +
-                    "capacity/item catalog/rewind window) — restart the world instead of " +
+                    "capacity/item catalog/rewind window/pose tables/hit parts) — restart the " +
+                    "world instead of " +
                     "hot-tweaking it.");
             }
 
+            // app-94sk T6c (spec §3.5а item 2, fixture 18б): THE WHOLE STRUCT,
+            // and with it the five pose tables -- a field-by-field copy that
+            // forgot `Poses` would zero every body's pose on the first live
+            // edit of a number, and every volume would stand in the first
+            // phase of the first clip (mutant M344).
             _config = next;
 
             for (int i = 0; i < _players.Length; i++)
@@ -916,9 +929,14 @@ namespace Ring.Simulation.Core
         /// constant (Task 3, same zero-guard as Task 1's single-stream version).
         static uint Fold(uint x) => x == 0 ? 0x9E3779B9u : x;
 
-        static bool ArenaTopologyMatches(in ArenaSimConfig a, in ArenaSimConfig b,
-            in HeroSimConfig heroA, in HeroSimConfig heroB, ItemDef[] itemsA, ItemDef[] itemsB)
+        static bool ArenaTopologyMatches(in SimConfig ca, in SimConfig cb)
         {
+            ref readonly ArenaSimConfig a = ref ca.Arena;
+            ref readonly ArenaSimConfig b = ref cb.Arena;
+            ref readonly HeroSimConfig heroA = ref ca.Hero;
+            ref readonly HeroSimConfig heroB = ref cb.Hero;
+            ItemDef[] itemsA = ca.Items;
+            ItemDef[] itemsB = cb.Items;
             if (a.Radius != b.Radius || a.ObstacleCount != b.ObstacleCount) return false;
             for (int i = 0; i < a.ObstacleCount; i++)
             {
@@ -1101,7 +1119,37 @@ namespace Ring.Simulation.Core
                     || itemsA[i].Kind != itemsB[i].Kind)
                     return false;
             }
+            // app-94sk T6c (spec §3.5а item 3, validation rule 11): THE FIVE
+            // POSE TABLES AND THE COUNT OF VOLUMES ON EACH BODY. A PoseKey in
+            // the six rows of the rewind history indexes a table's clips and
+            // rows, and a PartId in an already-journaled event names a volume
+            // by its index; swap either under a live world and those bytes
+            // point past the end or at another volume, in silence. The table
+            // is compared by its CHECKSUM -- the fold of its loaded numbers,
+            // which validation rule 27 has already proven true of the field on
+            // every built configuration and TestConfigs.Sealed on every
+            // fixture -- and the volumes by their COUNT alone: a capsule's
+            // radius and multiplier are the owner's hot knobs (spec §3.5а item
+            // 4), a number of capsules is topology. ⛔ TiltQuantStep is
+            // deliberately NOT here (PoseKey's own doc): a constant of the
+            // binary is equal in any two configurations by construction, and a
+            // comparison that cannot fail has no witness.
+            if (!TablesMatch(in ca.Hero.Poses, in cb.Hero.Poses) || !PartsMatch(ca.Hero.Parts, cb.Hero.Parts))
+                return false;
+            if (!TablesMatch(in ca.Chaser.Poses, in cb.Chaser.Poses) || !PartsMatch(ca.Chaser.Parts, cb.Chaser.Parts))
+                return false;
+            if (!TablesMatch(in ca.Gunner.Poses, in cb.Gunner.Poses) || !PartsMatch(ca.Gunner.Parts, cb.Gunner.Parts))
+                return false;
+            if (!TablesMatch(in ca.Elite.Poses, in cb.Elite.Poses) || !PartsMatch(ca.Elite.Parts, cb.Elite.Parts))
+                return false;
+            if (!TablesMatch(in ca.Director.Poses, in cb.Director.Poses) || !PartsMatch(ca.Director.Parts, cb.Director.Parts))
+                return false;
             return true;
+
+            static bool TablesMatch(in PoseTable a, in PoseTable b) => a.Checksum == b.Checksum;
+            // Null-safe by the same "answer false, not throw" contract the item
+            // catalog above follows: -1 is never a real array's length.
+            static bool PartsMatch(HitPart[] a, HitPart[] b) => (a?.Length ?? -1) == (b?.Length ?? -1);
         }
 
         /// Stage 2 Task 4: takes the sanitizing player's index — every reference point

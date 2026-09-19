@@ -266,6 +266,10 @@ namespace Ring.Simulation.Tests
                     new float3(0f, boneHeight + 0.15f, lateral),
                 },
                 BlendThresholds = new[] { 0f },
+                // app-94sk T6c: a hand-built table carries the seventh field
+                // itself -- one clip at the tick rate -- or Sample refuses it
+                // by name rather than reading it at some default speed.
+                ClipRate = new[] { SimulationWorld.TickRate },
             };
             HitPart[] parts =
             {

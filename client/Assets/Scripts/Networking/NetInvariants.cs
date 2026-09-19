@@ -143,11 +143,6 @@ namespace Ring.Networking
         /// fail on a value the Inspector cannot even produce.
         public const int SnapshotWireOverheadBytes = 21;
 
-        /// How far `NetConfig.TickRate` may sit from the rate
-        /// `SimulationWorld.TickDt` actually denotes. See `Validate` for why
-        /// this is a tolerance rather than an equality.
-        const double TickRateTolerance = 1e-3;
-
         /// Spec §3.9 states the render clock's slew as "±5-10% of clock
         /// speed"; this is the upper end. The lower end is 0 and is legal —
         /// see `Validate`.
@@ -236,41 +231,18 @@ namespace Ring.Networking
             }
 
             // #6. NetConfig.TickRate is FishNet's tick rate; SimulationWorld.
-            // TickDt is the world's fixed step, and ADR-002 T5 makes it the
-            // single source of the 30 Hz rate. Two numbers, one truth.
-            //
-            // WHY A TOLERANCE AND NOT AN EQUALITY. `TickDt` is a float, so
-            // `TickRate * TickDt == 1f` is not a usable test: 1f/30f is
-            // 0.0333333351..., and 1.0 / that is 29.99999843..., not 30. The
-            // check below is instead "TickRate names the rate TickDt denotes,
-            // to within a thousandth of a tick per second". That threshold is
-            // chosen, not guessed, and it is safe at both ends:
-            //   * float rounding can move 1.0/(1f/N) away from N by at most
-            //     about N * 2^-24, which at NetConfig's own [Range] ceiling of
-            //     240 is 1.4e-5 — nearly two orders of magnitude below the
-            //     tolerance, so a legitimate 1f/N can never trip it;
-            //   * every disagreement worth catching misses by orders of
-            //     magnitude more than that. The realistic mistakes are large:
-            //     TickRate 29 against 1f/30f misses by ~1.0, TickRate 60 by
-            //     ~30. Near misses stay caught down to a disagreement of about
-            //     a thousandth of a tick per second, and no closer: anything
-            //     inside that is, by construction, not a disagreement this
-            //     check makes. A TickDt of 1f/29.6f leaves ~0.400 and 1f/29.9f
-            //     only ~0.100 — still a
-            //     hundred times the tolerance, but the earlier claim that any
-            //     non-whole rate misses "by 0.4 or more" was a false
-            //     generalization and is not what makes this safe. What makes
-            //     it safe is the gap between 1e-3 and the 1.4e-5 worst-case
-            //     float error above.
-            // A "nearest whole number" form (round 1.0/TickDt, compare) was
-            // considered and is weaker: it would accept TickRate = 30 against
-            // a TickDt of 1f/29.6f, which is a real disagreement.
-            double worldTicksPerSecond = 1.0 / SimulationWorld.TickDt;
-            if (Math.Abs(net.TickRate - worldTicksPerSecond) > TickRateTolerance)
+            // TickRate is the world's, a WHOLE NUMBER since app-94sk T6c, and
+            // ADR-002 T5 makes the world's the single source of the 30 Hz
+            // rate (TickDt is derived from it). Two numbers, one truth -- and
+            // an EXACT comparison, because both sides are integers now. Until
+            // T6c the world's rate was reachable only as the float TickDt, and
+            // this check reconstructed 30 from 1f/30f (29.99999843...) under a
+            // tolerance of a thousandth of a tick per second; the twenty-five
+            // lines that justified that tolerance retired with it.
+            if (net.TickRate != SimulationWorld.TickRate)
             {
-                errors.Add("Net.TickRate must match the rate SimulationWorld.TickDt denotes " +
-                    $"(got TickRate={net.TickRate}, TickDt={SimulationWorld.TickDt} " +
-                    $"=> {worldTicksPerSecond:F6} ticks/second).");
+                errors.Add("Net.TickRate must equal SimulationWorld.TickRate " +
+                    $"(got TickRate={net.TickRate}, SimulationWorld.TickRate={SimulationWorld.TickRate}).");
             }
 
             // #7 (Р154, spec §3.9). ZERO IS LEGAL and means "do not slew" —

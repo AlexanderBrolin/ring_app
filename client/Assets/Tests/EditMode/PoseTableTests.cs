@@ -272,18 +272,21 @@ namespace Ring.Simulation.Tests
         [Test]
         public void APhasePastTheClipsEndHoldsItsLastRow()
         {
-            // The one-to-one row map of T6a: phase p is row p of its clip, and
-            // past the clip's end the LAST row is held -- not the next clip's
-            // first row, not a row that is not there. Looping is the
-            // producer's business (T6b); the rate-aware map is T6c's.
+            // The row map at the tick rate (T6a): phase p is row p of its clip,
+            // and past the clip's end the LAST row is held -- not the next
+            // clip's first row, not a row that is not there. Looping is the
+            // producer's business (T6b); the rate-aware map is fixture 18/18a.
             // A two-row clip followed by a one-row clip, one bone, rows told
-            // apart by z: 0, 1 and then 9 for the foreign clip.
+            // apart by z: 0, 1 and then 9 for the foreign clip. ⚠ Both clips at
+            // the tick rate, said explicitly: a hand-built table carries the
+            // seventh field itself (T6c), or Sample refuses it by name.
             var table = new PoseTable
             {
                 BoneCount = 1,
                 ClipFirstRow = new[] { 0, 2, 3 },
                 Bones = new[] { new float3(0f, 0f, 0f), new float3(0f, 0f, 1f), new float3(0f, 0f, 9f) },
                 BlendThresholds = new[] { 0f },
+                ClipRate = new[] { SimulationWorld.TickRate, SimulationWorld.TickRate },
             };
             var into = new float3[1];
             var held = new PoseKey { LowerClipA = 0, LowerClipB = 0, LowerPhase = 7 };
@@ -332,6 +335,15 @@ namespace Ring.Simulation.Tests
             var ex4 = Assert.Throws<System.ArgumentException>(
                 () => PoseTable.Sample(in overclaimed, in pastTheBones, singleLayer: true, into));
             Assert.That(ex4.Message, Does.Contain("past the bones"));
+
+            // A clip the table carries no baking rate for (app-94sk T6c): a
+            // table from before the seventh field, or a hand-built one that
+            // forgot it -- refused by name, never read at some default speed.
+            PoseTable noRate = table;
+            noRate.ClipRate = new[] { SimulationWorld.TickRate };   // one rate, two clips
+            var ex6 = Assert.Throws<System.ArgumentException>(
+                () => PoseTable.Sample(in noRate, in key, singleLayer: true, into));
+            Assert.That(ex6.Message, Does.Contain("no baking rate"));
 
             // A mask too short for the table on a two-layer body.
             PoseTable shortMask = TestConfigs.AimLayerPose();
@@ -519,7 +531,7 @@ namespace Ring.Simulation.Tests
             SimConfig cfg = TestConfigs.OpenField();
             TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
             cfg.Chaser.Poses = TestConfigs.PaddedToClips(cfg.Chaser.Poses,
-                math.max(BakedClips.MeleeOf(MobType.Chaser), BakedClips.RangedOf(MobType.Chaser)) + 1, Rows);
+                BakedClips.HighestPositionOf(MobType.Chaser) + 1, Rows);
             var w = new SimulationWorld(17, cfg);
             // "Already within AttackRange" (MobAiTests' own fixture): the FSM
             // walks Idle -> Chase -> Telegraph on its own clock, and the take
@@ -635,8 +647,11 @@ namespace Ring.Simulation.Tests
                 // one-row rest clip.
                 if (a != BakedClips.Rest)
                 {
-                    Assert.Less(p.LowerPhase, PoseTable.RowsOf(in cfg.Hero.Poses, a),
-                        $"тик {tick}: фаза {p.LowerPhase} вышла за строки клипа {a} — петли нет");
+                    // T6c: the wrap is at the clip's length in TICKS (TicksOf);
+                    // on a fixture table every clip runs at the tick rate, so a
+                    // row is a tick and the two-row clips alternate 0/1.
+                    Assert.Less(p.LowerPhase, PoseTable.TicksOf(in cfg.Hero.Poses, a),
+                        $"тик {tick}: фаза {p.LowerPhase} вышла за тики клипа {a} — петли нет");
                     phasesSeenPastRest |= 1 << p.LowerPhase;
                 }
             }
@@ -869,6 +884,427 @@ namespace Ring.Simulation.Tests
                     Object.DestroyImmediate(instance);
                 }
             }
+        }
+
+        // ------------------------------------------------ app-94sk T6c (spec §3.5/§3.5а/§3.13)
+
+        /// A hand-built table for the row map: ONE bone, ONE clip of `rows`
+        /// rows whose bone's x IS its row index, at `rate` rows a second -- so
+        /// the number a sample returns is the (fractional) row it read.
+        static PoseTable OneClipRuler(int rows, int rate)
+        {
+            var bones = new float3[rows];
+            for (int r = 0; r < rows; r++) bones[r] = new float3(r, 0f, 0f);
+            return new PoseTable
+            {
+                BoneCount = 1,
+                ClipFirstRow = new[] { 0, rows },
+                Bones = bones,
+                BlendThresholds = new[] { 0f },
+                ClipRate = new[] { rate },
+            };
+        }
+
+        /// One bone's x after sampling `clip` at `phase` (both lower slots on
+        /// the clip, no blend, no aim layer).
+        static float SampledX(in PoseTable table, int clip, int phase, int bone = 0)
+        {
+            var key = new PoseKey { LowerClipA = (byte)clip, LowerClipB = (byte)clip, LowerPhase = (ushort)phase };
+            var into = new float3[table.BoneCount];
+            PoseTable.Sample(in table, in key, singleLayer: true, into);
+            return into[bone].x;
+        }
+
+        [Test]
+        public void TheHeightGateShortensTheWorkWithoutMovingAnOutcome()   // fixture 8, an INSTRUMENT (no mutant, Р529)
+        {
+            // The cheap necessary condition in front of the capsules
+            // (HitVolumes.Resolve, through HitZones.Overlaps against the LIVE
+            // crown): a step wholly above the crown is refused before a single
+            // capsule is probed, a step through the body walks every volume,
+            // and NEITHER answer differs from the capsule test's own.
+            // ⚠ AN INSTRUMENT, green on the committed tree by construction --
+            // the gate has stood since T2; what is measured is that it refuses
+            // only what the capsules refuse, and that it saves the work it
+            // claims to. ⚠ A LEANING body skips the gate (Resolve's own doc: a
+            // leaning crown is not a function of the pose's heights), so its
+            // probes are counted in full and are not the gate's to save --
+            // the third part says so in a number.
+            SimConfig cfg = TestConfigs.OpenField();
+            PoseTable table = TestConfigs.ChaserRestPose();
+            HitPart[] parts = cfg.Chaser.Parts;
+            float3[] pose = TestWorlds.RestPoseOf(in table);
+            float3 origin = new float3(6f, 0f, 0f);
+            float r = cfg.Weapon.ProjectileRadius;
+            float crown = HitParts.PoseTop(parts, pose, table.BoneCount);
+            Assert.Greater(crown, 0f, "премисса: у стоящего чейзера есть крона");
+            int volumes = 0;
+            foreach (HitPart part in parts)
+                if (part.BoneA < table.BoneCount && part.BoneB < table.BoneCount) volumes++;
+            Assert.AreEqual(parts.Length, volumes, "премисса: все объёмы чейзера стоят на костях таблицы");
+
+            // (1) A level step ABOVE the crown, across the body: refused with
+            // ZERO probes -- and the honest capsule test agrees on every volume,
+            // so the gate moved no outcome.
+            float3 hi0 = new float3(6f, -1.2f, crown + r + 0.05f), hi1 = new float3(6f, 1.2f, crown + r + 0.05f);
+            HitVolumes.ResolveProbesForTest = 0;
+            bool hitHigh = HitVolumes.Resolve(parts, in table, pose, float2.zero, origin, 0f, 1f, hi0, hi1, r,
+                out _, out _, out _, out _, out _);
+            Assert.IsFalse(hitHigh, "шаг над кроной засчитан попаданием");
+            Assert.AreEqual(0, HitVolumes.ResolveProbesForTest,
+                "шаг над кроной дошёл до капсул — высотный гейт не сокращает работу");
+            foreach (HitPart part in parts)
+            {
+                float3 a = HitVolumes.ToWorld(pose[part.BoneA], origin, 0f, 1f, float2.zero);
+                float3 b = HitVolumes.ToWorld(pose[part.BoneB], origin, 0f, 1f, float2.zero);
+                Assert.IsFalse(Geometry.SegmentCapsule(hi0, hi1, r, a, b, part.Radius, out _),
+                    $"гейт отказал шагу, который капсула объёма {part.PartId} принимает — гейт сдвинул исход");
+            }
+
+            // (2) The same step through the chest: a hit, and every volume was
+            // asked -- the gate let it through and saved nothing, as it must.
+            float3 lo0 = new float3(6f, -1.2f, 1.2f), lo1 = new float3(6f, 1.2f, 1.2f);
+            HitVolumes.ResolveProbesForTest = 0;
+            bool hitLow = HitVolumes.Resolve(parts, in table, pose, float2.zero, origin, 0f, 1f, lo0, lo1, r,
+                out _, out _, out _, out _, out _);
+            Assert.IsTrue(hitLow, "премисса: шаг сквозь корпус обязан попасть");
+            Assert.AreEqual(volumes, HitVolumes.ResolveProbesForTest,
+                "шаг сквозь тело не спросил каждый объём — узкая фаза срезает объёмы");
+
+            // (3) A LEANING body, the high step again: the gate stands down and
+            // every volume is probed -- the skip is the contract, not a saving.
+            HitVolumes.ResolveProbesForTest = 0;
+            HitVolumes.Resolve(parts, in table, pose, new float2(cfg.Chaser.TiltFallAngle, 0f), origin, 0f, 1f,
+                hi0, hi1, r, out _, out _, out _, out _, out _);
+            Assert.AreEqual(volumes, HitVolumes.ResolveProbesForTest,
+                "накренённое тело прошло через высотный гейт — гейт читает крону стоящего у лежащего");
+        }
+
+        [Test]
+        public void ARowBetweenTwoRowsIsInterpolated()   // fixture 18, witness of M342
+        {
+            // Spec §3.5: `row = phase_in_ticks * (rate / TickRate)`, and a row
+            // that lands BETWEEN two baked rows is the linear mix of them --
+            // not the nearer one, not the one below. A rate that is not a
+            // multiple of the tick rate is where that fraction lives: at 24
+            // rows a second a whole tick is 0.8 of a row.
+            // ⚠ NO SHIPPED CLIP IS BAKED AT 24 (PoseBaker.RateOf bakes at 30
+            // and 60, both multiples of the tick rate, so their fraction is
+            // always zero -- fixture 18a is the shipped case); the table's
+            // format admits any rate, and this is the one that makes the law
+            // observable at all.
+            const int Rate = 24, Rows = 5;
+            PoseTable table = OneClipRuler(Rows, Rate);
+            Assert.AreNotEqual(0, Rate % SimulationWorld.TickRate,
+                "премисса фикстуры: один тик на этой частоте — дробная строка, иначе интерполяции нечего показать");
+            // The fixture's own arithmetic, not the sampler's: phase 1 is 24/30
+            // of a row, phase 2 is 48/30 = 1.6 rows.
+            Assert.AreEqual(0.8f, SampledX(in table, 0, 1), 1e-6f,
+                "фаза 1 на 24 строках в секунду обязана лечь на 0.8 строки — соседние строки не смешиваются (M342)");
+            Assert.AreEqual(1.6f, SampledX(in table, 0, 2), 1e-6f,
+                "фаза 2 на 24 строках в секунду обязана лечь на 1.6 строки");
+            // A phase landing exactly on a row reads that row, nothing mixed in.
+            Assert.AreEqual(4f, SampledX(in table, 0, 5), 1e-6f,
+                "фаза 5 (120 строко-тиков = ровно строка 4) прочитала не строку 4");
+            // Past the clip's end the LAST row is held, with no fraction into a
+            // row that is not there (T6a's contract, kept).
+            Assert.AreEqual(Rows - 1, SampledX(in table, 0, 9), 1e-6f,
+                "фаза за концом клипа не удержала последнюю строку");
+        }
+
+        [Test]
+        public void AFastTakeIsMappedAtItsOwnRate()   // fixture 18a, witness of M343 (the sampler) and M449 (the producer's clock)
+        {
+            // ⭐ THE SHIPPED CASE OF THE RATE: the fast takes -- the melee and
+            // ranged strikes, the hit reactions, the slide's entry and exit --
+            // are baked at 60 rows a second (PoseBaker.FastTakes, spec §3.5)
+            // while the phase counts whole ticks at 30. One tick of such a take
+            // is TWO rows, and the take lasts ceil(rows / 2) ticks -- an ODD
+            // row count, so that the ceiling is the subject and not a
+            // coincidence: the shipped chaser's punch is 35 rows, 18 ticks,
+            // and a floor would drop its last row (review B1). Until this
+            // task both readers took a row for a tick, and the punch played
+            // at half the doll's speed.
+            // ⚠ THE PLAN SAID "24 frames a second -- the gunner's pack": that
+            // is the SOURCE clips' frame rate (COMBAT-001 §2.3), which the
+            // baker resamples by absolute time; no baked clip is at 24.
+            const int Rows = 5, Rate = 60;
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);   // BEFORE the constructor
+            int melee = BakedClips.MeleeOf(MobType.Chaser);
+            PoseTable table = TestConfigs.PaddedToClips(cfg.Chaser.Poses,
+                BakedClips.HighestPositionOf(MobType.Chaser) + 1, Rows);
+            // The take's rows are told apart by ONE bone's x: row r of the take
+            // moves bone 0 by r along x from its rest position.
+            int n = table.BoneCount;
+            int first = table.ClipFirstRow[melee];
+            for (int rr = 0; rr < Rows; rr++) table.Bones[(first + rr) * n] += new float3(rr, 0f, 0f);
+            table.ClipRate[melee] = Rate;
+            table = TestConfigs.Sealed(table);
+            float restX = table.Bones[0].x;
+
+            // THE SAMPLER: a whole tick of a 60-row-a-second take is two rows.
+            // The fixture's own arithmetic: phase p is row p * 60 / 30.
+            int rowOfTick1 = 1 * Rate / SimulationWorld.TickRate;
+            Assert.AreEqual(2, rowOfTick1, "премисса фикстуры: на 60 строках в секунду тик — две строки");
+            Assert.AreEqual(restX, SampledX(in table, melee, 0), 1e-6f, "фаза 0 — не первая строка тейка");
+            Assert.AreEqual(restX + rowOfTick1, SampledX(in table, melee, 1), 1e-6f,
+                "фаза 1 быстрого тейка прочитала не его третью строку — частота клипа не читается, строка = фаза (M343)");
+            Assert.AreEqual(restX + (Rows - 1), SampledX(in table, melee, 2), 1e-6f,
+                "фаза 2 пятистрочного тейка — ровно его последняя строка");
+            Assert.AreEqual(restX + (Rows - 1), SampledX(in table, melee, 3), 1e-6f,
+                "фаза за концом быстрого тейка не удержала его последнюю строку");
+
+            // THE PRODUCER'S CLOCK: the take LASTS ceil(5 * 30 / 60) = 3 ticks
+            // (not 2: a fifth row is half a tick, and half a tick is a tick),
+            // and on the fourth the body is back in the rest loop -- the FSM
+            // walk fixture 17's downed row makes (Idle -> Chase -> Telegraph on
+            // the FSM's own clock, lesson 839).
+            int takeTicks = (Rows * SimulationWorld.TickRate + Rate - 1) / Rate;   // ceil, the fixture's own
+            Assert.AreEqual(3, takeTicks, "премисса фикстуры: тейк из пяти строк на 60 Гц длится три тика (ceil 2.5)");
+            cfg.Chaser.Poses = table;
+            var w = new SimulationWorld(18, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(1.0f, 0f));
+            Assert.Greater(cfg.Chaser.TelegraphSeconds, (takeTicks + 2) * SimulationWorld.TickDt,
+                "премисса фикстуры: замах длится дольше тейка с запасом, иначе FSM уйдёт из Telegraph раньше замера");
+            int guard = 0;
+            while (w.Mobs[0].Ai != MobAiState.Telegraph && guard < 10) { w.TickAll(new SimInput[1]); guard++; }
+            Assert.AreEqual(MobAiState.Telegraph, w.Mobs[0].Ai, "премисса фикстуры: тело вошло в замах");
+            Assert.AreEqual(melee, w.Mobs[0].LowerClipA, "замах не переключил нижний клип на удар");
+            Assert.AreEqual(0, w.Mobs[0].LowerPhase, "тик входа — не первая фаза тейка");
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(melee, w.Mobs[0].LowerClipA, "второй тик тейка: клип сменился раньше срока");
+            Assert.AreEqual(1, w.Mobs[0].LowerPhase, "второй тик тейка: фаза не 1");
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(MobAiState.Telegraph, w.Mobs[0].Ai, "премисса фикстуры: тело ещё в замахе");
+            Assert.AreEqual(melee, w.Mobs[0].LowerClipA,
+                "третий тик пятистрочного тейка на 60 Гц — ещё тейк: ceil(2.5) = 3, а не 2 — потолок сменился на пол (M456)");
+            Assert.AreEqual(2, w.Mobs[0].LowerPhase, "третий тик тейка: фаза не 2");
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(MobAiState.Telegraph, w.Mobs[0].Ai, "премисса фикстуры: тело всё ещё в замахе");
+            Assert.AreEqual(BakedClips.Rest, w.Mobs[0].LowerClipA,
+                "тейк из пяти строк на 60 Гц не кончился за три тика — часы производителя считают строки за тики (M449)");
+            Assert.AreEqual(0, w.Mobs[0].LowerPhase, "после тейка петля покоя не началась с нуля");
+        }
+
+        [Test]
+        public void ApplyConfigCarriesThePoseTableThrough()   // fixture 18б, witness of M344
+        {
+            // ⛔ A LIVE EDIT OF A NUMBER ON THE MILESTONE REBUILDS THE
+            // CONFIGURATION. The table does not change, but it has to ARRIVE:
+            // if it does not, the first such edit zeroes the poses and every
+            // volume stands in the first phase of the first clip.
+            // ⚠ HotTweakTests does not catch this on its own -- it walks the
+            // FIELDS of PlayerState. ⚠ Green on `_config = next;` alone, so
+            // its red phase is the state of mutant M344 (a field-by-field copy
+            // that forgot the table) -- plan Step 1a.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(51, cfg);
+            SimConfig tweaked = cfg;
+            tweaked.Chaser.MaxSpeed += 0.5f;                  // a live edit of a number, not of topology
+            w.ApplyConfig(in tweaked);                     // has to pass without a refusal
+            // Premise: the table is NOT empty before the edit -- otherwise the
+            // test is green on a zeroing too.
+            Assert.Greater(cfg.Chaser.Poses.BoneCount, 0,
+                "премисса фикстуры: у чейзера есть таблица, иначе ассерт ниже ничего не значит");
+            Assert.AreEqual(cfg.Chaser.Poses.BoneCount, w.Config.Chaser.Poses.BoneCount,
+                "ApplyConfig обнулил таблицу поз — объёмы встанут в первую фазу первого клипа (M344)");
+            Assert.AreSame(cfg.Chaser.Poses.Bones, w.Config.Chaser.Poses.Bones,
+                "ApplyConfig подменил массив костей — доехала не та таблица");
+        }
+
+        [Test]
+        public void HotSwappingADifferentPoseTableIsRefused()   // fixture 18в, witness of M345
+        {
+            // ⛔⛔ WHY A REFUSAL AND NOT A SILENT SHIFT: PoseKey.LowerPhase
+            // indexes the table's ROWS and lives in six rows of the rewind
+            // history. Swapping the table under a live world puts already
+            // written keys out of bounds. The rule's home is
+            // ArenaTopologyMatches, where RewindCapTicks landed for the same
+            // argument ("sizes PositionHistory's rows... and never resizes
+            // them") and the item catalog too.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(51, cfg);
+            SimConfig other = cfg;
+            other.Chaser.Poses = TestConfigs.WithOneMoreRow(cfg.Chaser.Poses);   // another table of ONE body
+            var ex = Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(in other),
+                "чужая таблица чейзера принята на горячую (M345)");
+            Assert.That(ex.Message, Does.Contain("pose table"));
+            Assert.That(ex.Message, Does.Contain("restart"));
+        }
+
+        [Test]
+        public void HotSwappingAnyBodysPoseTableIsRefused()   // fixture 18г, witness of M345 (the other four bodies)
+        {
+            // ⛔ FIVE BODIES, FIVE TABLES (T2), and a comparison written on the
+            // chaser alone is green on exactly the body it was written on --
+            // the Director's table would be swapped in silence.
+            SimConfig cfg = TestConfigs.Open();
+            foreach (string body in new[] { "Hero", "Chaser", "Gunner", "Elite", "Director" })
+            {
+                var w = new SimulationWorld(51, cfg);
+                SimConfig other = cfg;
+                ref PoseTable t = ref TestConfigs.PoseTableOfSection(ref other, body);
+                t = TestConfigs.WithOneMoreRow(t);
+                var ex = Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(in other),
+                    $"подмена таблицы тела {body} принята на горячую");
+                Assert.That(ex.Message, Does.Contain("pose table"));
+            }
+        }
+
+        [Test]
+        public void HotSwappingADifferentPartCountIsRefused()   // fixture 18е, witness of M450 (rule 11's other half)
+        {
+            // Rule 11's other half: the NUMBER of volumes on a body is
+            // topology -- a PartId names a volume on the wire and in the events
+            // already journaled -- while the volumes' NUMBERS (radius,
+            // multiplier) stay the owner's hot knobs (spec §3.5а, item 4). One
+            // more volume on the chaser, nothing else moved: a restart.
+            SimConfig cfg = TestConfigs.Open();
+            var w = new SimulationWorld(51, cfg);
+            SimConfig other = cfg;
+            var grown = new HitPart[cfg.Chaser.Parts.Length + 1];
+            System.Array.Copy(cfg.Chaser.Parts, grown, cfg.Chaser.Parts.Length);
+            grown[grown.Length - 1] = cfg.Chaser.Parts[0];
+            other.Chaser.Parts = grown;
+            var ex = Assert.Throws<System.ArgumentException>(() => w.ApplyConfig(in other),
+                "лишний объём чейзера принят на горячую (M450)");
+            Assert.That(ex.Message, Does.Contain("hit parts"));
+            Assert.That(ex.Message, Does.Contain("restart"));
+            // And a RADIUS is not topology: the same body, one capsule wider,
+            // is a tweak and goes through.
+            SimConfig wider = cfg;
+            wider.Chaser.Parts = (HitPart[])cfg.Chaser.Parts.Clone();
+            wider.Chaser.Parts[0].Radius += 0.05f;
+            Assert.DoesNotThrow(() => new SimulationWorld(51, cfg).ApplyConfig(in wider),
+                "радиус капсулы — горячая ручка владельца, а не топология");
+        }
+
+        [Test]
+        public void TheKeyCannotSaturateOnAnyArchetypesFallAngle()   // fixture 18д, witness of M396 (rule 15a)
+        {
+            // ⛔ THE SUBJECT IS NOT THE FORMULA BUT WHAT THE KEY CAN SAY: a body
+            // fallen to exactly TiltFallAngle has to rewind to where it fell.
+            // The packer clamps a lean BY LENGTH at PoseKey.TiltCeiling (127
+            // codes of TiltQuantStep), and rule 15a is that same comparison
+            // asked of the configuration: the clamp must not bite at any
+            // archetype's threshold. Three parts: the fixture numbers pack
+            // unsaturated (the plan's own half); the build refuses a threshold
+            // the key cannot hold; and the Inspector's [Range] ceiling is the
+            // rule's, so the slider never offers what the build refuses.
+            SimConfig cfg = TestConfigs.Default();
+            foreach (MobType t in new[] { MobType.Chaser, MobType.Gunner, MobType.Elite, MobType.Director })
+            {
+                ref readonly MobSimConfig m = ref SimConfig.MobConfigFor(in cfg, t);
+                var fallen = new MobState { Type = t, Tilt = new float2(m.TiltFallAngle, 0f), Dir = new float2(0f, 1f) };
+                PoseKey key = PoseKey.FromMob(in fallen);
+                // ⚠ NOT `|TiltX| < 127` (the plan's own line): 127 codes IS the
+                // ceiling and expresses 1.27 exactly, and a threshold set to
+                // the slider's maximum packs to 127 without saturating. A
+                // saturated pack shows up as an unpack that MISSES the
+                // threshold -- the length clamp scaled it -- and that is what
+                // is asked (review B2).
+                Assert.AreEqual(m.TiltFallAngle, key.TiltX * PoseKey.TiltQuantStep, PoseKey.TiltQuantStep,
+                    $"{t}: порог падения насыщает ключ (кламп по длине сработал) — отмотанная поза разойдётся с судейской");
+            }
+
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.TiltFallAngle = PoseKey.TiltCeiling * 1.5f;
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis),
+                "порог падения выше потолка ключа принят сборкой (M396)");
+            Assert.That(ex.Message, Does.Contain("Chaser.TiltFallAngle"));
+
+            var field = typeof(Ring.Data.MobConfig).GetField(nameof(Ring.Data.MobConfig.TiltFallAngle));
+            var range = (UnityEngine.RangeAttribute)field.GetCustomAttributes(typeof(UnityEngine.RangeAttribute), false)[0];
+            Assert.LessOrEqual(range.max, PoseKey.TiltCeiling,
+                "инспектор предлагает порог падения выше потолка ключа — ползунок и сборка разошлись");
+        }
+
+        [Test]
+        public void ATableMissingAPositionTheProducerNamesIsRefusedAtBuild()   // fixture 18ж, witness of M451 (rule 15)
+        {
+            // Rule 15, read at the configuration (spec §3.13): every clip the
+            // producer can put in a key is a POSITION fixed by BakedClips, and
+            // a table without that position makes the producer hold the rest
+            // pose for it IN SILENCE (PoseSystem.ClipOrRest) -- a fixture
+            // table's deliberate shape, a shipped table's defect. The build is
+            // the one gate the shipped game runs, so it refuses there, by
+            // section name and by the position that is missing.
+            // ⚠ The builder's test-side door widens a fixture table for the
+            // builder (TestConfigs.ForTheBuilder); this fixture hands the
+            // narrow table in DIRECTLY, past the door, to reach the rule.
+            var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+            c.Poses = ConfigTests.FixtureTable(TestConfigs.ChaserRestPose());   // one clip, no strike take
+            int needed = BakedClips.HighestPositionOf(MobType.Chaser);
+            Assert.Less(PoseTable.ClipCount(in ConfigTests.PoseTableFor(c)), needed + 1,
+                "премисса: таблица чейзера короче позиции, которую называет производитель");
+            var ex = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis),
+                "таблица без клипа удара принята сборкой — производитель будет держать покой молча (M451)");
+            Assert.That(ex.Message, Does.Contain("Chaser.Poses"));
+            Assert.That(ex.Message, Does.Contain($"position {needed}"));
+
+            // The collector's positions reach the death take, last by the
+            // baker's contract: his two-clip fixture table is short of it too.
+            var (h2, w2, c2, g2, wv2, a2, vis2) = ConfigTests.MakeDefaults();
+            h2.Poses = ConfigTests.FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            var ex2 = Assert.Throws<System.ArgumentException>(
+                () => ConfigTests.BuildShipped(h2, w2, c2, g2, wv2, a2, vis2),
+                "таблица сборщика без клипа смерти принята сборкой");
+            Assert.That(ex2.Message, Does.Contain("Hero.Poses"));
+            Assert.That(ex2.Message, Does.Contain($"position {BakedClips.Collector.HighestPosition}"));
+        }
+
+        [Test]
+        public void AMalformedTableIsRefusedAtBuild_NotInTheCombatPath()   // fixture 18з, witness of M452/M453/M454/M455 (rule 15)
+        {
+            // The refusals PoseTable.Sample makes by name (an empty clip, a
+            // sentinel past the bones, a rate the table does not carry) are
+            // CRASHES when reached from the combat path; rule 15 makes each of
+            // them a build refusal instead, so a shipped table can never reach
+            // them. Four shapes, each on a table the checksum has been re-sealed
+            // over -- rule 27 is silent, only the shape rule speaks.
+            const int Clips = 6;
+            PoseTable Padded() => TestConfigs.PaddedToClips(TestConfigs.ChaserRestPose(), Clips);
+
+            void Refuses(System.Func<PoseTable, PoseTable> mangle, string phrase, string why)
+            {
+                var (h, w, c, g, wv, a, vis) = ConfigTests.MakeDefaults();
+                c.Poses = ConfigTests.FixtureTable(TestConfigs.Sealed(mangle(Padded())));
+                var ex = Assert.Throws<System.ArgumentException>(
+                    () => ConfigTests.BuildShipped(h, w, c, g, wv, a, vis), why);
+                Assert.That(ex.Message, Does.Contain("Chaser.Poses"), why);
+                Assert.That(ex.Message, Does.Contain(phrase), why);
+            }
+
+            // (1) The sentinel claims a row the bones do not hold -- the one
+            // malformation neither the checksum nor rule 6 sees (RowOf's doc).
+            Refuses(t => { t.ClipFirstRow[Clips] += 1; return t; }, "row count",
+                "сентинел за костями принят сборкой (M452)");
+            // (2) A clip with no rows: clip 3 starts where clip 4 starts.
+            Refuses(t => { t.ClipFirstRow[4] = t.ClipFirstRow[3]; return t; }, "no rows",
+                "клип без строк принят сборкой (M453)");
+            // (3) Rates for two clips on a table of six.
+            Refuses(t => { t.ClipRate = new[] { SimulationWorld.TickRate, SimulationWorld.TickRate }; return t; },
+                "rates", "таблица с частотами не на каждый клип принята сборкой (M454)");
+            // (4) The first clip does not start at row 0 -- the rest row rule 13
+            // stands on is no longer row 0. One extra row of bones so that the
+            // sentinel and every clip stay honest, and ONLY the first row is off.
+            Refuses(t =>
+            {
+                PoseTable wide = TestConfigs.PaddedToClips(t, Clips + 1);   // seven clips, seven rows
+                var first = new int[Clips + 1];
+                for (int i = 0; i < first.Length; i++) first[i] = i + 1;   // 1..7: six clips, sentinel 7 = the rows
+                wide.ClipFirstRow = first;
+                wide.ClipRate = new int[Clips];
+                for (int i = 0; i < Clips; i++) wide.ClipRate[i] = SimulationWorld.TickRate;
+                return wide;
+            }, "first row", "таблица, чей первый клип начинается не со строки 0, принята сборкой (M455)");
+            // (5) A rate of zero on one clip: RateOf refuses it by name from the
+            // combat path, so the build has to first (review B4).
+            Refuses(t => { t.ClipRate[2] = 0; return t; }, "rows a second",
+                "таблица с нулевой частотой клипа принята сборкой (M457)");
         }
 
         static ref readonly PoseTable ShippedTableOf(in SimConfig cfg, AnimatorCatalog.BodyKind kind)

@@ -44,11 +44,17 @@ namespace Ring.Editor
         /// ⛔ BUMPING THIS RE-IMPORTS EVERY `.posetable` — that is what it is
         /// for. Raise it whenever the layout below changes, never for a change
         /// in the baker's numbers (those travel in the bytes).
-        public const int Version = 1;
+        ///   1 — app-w4ca T4: the six fields.
+        ///   2 — app-94sk T6c: `ClipRate` (rows a second, per clip) after the
+        ///       mask; the magic moved with it.
+        public const int Version = 2;
 
         /// Four bytes at the head of the file so a truncated or foreign file is
-        /// refused by NAME instead of read as nonsense.
-        const uint Magic = 0x52505431; // "RPT1"
+        /// refused by NAME instead of read as nonsense. ⛔ THE LAYOUT'S OWN
+        /// NAME, not a constant of the type: a `RPT1` file (no rates) is
+        /// refused here by name rather than read on with the checksum's bytes
+        /// taken for a rate count.
+        const uint Magic = 0x52505432; // "RPT2"
 
         public override void OnImportAsset(AssetImportContext ctx)
         {
@@ -97,7 +103,7 @@ namespace Ring.Editor
         // two chances to disagree about a byte, and the disagreement surfaces
         // as garbage geometry rather than as an error.
         //
-        //   magic  uint32        "RPT1"
+        //   magic  uint32        "RPT2"      (RPT1 = the six-field layout before app-94sk T6c)
         //   int32  BoneCount
         //   int32  clipCount     (ClipFirstRow has clipCount + 1 entries)
         //   int32  ClipFirstRow[clipCount + 1]
@@ -105,6 +111,7 @@ namespace Ring.Editor
         //   float  Bones[rowCount * BoneCount * 3]
         //   int32  thresholdCount, float BlendThresholds[...]
         //   int32  maskCount,      uint64 UpperLayerMask[...]
+        //   int32  rateCount,      int32 ClipRate[...]          (RPT2, app-94sk T6c)
         //   uint64 Checksum
         //
         // Little-endian throughout (`BinaryWriter`'s own order), which is the
@@ -133,6 +140,9 @@ namespace Ring.Editor
                     w.Write(table.UpperLayerMask.Length);
                     for (int i = 0; i < table.UpperLayerMask.Length; i++)
                         w.Write(table.UpperLayerMask[i]);
+                    w.Write(table.ClipRate.Length);
+                    for (int i = 0; i < table.ClipRate.Length; i++)
+                        w.Write(table.ClipRate[i]);
                     w.Write(table.Checksum);
                 }
                 File.WriteAllBytes(assetPath, stream.ToArray());
@@ -165,6 +175,10 @@ namespace Ring.Editor
                 table.UpperLayerMask = new ulong[r.ReadInt32()];
                 for (int i = 0; i < table.UpperLayerMask.Length; i++)
                     table.UpperLayerMask[i] = r.ReadUInt64();
+
+                table.ClipRate = new int[r.ReadInt32()];
+                for (int i = 0; i < table.ClipRate.Length; i++)
+                    table.ClipRate[i] = r.ReadInt32();
 
                 table.Checksum = r.ReadUInt64();
                 return table;

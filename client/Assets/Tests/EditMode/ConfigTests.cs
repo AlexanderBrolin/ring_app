@@ -44,9 +44,12 @@ namespace Ring.Simulation.Tests
             // fifteen-column rig does not have, and validation rule 6 would
             // refuse it by name. A gunner-shaped gunner is what
             // `MakeShippedArchetypes` builds, through `SeedMob`.
-            hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
-            chaser.Poses = FixtureTable(TestConfigs.ChaserRestPose());
-            gunner.Poses = FixtureTable(TestConfigs.ChaserRestPose());
+            // app-94sk T6c: through the door to the builder (TestConfigs.
+            // ForTheBuilder) -- validation rule 15 requires every position the
+            // producer names, and a fixture table carries one phase per body.
+            hero.Poses = FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.HeroRestAndSlidePose()));
+            chaser.Poses = FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
+            gunner.Poses = FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
             return (hero, weapon, chaser, gunner, wave, arena, visibility);
         }
 
@@ -122,11 +125,14 @@ namespace Ring.Simulation.Tests
             // why matching the layout matters more than matching the name. The
             // shipped elite and Director arrive from `MakeShippedArchetypes`
             // with their own tables already on them, so `??=` leaves those be.
-            hero.Poses ??= FixtureTable(TestConfigs.HeroRestAndSlidePose());
-            chaser.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
-            gunner.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
-            elite.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
-            director.Poses ??= FixtureTable(TestConfigs.ChaserRestPose());
+            // app-94sk T6c: through the door to the builder (TestConfigs.
+            // ForTheBuilder, its own doc) -- a table a test hands in itself
+            // bypasses it, and the rule-15 fixtures do so on purpose.
+            hero.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.HeroRestAndSlidePose()));
+            chaser.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
+            gunner.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
+            elite.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
+            director.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.ChaserRestPose()));
             // Ф2 review C1: the flow asset belongs here too, and leaving it out
             // was this method's own founding defect repeated one parameter
             // over. `Flow` reaching the simulation as five zeros is exactly the
@@ -254,7 +260,9 @@ namespace Ring.Simulation.Tests
             // carrier. ⛔ WITHOUT IT the seeded archetype reaches BuildShipped
             // with a null `Poses`, and rules 6/9/12/13/27 refuse it — which
             // would read as this file's own fixtures being wrong.
-            target.Poses = FixtureTable(source.Poses);
+            // app-94sk T6c: and through the door to the builder, since the
+            // seeded archetype is built (TestConfigs.ForTheBuilder's own doc).
+            target.Poses = FixtureTable(TestConfigs.ForTheBuilder(source.Poses));
             target.SwingPartId = source.SwingPartId;
             // app-94sk T5b: this archetype's turn rate joins the copier on the
             // block above's own reasoning — it is per archetype from this task
@@ -275,7 +283,7 @@ namespace Ring.Simulation.Tests
             // app-94sk T4: the caller's fresh HeroConfig carries a null `Poses`
             // like every fresh SO, and rules 12/13/27 refuse one — so the
             // fixture table is hung here rather than at each of the call sites.
-            hero.Poses ??= FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            hero.Poses ??= FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.HeroRestAndSlidePose()));
             return BuildShipped(hero, w, c, g, wv, a, vis);
         }
 
@@ -727,7 +735,7 @@ namespace Ring.Simulation.Tests
             // the height is taken FROM THE TABLE rather than written as a
             // literal — a literal would survive a change to the fixture and go
             // green for the wrong reason.
-            hero.Poses = FixtureTable(TestConfigs.HeroRestAndSlidePose());
+            hero.Poses = FixtureTable(TestConfigs.ForTheBuilder(TestConfigs.HeroRestAndSlidePose()));
             ref PoseTable t = ref PoseTableFor(hero);
             int slideRow = t.ClipFirstRow[BakedClips.Collector.Slide];
             float slideCrown = Ring.Simulation.Combat.HitParts.PoseTop(
@@ -2664,8 +2672,8 @@ namespace Ring.Simulation.Tests
             director.Parts = (HitPart[])expected.Director.Parts.Clone();
             elite.GatherRadius = expected.Elite.GatherRadius;
             director.GatherRadius = expected.Director.GatherRadius;
-            elite.Poses = FixtureTable(expected.Elite.Poses);
-            director.Poses = FixtureTable(expected.Director.Poses);
+            elite.Poses = FixtureTable(TestConfigs.ForTheBuilder(expected.Elite.Poses));
+            director.Poses = FixtureTable(TestConfigs.ForTheBuilder(expected.Director.Poses));
 
             SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 
@@ -2762,8 +2770,8 @@ namespace Ring.Simulation.Tests
             // the CHASER's (what an UNseeded MobConfig's C# defaults describe).
             // ⚠ The pose table is not part of this test's subject: the bootstrap
             // seeds balance literals, while the real table is a baked artifact.
-            elite.Poses = FixtureTable(expected.Elite.Poses);
-            director.Poses = FixtureTable(expected.Director.Poses);
+            elite.Poses = FixtureTable(TestConfigs.ForTheBuilder(expected.Elite.Poses));
+            director.Poses = FixtureTable(TestConfigs.ForTheBuilder(expected.Director.Poses));
             SimConfig cfg = BuildShipped(h, w, c, g, wv, a, vis, elite, director);
 
             AssertMobEqual(expected.Elite, cfg.Elite);

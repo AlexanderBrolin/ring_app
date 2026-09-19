@@ -23,6 +23,21 @@ namespace Ring.Simulation.Combat
     /// face would take the hit away from the head and pay 0.75 instead of 1.7.
     internal static class HitVolumes
     {
+        /// app-94sk T6c, fixture 8's INSTRUMENT: how many capsule probes the
+        /// narrow phase has made since its reader zeroed it -- and ONLY the
+        /// reader zeroes it: the world does not, because the count is a
+        /// property of a measurement, not of a world, and a fixture that read
+        /// it without zeroing first would read another fixture's residue.
+        /// Not state (nothing hashes or reads it in play), not thread-shared
+        /// (the simulation is single-threaded by CRITICAL RULE 2), and named
+        /// `ForTest` like every other seam of that kind (SetPlayerForTest,
+        /// SpawnProjectileForTest). Its cost in a player build is one static
+        /// increment per capsule probe, no branch, beside a capsule test of
+        /// some fifty flops -- named rather than hidden behind a define. It
+        /// exists so that "the height gate shortens the work without moving
+        /// an outcome" is a measured claim rather than a comment.
+        internal static int ResolveProbesForTest;
+
         /// `pose` is this body's READY pose on this tick -- `pose[0..BoneCount)`
         /// as PoseTable.Sample wrote it (app-94sk T6b; until then callers
         /// handed in a row index, and the rest row at that). A row index cannot
@@ -64,8 +79,8 @@ namespace Ring.Simulation.Combat
             // exactly the duplication those two homes were separated to avoid.
             // The ceiling is the crown of the LIVE pose (HitParts.PoseTop), not
             // RestTop: the latter describes the REST pose and is wrong in
-            // motion. Witness: the instrument fixture 8 (T6c) — the gate must
-            // SHORTEN the work without moving a single outcome.
+            // motion. Witness: the instrument fixture 8 — the gate must
+            // SHORTEN the work without moving a single outcome (ResolveProbesForTest).
             // ⛔ THE STEP'S HEIGHT IS `.z`: p0/p1 arrive in the WORLD frame.
             // ⚠ AND THE GATE'S FLOOR IS NOT A GAP, THOUGH A CAPSULE NOW HANGS
             // BELOW THE GROUND (the chaser's leg reaches -0.35 once its radius is
@@ -107,6 +122,7 @@ namespace Ring.Simulation.Combat
                 // that is precisely the obligation Geometry.SegmentCapsule's own
                 // doc lays on its caller: it measures distances only and cannot
                 // see a mismatch between its two sides.
+                ResolveProbesForTest++;
                 if (!Geometry.SegmentCapsule(p0, p1, projRadius, a, b, part.Radius, out float ti)) continue;
 
                 // ⛔ THE ZONE FIRST, t SECOND, PartId THIRD. The order is

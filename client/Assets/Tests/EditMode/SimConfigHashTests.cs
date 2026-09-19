@@ -648,10 +648,13 @@ namespace Ring.Simulation.Tests
         /// and that is exactly why every field taken out owes a dedicated
         /// witness -- the same argument HitPart[] carries since Т13.
         /// Checked PER PIECE rather than by one bump, because the fold walks
-        /// FIVE different shapes (a scalar, an int array, a float3 array, a float
-        /// array and a ulong array) and dropping any one of them is its own
-        /// mutation.
-        /// ⭐ THE FIFTH — UpperLayerMask — IS BUMPED AS OF app-94sk T4, WHICH IS
+        /// SIX different pieces (a scalar, two int arrays, a float3 array, a
+        /// float array and a ulong array) and dropping any one of them is its
+        /// own mutation. The second int array -- ClipRate, the baking rate per
+        /// clip -- is app-94sk T6c's, and a rate left out of the fold is a
+        /// table that plays at the wrong speed under an unchanged checksum.
+        /// ⭐ THE MASK — UpperLayerMask, the sixth piece since T6c's rates
+        /// joined ahead of it — IS BUMPED AS OF app-94sk T4, WHICH IS
         /// THE TASK THIS GAP NAMED. T2 left it out with its reason recorded:
         /// the fixture tables carried a null there, and a bump of a null array
         /// asserts nothing. T4's baker is what first fills the mask (fourteen
@@ -676,10 +679,13 @@ namespace Ring.Simulation.Tests
                 $"premise: {sectionName}.Poses.UpperLayerMask must not be null");
             Assert.Greater(probe.UpperLayerMask.Length, 0,
                 $"premise: {sectionName}.Poses.UpperLayerMask carries no words");
+            Assert.IsNotNull(probe.ClipRate, $"premise: {sectionName}.Poses.ClipRate must not be null");
+            Assert.Greater(probe.ClipRate.Length, 0, $"premise: {sectionName}.Poses carries no clip rates");
 
             AssertTableBump("Bones", t => { t.Bones[0] += new float3(1f, 0f, 0f); return t; });
             AssertTableBump("BoneCount", t => { t.BoneCount += 1; return t; });
             AssertTableBump("ClipFirstRow", t => { t.ClipFirstRow[0] += 1; return t; });
+            AssertTableBump("ClipRate", t => { t.ClipRate[0] += 1; return t; });
             AssertTableBump("BlendThresholds", t => { t.BlendThresholds[0] += 1f; return t; });
             // ⛔⛔ THE MASK IS A `ulong[]`, THE ONLY SHAPE OF ITS KIND IN THE
             // FOLD, AND IT GOES IN AS TWO HALVES PER WORD (the fold takes int).
@@ -705,6 +711,7 @@ namespace Ring.Simulation.Tests
                 table.ClipFirstRow = (int[])table.ClipFirstRow.Clone();
                 table.BlendThresholds = (float[])table.BlendThresholds.Clone();
                 table.UpperLayerMask = (ulong[])table.UpperLayerMask.Clone();
+                table.ClipRate = (int[])table.ClipRate.Clone();
                 tableField.SetValue(section, bump(table));
                 sectionField.SetValue(cfg, section);
                 var mutated = (SimConfig)cfg;
