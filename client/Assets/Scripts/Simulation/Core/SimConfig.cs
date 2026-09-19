@@ -915,9 +915,11 @@ namespace Ring.Simulation.Core
         /// `return`, because a writer that filled half a buffer would have
         /// nothing honest to return. Validation rule 15
         /// (SimConfigBuilder.ValidatePoseTableShape) keeps the clip, row and
-        /// rate refusals from ever being reached by a key THIS TICK'S PRODUCER
-        /// made on a built configuration; a key read back out of the rewind
-        /// history is its reader's to bound (T7, spec §3.13).
+        /// rate refusals from ever being reached by a key packed off a built
+        /// configuration -- by this tick's producer, by the spawn seed or by
+        /// RestoreState's re-derivation, always off the tenant's own table --
+        /// which is every key a row of the rewind history carries (spec
+        /// §3.13's reader, RewoundBody since app-94sk T7).
         public static void Sample(in PoseTable table, in PoseKey key, bool singleLayer, float3[] into)
         {
             int n = table.BoneCount;

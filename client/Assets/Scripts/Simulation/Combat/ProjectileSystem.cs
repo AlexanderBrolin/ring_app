@@ -197,6 +197,13 @@ namespace Ring.Simulation.Combat
             // runs 3, 2, 1, 0 over a picture depth of three) instead of
             // dropping it there in one jump.
             int historyTick = proj.RewindLeft > 0 ? w.CurrentTick - proj.RewindLeft : -1;
+            // app-94sk T7: THE MEMO DEPTH IS THE SAME NUMBER, TAKEN AT THE SAME
+            // MOMENT -- before the decrement below, like historyTick. Read
+            // after it, a live round (0) and a one-tick-rewound round (1 -> 0)
+            // shared entry (slot, 0) and the second was judged against the
+            // first's pose (review B-1; fixture 25b, mutant M462). The memo
+            // is sized cap + 1 for exactly this range.
+            int depth = proj.RewindLeft;
             float2 startPos = proj.Pos;
             // app-88jb Т18: the step itself -- where this tick ends and
             // what STATIC geometry stands along the way -- comes from the
@@ -300,18 +307,24 @@ namespace Ring.Simulation.Combat
                 // table's number, and neither packs a key nor samples here:
                 // the lean is asked FIRST, because packing a key is an atan2
                 // per body per round in the hottest loop there is.
-                float mobRadius = mobCfg.GatherRadius;
-                if (HitVolumes.LeanOf(mobs[m].Tilt).Leaning)
-                {
-                    mobRadius = LeaningCircleOf(w, mobs[m].HistorySlot, proj.RewindLeft, mobCfg.Parts,
-                        in mobCfg.Poses, PoseKey.FromMob(in mobs[m]), singleLayer: true,
-                        mobs[m].Dir, BakedClips.MobForward, mobs[m].Tilt, mobCfg.GatherRadius);
-                }
-                if (RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
+                // app-94sk T7: the stand FIRST -- and with it the key, the
+                // course and the lean of the moment the question is about
+                // (RewoundBody's own doc), so a leaning body's circle below is
+                // the circle of the body that WAS there.
+                if (!RewoundBody(w, historyTick, mobs[m].HistorySlot, mobs[m].Pos,
                         liveAlive: true, liveSliding: false, liveInvulnerable: false,
-                        out float2 mobPos, out _, out _, out _)
-                    && Geometry.SegmentCircle(startPos, target, proj.Radius,
-                        mobPos, mobRadius, out float tm))
+                        mobs[m].Dir, mobs[m].Tilt,
+                        out float2 mobPos, out _, out _, out _,
+                        out PoseKey mobKey, out float2 mobDir, out float2 mobTilt))
+                    continue;
+                float mobRadius = mobCfg.GatherRadius;
+                if (HitVolumes.LeanOf(mobTilt).Leaning)
+                {
+                    mobRadius = LeaningCircleOf(w, mobs[m].HistorySlot, depth, mobCfg.Parts,
+                        in mobCfg.Poses, in mobKey, singleLayer: true,
+                        mobDir, BakedClips.MobForward, mobTilt, mobCfg.GatherRadius);
+                }
+                if (Geometry.SegmentCircle(startPos, target, proj.Radius, mobPos, mobRadius, out float tm))
                 {
                     candidates[candCount++] = (tm, HitMob, m);
                 }
@@ -389,18 +402,20 @@ namespace Ring.Simulation.Combat
                 if (!player.Alive) continue;
                 // app-94sk T6b: a leaning collector's circle, on the mob
                 // loop's own account above.
-                float playerRadius = heroRadius;
-                if (HitVolumes.LeanOf(player.Tilt).Leaning)
-                {
-                    playerRadius = LeaningCircleOf(w, player.HistorySlot, proj.RewindLeft,
-                        config.Hero.Parts, in config.Hero.Poses, PoseKey.FromPlayer(in player),
-                        singleLayer: false, player.Dir, BakedClips.CollectorForward, player.Tilt, heroRadius);
-                }
-                if (RewoundBody(w, historyTick, player.HistorySlot, player.Pos,
+                if (!RewoundBody(w, historyTick, player.HistorySlot, player.Pos,
                         player.Alive, player.SlideTimer > 0f, player.IframeTimer > 0f,
-                        out float2 playerPos, out _, out _, out _)
-                    && Geometry.SegmentCircle(startPos, target, proj.Radius,
-                        playerPos, playerRadius, out float tp))
+                        player.Dir, player.Tilt,
+                        out float2 playerPos, out _, out _, out _,
+                        out PoseKey playerKey, out float2 playerDir, out float2 playerTilt))
+                    continue;
+                float playerRadius = heroRadius;
+                if (HitVolumes.LeanOf(playerTilt).Leaning)
+                {
+                    playerRadius = LeaningCircleOf(w, player.HistorySlot, depth,
+                        config.Hero.Parts, in config.Hero.Poses, in playerKey,
+                        singleLayer: false, playerDir, BakedClips.CollectorForward, playerTilt, heroRadius);
+                }
+                if (Geometry.SegmentCircle(startPos, target, proj.Radius, playerPos, playerRadius, out float tp))
                 {
                     candidates[candCount++] = (tp, HitPlayer, pi);
                 }
@@ -485,7 +500,7 @@ namespace Ring.Simulation.Combat
                 hitTargetIndex = candidates[bestSlot].index;
 
                 if (AcceptCandidate(w, in config, in proj, startPos, target, bestT,
-                        hitKind, hitTargetIndex, historyTick, out hitZone, out hitMult,
+                        hitKind, hitTargetIndex, historyTick, depth, out hitZone, out hitMult,
                         out hitHeight, out hitContactT))
                 {
                     break;
@@ -832,8 +847,9 @@ namespace Ring.Simulation.Combat
                     // costs nothing and hiding it would cost the next reader an
                     // afternoon.
                     RewoundBody(w, historyTick, victim.HistorySlot, victim.Pos, victim.Alive,
-                        victim.SlideTimer > 0f, victim.IframeTimer > 0f,
-                        out _, out _, out bool invulnerableThen, out bool iframesFromHistory);
+                        victim.SlideTimer > 0f, victim.IframeTimer > 0f, victim.Dir, victim.Tilt,
+                        out _, out _, out bool invulnerableThen, out bool iframesFromHistory,
+                        out _, out _, out _);
                     bool blowArrives = !invulnerableThen;
                     bool piercedPlayer = blowArrives
                         && ProjectileFlight.TryPierce(ref proj, in config,
@@ -1048,8 +1064,11 @@ namespace Ring.Simulation.Combat
         /// which is a worse outcome than either reading alone.
         ///
         /// IT ANSWERS THE WHOLE QUESTION AT ONCE -- "is this a target at all"
-        /// as the return value, and where it stood and its two profile bits as
-        /// out parameters -- because the four are one reading of one moment.
+        /// as the return value, and where it stood, its two profile bits and
+        /// (app-94sk T7, spec §3.7) the POSE KEY, COURSE and LEAN it held as
+        /// out parameters -- because the seven are one reading of one moment.
+        /// The key is what the resolver samples the body's pose with; the
+        /// course turns the volumes and the lean lays them over (HitVolumes).
         /// The un-rewound path is the FIRST branch rather than a separate code
         /// path at the call sites: `historyTick < 0` names the present, the
         /// live values are handed straight back, and every caller therefore
@@ -1058,7 +1077,7 @@ namespace Ring.Simulation.Combat
         ///
         /// ⛔⛔ ON A DEGENERATE ANSWER NOT ONE FLAG COMES OUT OF THE RECORD,
         /// AND THAT INCLUDES `Alive`. PositionHistory.PosAt hands back
-        /// `new Record(currentPos, FlagAlive)` when the ring holds no row for
+        /// `new Record(currentPos, FlagAlive, default)` when the ring holds no row for
         /// the tick -- FlagAlive raised UNCONDITIONALLY, whatever the live body
         /// is doing -- and returns `true` with it. So the record of that branch
         /// states three things and knows none of them: reading `Alive` off it
@@ -1069,6 +1088,20 @@ namespace Ring.Simulation.Combat
         /// the caller already passed in, which is the un-rewound behavior its
         /// own doc demands ("a caller that has fallen into this branch must
         /// read SlideTimer/IframeTimer off the live body").
+        ///
+        /// ⛔ AND NEITHER DOES THE KEY: the degenerate record's key is the zero
+        /// key, as invented as its flags, so below `false` the key is the
+        /// world's JUDGED key of this tick (SimulationWorld.JudgedKeyOf, packed
+        /// at judgement time by the producer) and the course and lean are the
+        /// live ones the caller passed -- the un-rewound behavior, to the bit
+        /// (fixture 24, mutant M351). ⚠ THE LIVE KEY IS THE WORLD'S BY SLOT,
+        /// not a value the caller holds: a key is not a field of the body's
+        /// struct but a packing of ten of them at one moment, and that moment
+        /// is the producer's, not the resolver's. Out of the history, the
+        /// course and the lean are DECODED from the record's key (PoseKey.
+        /// DirVector / TiltVector, 256 steps and 0.01 rad codes); on the live
+        /// path they are read off the struct exactly, so no live outcome moves
+        /// by a rounding.
         ///
         /// `liveAlive`/`liveSliding`/`liveInvulnerable` are what the CALLER
         /// reads off the live struct it is holding, and a mob passes
@@ -1092,22 +1125,34 @@ namespace Ring.Simulation.Combat
         /// un-rewound case before the ring is ever touched
         /// (AllocationTests.Tick_DoesNotAllocateGC).
         static bool RewoundBody(SimulationWorld w, int historyTick, int slot, float2 livePos,
-            bool liveAlive, bool liveSliding, bool liveInvulnerable,
-            out float2 pos, out bool sliding, out bool invulnerable, out bool fromHistory)
+            bool liveAlive, bool liveSliding, bool liveInvulnerable, float2 liveDir, float2 liveTilt,
+            out float2 pos, out bool sliding, out bool invulnerable, out bool fromHistory,
+            out PoseKey key, out float2 dir, out float2 tilt)
         {
             pos = livePos;
             sliding = liveSliding;
             invulnerable = liveInvulnerable;
             fromHistory = false;
-            if (historyTick < 0) return liveAlive;
+            dir = liveDir;
+            tilt = liveTilt;
+            // The live key is read on the two live returns only: read up
+            // front it would be a 14-byte copy per body per round per step
+            // thrown away on the historical path (review A-6).
+            if (historyTick < 0) { key = w.JudgedKeyOf(slot); return liveAlive; }
 
             bool aliveThen = w.History.PosAt(slot, historyTick, livePos,
                 out PositionHistory.Record record, out fromHistory);
-            if (!fromHistory) return liveAlive;
+            if (!fromHistory) { key = w.JudgedKeyOf(slot); return liveAlive; }
 
             pos = record.Pos;
             sliding = (record.Flags & PositionHistory.FlagSliding) != 0;
             invulnerable = (record.Flags & PositionHistory.FlagInvulnerable) != 0;
+            // app-94sk T7: the pose, the course and the lean of THAT tick, out
+            // of the record's key -- the volumes are met as they stood then
+            // (spec §3.7; fixtures 22/22a/22b, mutants M349/M458/M459).
+            key = record.Key;
+            dir = key.DirVector;
+            tilt = key.TiltVector;
             return aliveThen;
         }
 
@@ -1191,7 +1236,7 @@ namespace Ring.Simulation.Combat
         /// requires — a rejected candidate's height is never read by the
         /// caller, only its true/false verdict.
         static bool AcceptCandidate(SimulationWorld w, in SimConfig config, in ProjectileState proj,
-            float2 p0, float2 p1, float t, int kind, int targetIndex, int historyTick,
+            float2 p0, float2 p1, float t, int kind, int targetIndex, int historyTick, int depth,
             out HitZone zone, out float mult, out float hitHeight, out float contactT)
         {
             zone = HitZone.None;
@@ -1235,15 +1280,17 @@ namespace Ring.Simulation.Combat
             // number the history is keyed by), its packed key, whether it has
             // one layer (a mob) or two (the collector, whose aim layer rides
             // over locomotion), its course turned by its rig's forward
-            // (HitVolumes.YawOf), and its lean. ⚠ THE LIVE KEY AND THE LIVE
-            // TILT, WHATEVER `historyTick` SAYS: the history record carries no
-            // key until T7 (spec §3.7), so a rewound round meets today's pose
-            // at yesterday's stand -- the position is rewound, the pose is
-            // not, and T7 is where the key joins the record. The tilt read
-            // here is the one TiltSystem left at the end of the PREVIOUS
-            // tick: it steps after this system, so the key carries the lean
-            // at the moment of judgement, not at the end of the tick (spec
-            // §3.6, fixture 23a in T7).
+            // (HitVolumes.YawOf), and its lean. ⚠ THE KEY, THE COURSE AND THE
+            // LEAN OF THE MOMENT `historyTick` NAMES (app-94sk T7, spec §3.7):
+            // out of the record when the ring has a row for it -- a rewound
+            // round meets the pose, the course and the lean of the tick it
+            // asks about -- and the world's judged key of this tick with the
+            // live course and lean otherwise; RewoundBody hands back all of
+            // them from one answer. The lean the live path reads
+            // is the one TiltSystem left at the end of the PREVIOUS tick: it
+            // steps after this system, so the key carries the lean at the
+            // moment of judgement, not at the end of the tick (spec §3.6,
+            // fixture 23a).
             int slot;
             PoseKey key;
             bool singleLayer;
@@ -1272,9 +1319,14 @@ namespace Ring.Simulation.Combat
                 // the contact on the same stand the candidate was gathered at.
                 // A mob has no slide and no dash, so the two profile bits are
                 // discarded here as they are at the gather.
+                // app-94sk T7: and with the stand, the KEY, the COURSE and the
+                // LEAN of that moment -- the rewound body is met as it was
+                // posed, turned and leaned then (spec §3.7), the live one as it
+                // is now, from one answer.
                 RewoundBody(w, historyTick, mob.HistorySlot, mob.Pos,
                     liveAlive: true, liveSliding: false, liveInvulnerable: false,
-                    out targetPos, out _, out _, out _);
+                    mob.Dir, mob.Tilt,
+                    out targetPos, out _, out _, out _, out key, out float2 mobDir, out tilt);
                 parts = cfg.Parts;
                 // THE CROWN OF THE MODEL, NOT OF THE COLUMN (app-88jb T14 Step
                 // 4, coordinator Ruling 68). This read was the column's head
@@ -1292,10 +1344,8 @@ namespace Ring.Simulation.Combat
                 // records WHY the crown had to stop being the column's.
                 poses = cfg.Poses;   // a mob never slides: no ceiling of that kind
                 slot = mob.HistorySlot;
-                key = PoseKey.FromMob(in mob);
                 singleLayer = true;
-                HitVolumes.YawOf(mob.Dir, BakedClips.MobForward, out facingSin, out facingCos);
-                tilt = mob.Tilt;
+                HitVolumes.YawOf(mobDir, BakedClips.MobForward, out facingSin, out facingCos);
             }
             else if (kind == HitPlayer)
             {
@@ -1315,8 +1365,8 @@ namespace Ring.Simulation.Combat
                 // IS `target.SlideTimer > 0f`, the test this branch has always
                 // written out here.
                 RewoundBody(w, historyTick, target.HistorySlot, target.Pos, target.Alive,
-                    target.SlideTimer > 0f, target.IframeTimer > 0f,
-                    out targetPos, out bool sliding, out _, out _);
+                    target.SlideTimer > 0f, target.IframeTimer > 0f, target.Dir, target.Tilt,
+                    out targetPos, out bool sliding, out _, out _, out key, out float2 targetDir, out tilt);
                 parts = cfg.Parts;
                 // Task 11: mid-slide, the hero presents a lower profile — the
                 // OVERLAP gate caps at SlideProfileTop instead of the standing
@@ -1343,10 +1393,8 @@ namespace Ring.Simulation.Combat
                 // radius of 0.45).
                 poses = cfg.Poses;
                 slot = target.HistorySlot;
-                key = PoseKey.FromPlayer(in target);
                 singleLayer = false;
-                HitVolumes.YawOf(target.Dir, BakedClips.CollectorForward, out facingSin, out facingCos);
-                tilt = target.Tilt;
+                HitVolumes.YawOf(targetDir, BakedClips.CollectorForward, out facingSin, out facingCos);
                 if (sliding) slideCeiling = cfg.SlideProfileTop;
             }
             else if (kind == HitRingWall)
@@ -1478,7 +1526,7 @@ namespace Ring.Simulation.Combat
             // damage path learns it in plan 2 (spec §3.10), and a field nobody
             // reads yet has no business in an event.
             if (poses.Bones == null || poses.BoneCount <= 0) return false;
-            float3[] pose = PoseOf(w, slot, proj.RewindLeft, in poses, in key, singleLayer);
+            float3[] pose = PoseOf(w, slot, depth, in poses, in key, singleLayer);
             return HitVolumes.Resolve(parts, in poses, pose, tilt,
                 bodyOrigin: new float3(targetPos, 0f),
                 facingSin, facingCos,

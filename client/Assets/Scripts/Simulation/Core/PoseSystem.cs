@@ -72,6 +72,17 @@ namespace Ring.Simulation.Core
                 // config through: only the table is needed here.
                 ref readonly MobSimConfig cfg = ref w.MobConfigRefFor(m.Type);
                 StepMob(ref m, in cfg.Poses);
+                // app-94sk T7 (spec §3.6/§3.7): THE KEY IS PACKED HERE, at
+                // judgement time -- the pose just decided, the course the AI
+                // just set, and the tilt TiltSystem left at the end of the
+                // PREVIOUS tick, which is the lean every round of this tick is
+                // judged against. PositionHistory.Write copies this key into
+                // the tick's row on the last line of the tick; packing it there
+                // instead, off the live fields, would record the lean of the
+                // END of the tick (fixture 23a, mutant M382). One packing per
+                // body per tick, and the resolver no longer packs one per
+                // round-body pair.
+                w.SetJudgedKey(m.HistorySlot, PoseKey.FromMob(in m));
             }
             // The keys moved: whatever the memo sampled off the previous
             // tick's keys (a catch-up step inside the weapon phase, ahead of

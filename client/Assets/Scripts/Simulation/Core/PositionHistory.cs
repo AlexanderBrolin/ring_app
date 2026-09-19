@@ -179,8 +179,13 @@ namespace Ring.Simulation.Core
             Clear();
         }
 
-        /// One body's record. 12 bytes: Pos (8) + Flags (1) + padding.
-        /// Flags: bit0 Alive, bit1 Sliding, bit2 Invulnerable.
+        /// One body's record. 24 bytes: Pos (8) + Flags (1) + one byte of
+        /// padding + PoseKey (14) -- app-94sk T7, spec §3.7 ("the record grows
+        /// from 12 to 24 bytes"); the history is 24 x 6 x 1353 = 190.3 KiB.
+        /// Flags: bit0 Alive, bit1 Sliding, bit2 Invulnerable. Key: the pose
+        /// the body was JUDGED BY on that tick (the world's judged key, packed
+        /// before the rounds were resolved -- spec §3.6's "the key carries the
+        /// tilt at judgement time, not at the end of the tick", fixture 23a).
         ///
         /// SLIDING AND INVULNERABLE ARE NOT DECORATION (finding C-I5). The
         /// height gate reads the target's slide -- ProjectileSystem's own
@@ -209,19 +214,23 @@ namespace Ring.Simulation.Core
         /// THE CONSTRUCTOR ARRIVED WITH ITS FIRST CALLER (Т25), which is what
         /// Т24 deliberately waited for: while the only value this struct could
         /// hold was `default`, a constructor would have been production code
-        /// no test could kill. Both callers live in this class -- Write builds
-        /// the historical record, PosAt builds the degenerate one -- and
-        /// nothing outside it ever constructs a Record, which is why the two
-        /// fields stay readonly and there is no setter of any kind.
+        /// no test could kill. Both battle callers live in this class -- Write
+        /// builds the historical record, PosAt builds the degenerate one --
+        /// and the one caller outside it is a fixture (23, PoseTableTests,
+        /// app-94sk T7), which rewrites one saved row's key to prove the fold
+        /// walks it; the three fields stay readonly and there is no setter of
+        /// any kind.
         public readonly struct Record
         {
             public readonly float2 Pos;
             public readonly byte Flags;
+            public readonly PoseKey Key;
 
-            public Record(float2 pos, byte flags)
+            public Record(float2 pos, byte flags, in PoseKey key)
             {
                 Pos = pos;
                 Flags = flags;
+                Key = key;
             }
         }
 
@@ -307,11 +316,20 @@ namespace Ring.Simulation.Core
                 if (p.Alive) flags |= FlagAlive;
                 if (p.SlideTimer > 0f) flags |= FlagSliding;
                 if (p.IframeTimer > 0f) flags |= FlagInvulnerable;
-                _rows[row + p.HistorySlot] = new Record(p.Pos, flags);
+                // app-94sk T7: THE KEY IS COPIED, NOT PACKED HERE. This line
+                // runs after TiltSystem, and a key packed off the live fields
+                // now would carry the lean of the END of the tick; the world's
+                // judged key was packed at judgement time, before the rounds
+                // (SimulationWorld._judgedPose's own doc, fixture 23a, mutant
+                // M382). One packing per body per tick, at the producer.
+                _rows[row + p.HistorySlot] = new Record(p.Pos, flags, w.JudgedKeyOf(p.HistorySlot));
             }
             int mobCount = w.MobCount;
             for (int i = 0; i < mobCount; i++)
-                _rows[row + w.Mobs[i].HistorySlot] = new Record(w.Mobs[i].Pos, FlagAlive);
+            {
+                int slot = w.Mobs[i].HistorySlot;
+                _rows[row + slot] = new Record(w.Mobs[i].Pos, FlagAlive, w.JudgedKeyOf(slot));
+            }
         }
 
         /// ⛔ THE NEGATIVE-TICK GUARD IS FIRST, BEFORE ANY INDEXING (coordinator
@@ -393,7 +411,7 @@ namespace Ring.Simulation.Core
             int rowIndex = tick < 0 ? NoRow : RowIndex(tick);
             if (rowIndex == NoRow || _rowTick[rowIndex] != tick)
             {
-                record = new Record(currentPos, FlagAlive);
+                record = new Record(currentPos, FlagAlive, default);
                 fromHistory = false;
                 return true;
             }
@@ -507,11 +525,16 @@ namespace Ring.Simulation.Core
 
         /// Flags fold as `int` rather than as a byte: StateHash64 has no byte
         /// overload, and the container-slot walk in StateHash already widens
-        /// its bytes the same way.
+        /// its bytes the same way. app-94sk T7: and the KEY folds after them,
+        /// field by field through PoseKey.Fold (its own one home of that
+        /// walk) -- a pose the history carries and the digest does not would
+        /// be a rewound hit two peers could disagree on (fixture 23, mutant
+        /// M350).
         static ulong FoldRecord(ulong h, in Record r)
         {
             h = StateHash64.Add(h, r.Pos);
-            return StateHash64.Add(h, (int)r.Flags);
+            h = StateHash64.Add(h, (int)r.Flags);
+            return PoseKey.Fold(h, in r.Key);
         }
 
         /// Deep-copies both halves of the ring into the save (coordinator

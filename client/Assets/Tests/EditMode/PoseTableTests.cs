@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using NUnit.Framework;
 using Ring.Editor;
 using Ring.Simulation.Combat;
@@ -1305,6 +1307,403 @@ namespace Ring.Simulation.Tests
             // combat path, so the build has to first (review B4).
             Refuses(t => { t.ClipRate[2] = 0; return t; }, "rows a second",
                 "таблица с нулевой частотой клипа принята сборкой (M457)");
+        }
+
+        // ------------------------------------------------ app-94sk T7 (spec §3.6/§3.7): the pose in the rewind history
+
+        /// A round along +x with a rewind DEPTH -- fixture 17's shape plus the
+        /// depth the T7 fixtures count on; owned by nobody, so it may strike
+        /// player 0.
+        static void ShootAlongXRewound(SimulationWorld w, in SimConfig cfg, float fromX, float y, float height,
+            byte depth)
+            => w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(fromX, y),
+                new float2(cfg.Weapon.ProjectileSpeed, 0f), height, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
+                ownerIndex: ProjectileIds.NoOwner, rewindLeft: depth);
+
+        /// The line of fixture 17 -- past the slid head's plan by a quarter of
+        /// a meter, a little above it -- and where a round has to START so
+        /// that its FIRST step meets the head: the step whose rewind depth the
+        /// fixtures below count on. The premises are properties of the table.
+        static void SlidHeadLine(in SimConfig cfg, out float lineY, out float height, out float fromX)
+        {
+            int slideRow = cfg.Hero.Poses.ClipFirstRow[BakedClips.Collector.Slide];
+            HitPart head = TestWorlds.VolumeOfZone(cfg.Hero.Parts, HitZone.Head, "сборщик");
+            float3 slidHead = cfg.Hero.Poses.Bones[slideRow * cfg.Hero.Poses.BoneCount + head.BoneB];
+            lineY = slidHead.z + 0.24f;
+            height = slidHead.y + 0.07f;
+            float reach = head.Radius + cfg.Weapon.ProjectileRadius;
+            float step = cfg.Weapon.ProjectileSpeed * SimulationWorld.TickDt;
+            fromX = slidHead.x - 0.7f;
+            Assert.Less(math.distance(new float2(lineY, height), new float2(slidHead.z, slidHead.y)), reach,
+                "премисса фикстуры: линия проходит в пределах досягаемости лежащей головы");
+            Assert.Less(fromX, slidHead.x - reach, "премисса: старт раньше входа в капсулу головы");
+            Assert.Less(slidHead.x, fromX + step, "премисса: голова внутри ПЕРВОГО шага снаряда");
+        }
+
+        /// A collector who slid on exactly ONE recorded tick and stands now --
+        /// the past fixtures 22/22a/25 rewind into. Returns the world at the
+        /// end of tick 4 with the slide on row 2; `slidTick` says which. He
+        /// faces the table's own way, so the table's plan is the world's.
+        static SimulationWorld CollectorWhoSlidOnce(in SimConfig cfg, out int slidTick)
+        {
+            var w = new SimulationWorld(22, cfg);
+            var p = w.PlayerAt(0);
+            p.Dir = BakedClips.CollectorForward;
+            w.SetPlayerForTest(0, p);
+            var idle = new SimInput[1];
+            w.TickAll(idle);                                                   // row 1: standing
+            p = w.PlayerAt(0); p.SlideTimer = cfg.Hero.SlideDuration; w.SetPlayerForTest(0, p);
+            w.TickAll(idle);                                                   // row 2: sliding
+            slidTick = w.CurrentTick;
+            p = w.PlayerAt(0); p.SlideTimer = 0f; w.SetPlayerForTest(0, p);
+            w.TickAll(idle); w.TickAll(idle);                                  // rows 3, 4: standing again
+            Assert.AreEqual(0f, w.PlayerAt(0).SlideTimer, "премисса: сейчас сборщик стоит");
+            return w;
+        }
+
+        [Test]
+        public void ARewoundRoundMeetsThePoseTheBodyHeldThen()   // fixture 22, witness of M349
+        {
+            // ⭐⭐ THE WITNESS OF T7: the round is judged against the pose the
+            // body HELD at the rewound tick, not the pose it holds now. The
+            // collector slid on one recorded tick and stands now; a round with
+            // exactly the depth that lands on that tick meets his HEAD where
+            // it lay in the slide (fixture 17's line: a miss on the standing
+            // body, a head shot on the sliding one), because the record of
+            // that tick carries the slide's key and the resolver samples it.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.SlideSpeed = 0f;
+            SlidHeadLine(in cfg, out float lineY, out float height, out float fromX);
+            // Un-rewound, the standing body is a miss -- or the fixture is
+            // green on any key at all (fixture 17's own premise, re-asked here
+            // on the world this fixture builds).
+            var live = CollectorWhoSlidOnce(in cfg, out _);
+            ShootAlongXRewound(live, in cfg, fromX, lineY, height, depth: 0);
+            live.TickAll(new SimInput[1]);
+            Assert.IsFalse(TestEvents.TryFirstOf(live, SimEventKind.PlayerDamaged, out _),
+                "премисса фикстуры: по стоящему телу без отмотки этот выстрел обязан быть промахом");
+
+            var w = CollectorWhoSlidOnce(in cfg, out int slidTick);
+            // The first step is judged on the NEXT tick and asks CurrentTick+1 - depth.
+            int depth = w.CurrentTick + 1 - slidTick;
+            Assert.That(depth, Is.InRange(1, cfg.Arena.RewindCapTicks), "премисса: глубина внутри капа отмотки");
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)depth);
+            w.TickAll(new SimInput[1]);
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e),
+                "отмотанный выстрел не встретил лежащую в слайде голову — отмотка берёт текущую позу, а не прошлую (M349)");
+            Assert.AreEqual(HitZone.Head, e.Zone, "встречен не тот объём");
+        }
+
+        [Test]
+        public void ARewoundRoundMeetsTheCourseTheBodyHeldThen()   // fixture 22a, witness of M458
+        {
+            // The record's key carries the body's COURSE too (Facing), and the
+            // rewound volumes turn by it: the collector who slid facing the
+            // table's way has since turned a quarter turn, and the round with
+            // the depth of the slid tick still meets his head where it lay --
+            // a resolver that placed the past pose on the PRESENT course would
+            // swing that head a quarter turn off the line (the plan `(x, z)`
+            // turns to `(-z, x)` under YawOf for a course of (1, 0) on a -z
+            // rig: the head at y = 0.41 goes to y = 0, and the line at 0.65
+            // passes 0.65 wide of it against a reach of 0.38).
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.SlideSpeed = 0f;
+            SlidHeadLine(in cfg, out float lineY, out float height, out float fromX);
+            var w = CollectorWhoSlidOnce(in cfg, out int slidTick);
+            var p = w.PlayerAt(0);
+            p.Dir = new float2(1f, 0f);   // turned since: a quarter turn from the table's -z
+            w.SetPlayerForTest(0, p);
+            w.TickAll(new SimInput[1]);   // one standing row on the new course, so the turn is on record too
+            Assert.AreEqual(new float2(1f, 0f), w.PlayerAt(0).Dir, "премисса: курс удержан холостым тиком");
+            int depth = w.CurrentTick + 1 - slidTick;
+            Assert.That(depth, Is.InRange(1, cfg.Arena.RewindCapTicks), "премисса: глубина внутри капа отмотки");
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)depth);
+            w.TickAll(new SimInput[1]);
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e),
+                "отмотанный выстрел не встретил голову там, где она лежала при ТОМ курсе — отмотанная поза поставлена на нынешний курс (M458)");
+            Assert.AreEqual(HitZone.Head, e.Zone, "встречен не тот объём");
+        }
+
+        [Test]
+        public void ARewoundRoundMeetsTheLeanTheBodyHeldThen()   // fixture 22b, witness of M459
+        {
+            // The record's key carries the LEAN too (TiltX/TiltZ), and the
+            // rewound volumes go down by it: a chaser who lay at the fall angle
+            // on one recorded tick and stands upright now is met LYING by the
+            // round whose depth lands on that tick -- fixture 26a's line across
+            // the fallen chest, OUTSIDE the standing circle, so a resolver that
+            // leaned the past pose by the PRESENT tilt would not even gather
+            // him. The spring is overruled every tick by the test seam: the
+            // lean is an input here, not a number.
+            const int ChestBone = 2;
+            SimConfig cfg = TestConfigs.OpenField();
+            TestWorlds.FreezeArchetype(ref cfg, MobType.Chaser);
+            float3 chest = cfg.Chaser.Poses.Bones[ChestBone];
+            float fall = cfg.Chaser.TiltFallAngle;
+            float2 body = new float2(8f, 0f);
+            float chestTop = chest.y * math.cos(fall) + cfg.Chaser.Parts[1].Radius + cfg.Weapon.ProjectileRadius;
+            Assert.Greater(chestTop, cfg.Hero.MuzzleHeight,
+                "премисса фикстуры: на этом крене линия дула обязана пересекать корпус");
+            float chestAlong = chest.y * math.sin(fall) + chest.x * math.cos(fall);
+            Assert.Greater(chestAlong + 0.3f, cfg.Chaser.GatherRadius + cfg.Weapon.ProjectileRadius,
+                "премисса фикстуры: линия поперёк лежащего корпуса проходит ВНЕ круга охвата стоящего тела");
+
+            var w = new SimulationWorld(26, cfg);
+            w.SpawnMobForTest(MobType.Chaser, body);
+            var idle = new SimInput[1];
+            void SetTilt(float angle)
+            {
+                var m = w.Mobs[0];
+                m.Dir = BakedClips.MobForward;   // the table's own orientation
+                m.Tilt = new float2(angle, 0f);
+                m.TiltVel = float2.zero;
+                w.SetMobForTest(0, m);
+            }
+            SetTilt(0f); w.TickAll(idle);          // row 1: upright
+            SetTilt(fall); w.TickAll(idle);        // row 2: lying at the fall angle (the key is packed before the spring steps)
+            int lyingTick = w.CurrentTick;
+            SetTilt(0f); w.TickAll(idle);          // rows 3, 4: upright again
+            SetTilt(0f); w.TickAll(idle);
+            SetTilt(0f);
+            int depth = w.CurrentTick + 1 - lyingTick;
+            Assert.That(depth, Is.InRange(1, cfg.Arena.RewindCapTicks), "премисса: глубина внутри капа отмотки");
+            Assert.Less(math.length(w.Mobs[0].Tilt), 1e-3f, "премисса: сейчас тело стоит прямо");
+            int before = w.StatsAt(0).ShotsHit;
+            w.SpawnProjectileForTest(ProjectileOwner.Player, new float2(body.x + chestAlong + 0.3f, -1.2f),
+                new float2(0f, cfg.Weapon.ProjectileSpeed), cfg.Hero.MuzzleHeight, velZ: 0f,
+                cfg.Weapon.Damage, cfg.Weapon.ProjectileRadius, cfg.Weapon.ProjectileLifetime,
+                rewindLeft: (byte)depth);
+            w.TickAll(idle);
+            Assert.AreEqual(before + 1, w.StatsAt(0).ShotsHit,
+                "отмотанный выстрел поперёк лежавшего корпуса прошёл мимо — отмотанная поза накренена нынешним креном (M459)");
+        }
+
+        [Test]
+        public void TheHistorysFoldWalksEveryFieldOfTheKey()   // fixture 23, witness of M350
+        {
+            // ⛔ A REFLECTIVE SWEEP CANNOT PROVE THIS: it would show that
+            // "something of the record is hashed". So the key's fields are
+            // walked BY NAME, one bumped at a time inside ONE recorded row of a
+            // saved world, and the digest of the restored world has to move on
+            // every one of them. The record's size and the key's offset are
+            // pinned beside it -- the spec's 24 bytes, 190.3 KiB of history.
+            System.Type rt = typeof(PositionHistory.Record);
+            Assert.AreEqual(24, Marshal.SizeOf(rt), "запись истории обязана занимать ровно 24 байта");
+            Assert.AreEqual(10, (int)Marshal.OffsetOf(rt, nameof(PositionHistory.Record.Key)),
+                "ключ — за позицией и флагами, с одним байтом выравнивания");
+
+            SimConfig cfg = TestConfigs.OpenField();
+            var a = new SimulationWorld(23, cfg);
+            a.TickAll(new SimInput[1]);
+            ulong baseline = a.StateHash();
+            // The restore is faithful before anything is bumped -- or every
+            // inequality below would be the restore's, not the fold's.
+            var same = new SimulationWorld(23, cfg);
+            same.RestoreState(a.SaveState());
+            Assert.AreEqual(baseline, same.StateHash(), "премисса: нетронутое сохранение восстанавливается в тот же хеш");
+
+            int slot = a.PlayerAt(0).HistorySlot;
+            int bodies = cfg.Arena.MaxMobs + cfg.Arena.MaxPlayers;
+            FieldInfo[] fields = typeof(PoseKey).GetFields(BindingFlags.Public | BindingFlags.Instance);
+            Assert.AreEqual(12, fields.Length, "сторож: у ключа двенадцать полей");
+            foreach (FieldInfo f in fields)
+            {
+                WorldSave save = a.SaveState();
+                int rowIndex = System.Array.IndexOf(save.HistoryRowTicks, a.CurrentTick);
+                Assert.GreaterOrEqual(rowIndex, 0, "премисса: строка этого тика есть в сохранении");
+                int at = rowIndex * bodies + slot;   // the ring's own index arithmetic, re-spelled (lesson 427)
+                PositionHistory.Record r = save.HistoryRows[at];
+                Assert.AreNotEqual(0, r.Flags & PositionHistory.FlagAlive, "премисса: запись живого сборщика");
+                object box = r.Key;
+                f.SetValue(box, BumpKeyField(f.GetValue(box)));
+                save.HistoryRows[at] = new PositionHistory.Record(r.Pos, r.Flags, (PoseKey)box);
+                var b = new SimulationWorld(23, cfg);
+                b.RestoreState(save);
+                Assert.AreNotEqual(baseline, b.StateHash(), $"PoseKey.{f.Name} не входит в свёртку истории (M350)");
+            }
+        }
+
+        /// A step of one FOR THE KEY'S OWN TYPES -- ushort, byte, sbyte -- which
+        /// the state sweeps' Bump never meets (they live only inside the packing).
+        static object BumpKeyField(object v) => v switch
+        {
+            ushort u => (object)(ushort)(u + 1),
+            byte b => (object)(byte)(b + 1),
+            sbyte sb => (object)(sbyte)(sb + 1),
+            _ => throw new System.NotSupportedException(v.GetType().Name),
+        };
+
+        [Test]
+        public void TheKeyCarriesTheTiltAtJudgementTime_NotAtTheEndOfTheTick()   // fixture 23a, witness of M382
+        {
+            // ⛔ THE INVARIANT, STATED HONESTLY (spec §3.6, D-I2). Tick order:
+            // movement -> weapon -> AI -> separation -> PoseSystem -> rounds ->
+            // TiltSystem -> ... -> PositionHistory.Write on the last line. The
+            // key is packed BEFORE the rounds are judged, so it carries the
+            // lean of the START of the tick, and the record has to carry THAT
+            // key: a Write that packed a key itself, off the live fields on
+            // the last line, would record the lean TiltSystem left at the END
+            // of the tick, one tick off from what the shot was judged against.
+            // The one-tick disagreement between the record's TiltX and m.Tilt
+            // is LEGAL and pinned here so that nobody "fixes" it.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(1, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Tilt = new float2(0.30f, 0f);
+            // A lean that WILL move by at least one code this tick. ⚠ The
+            // plan's 0.80 rad/s does not: the spring (k ~ 65, c ~ 8.9 on the
+            // fixture's 0.55 / 0.9 s) pulls it back within the tick to 0.297,
+            // still code 30. At 3.0 rad/s the step is v' = 3 - (19.6 + 26.7)/30
+            // = 1.46, x' = 0.30 + 1.46/30 = 0.349 -> code 35 (replica).
+            m.TiltVel = new float2(3.0f, 0f);
+            w.SetMobForTest(0, m);
+            float2 tiltBefore = w.Mobs[0].Tilt;
+            w.TickAll(new SimInput[1]);
+            float2 tiltAfter = w.Mobs[0].Tilt;
+            Assert.Greater(math.abs(tiltBefore.x - tiltAfter.x), 1e-4f,
+                "премисса фикстуры: за тик крен обязан сдвинуться, иначе «до» и «после» неразличимы");
+            Assert.IsTrue(w.History.PosAt(w.Mobs[0].HistorySlot, w.CurrentTick, w.Mobs[0].Pos,
+                    out PositionHistory.Record rec, out bool fromRow) && fromRow,
+                "премисса фикстуры: запись этого тика обязана быть в истории");
+            Assert.AreNotEqual(Quant(tiltAfter.x), Quant(tiltBefore.x),
+                "премисса: квантованные «до» и «после» обязаны различаться, иначе ассерт ниже зелен на обеих реализациях");
+            Assert.AreEqual(Quant(tiltBefore.x), rec.Key.TiltX,
+                "ключ снят ПОСЛЕ TiltSystem — расхождение на тик стало нулевым, и порядок тика молча изменился (M382)");
+        }
+
+        /// The tilt's quantization, re-spelled from the packer's law ON PURPOSE
+        /// (lesson 427): a witness that called the code under test would prove
+        /// self-consistency, not correctness.
+        static sbyte Quant(float v) => (sbyte)math.clamp((int)math.round(v / PoseKey.TiltQuantStep),
+            sbyte.MinValue, sbyte.MaxValue);
+
+        [Test]
+        public void ARewindWithNoRowMeetsTheLivePose()   // fixture 24, witness of M351
+        {
+            // ⭐⭐ THE DEGENERATE BRANCH: the ring holds no row for the asked
+            // tick (tick 0 is never written), PosAt hands back a record it
+            // BUILT, and its key is as invented as its flags -- so the resolver
+            // reads the LIVE key, the way it reads the live stand and profile
+            // there (RewoundBody's contract, extended to the pose). The
+            // collector is sliding NOW; a round asking about tick 0 meets his
+            // head where it lies in the slide. A resolver that read the built
+            // record's zero key would judge a standing body and miss.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.SlideSpeed = 0f;
+            SlidHeadLine(in cfg, out float lineY, out float height, out float fromX);
+            var w = new SimulationWorld(24, cfg);
+            var p = w.PlayerAt(0);
+            p.Dir = BakedClips.CollectorForward;
+            p.SlideTimer = cfg.Hero.SlideDuration;
+            w.SetPlayerForTest(0, p);
+            w.TickAll(new SimInput[1]);   // tick 1, sliding (row 1); tick 0 has no row EVER
+            int depth = w.CurrentTick + 1;   // the first step, judged on tick 2, asks tick 0
+            Assert.That(depth, Is.InRange(1, cfg.Arena.RewindCapTicks), "премисса: глубина внутри капа отмотки");
+            w.History.PosAt(w.PlayerAt(0).HistorySlot, 0, w.PlayerAt(0).Pos, out _, out bool fromRow);
+            Assert.IsFalse(fromRow, "премисса фикстуры: у тика 0 нет строки — иначе ветка не вырожденная");
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)depth);
+            w.TickAll(new SimInput[1]);
+            Assert.Greater(w.PlayerAt(0).SlideTimer, 0f, "премисса фикстуры: при судействе сборщик всё ещё скользит");
+            Assert.IsTrue(TestEvents.TryFirstOf(w, SimEventKind.PlayerDamaged, out SimEvent e),
+                "вырожденная отмотка не взяла живую позу — судит по нулевому ключу построенной записи (M351)");
+            Assert.AreEqual(HitZone.Head, e.Zone, "встречен не тот объём");
+        }
+
+        [Test]
+        public void TwoRoundsWithDifferentDepthsGetDifferentPoses()   // fixture 25, witness of M352
+        {
+            // ⭐⭐ THE MEMO IS KEYED BY THE PAIR (slot, depth), NOT BY THE BODY:
+            // two rounds judged on ONE tick against ONE collector, one with the
+            // depth of the tick he slid on and one a tick shallower, meet two
+            // different poses -- the first his sliding head, the second the
+            // standing body's nothing. A memo keyed by the body alone would
+            // hand the second round the first's sample, fresh, and both would
+            // land.
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.SlideSpeed = 0f;
+            SlidHeadLine(in cfg, out float lineY, out float height, out float fromX);
+            var w = CollectorWhoSlidOnce(in cfg, out int slidTick);
+            int deep = w.CurrentTick + 1 - slidTick;   // lands on the sliding row
+            int shallow = deep - 1;                     // lands on the standing row after it
+            Assert.That(deep, Is.InRange(2, cfg.Arena.RewindCapTicks), "премисса: обе глубины внутри капа и различны");
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)deep);
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)shallow);
+            w.TickAll(new SimInput[1]);
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
+                "два снаряда с разной глубиной получили одну позу — мемо ключуется телом, а не парой (M352)");
+        }
+
+        [Test]
+        public void AReusedSlotCarriesItsNewTenantsKey_AndAFreeSlotNone()   // fixture 25a, witness of M460 and M461
+        {
+            // ⛔ THE JUDGED KEY TRAVELS BY SLOT, AND A SLOT CHANGES HANDS. A mob
+            // born by a wave lands AFTER the producer's pass of its tick, so
+            // its spawn-tick row is written with whatever its slot's key holds
+            // -- which has to be ITS key, seeded at the spawn, not the last
+            // tenant's (another archetype, another table: review A-1/B-2).
+            // And a slot given back holds nothing, the invariant the rows keep.
+            SimConfig cfg = TestConfigs.OpenField();
+            var w = new SimulationWorld(25, cfg);
+            w.SpawnMobForTest(MobType.Chaser, new float2(6f, 0f));
+            var m = w.Mobs[0];
+            m.Tilt = new float2(0.5f, 0f);   // a lean the key remembers: 50 codes
+            w.SetMobForTest(0, m);
+            w.TickAll(new SimInput[1]);
+            int slot = w.Mobs[0].HistorySlot;
+            Assert.AreEqual(50, w.JudgedKeyOf(slot).TiltX, "премисса: ключ жильца несёт его крен");
+
+            w.ClearMobsForTest();   // the slot goes back
+            Assert.AreEqual(0, w.JudgedKeyOf(slot).TiltX,
+                "свободный слот держит ключ мертвеца — при возврате слота ключ не очищен (M461)");
+
+            // ⚠ NOT AT (7, 0): a mob spawns facing the center, and the course
+            // (-1, 0) encodes to the ZERO byte (ByteCodecs.Dir: (pi + pi) / 2pi *
+            // 256 = 256 & 0xFF = 0), which made a fresh mob's key bit-identical
+            // to the zero key and the seed invisible -- M460 survived on it.
+            // From (0, 7) the course is (0, -1), byte 64, and the premise says so.
+            w.SpawnMobForTest(MobType.Elite, new float2(0f, 7f));   // the lowest free slot: the same one
+            Assert.AreEqual(slot, w.Mobs[0].HistorySlot, "премисса: новый жилец получил тот же слот");
+            PoseKey seeded = w.JudgedKeyOf(slot);
+            PoseKey own = PoseKey.FromMob(in w.Mobs[0]);
+            Assert.AreNotEqual(0, own.Facing,
+                "премисса: курс спавна кодируется ненулевым байтом, иначе засев неотличим от нулевого ключа");
+            Assert.AreEqual(0, seeded.TiltX, "ключ переиспользованного слота — ключ прежнего жильца (M460)");
+            Assert.AreEqual(own.Facing, seeded.Facing, "ключ переиспользованного слота не засеян новым жильцом (M460)");
+        }
+
+        [Test]
+        public void ALiveRoundAndAOneTickRewoundRoundGetTheirOwnPoses()   // fixture 25b, witness of M462
+        {
+            // The pair the memo could alias: a round with no depth (the live
+            // pose) and a round one tick deep (the last row) judged on ONE
+            // tick against ONE collector, who slid on that last row and stands
+            // now. The deep round meets his sliding head, the live one his
+            // standing body's nothing -- one hit. A memo depth read AFTER the
+            // round's countdown put both on entry (slot, 0) and handed the
+            // live round the rewound pose (review B-1).
+            SimConfig cfg = TestConfigs.OpenField();
+            cfg.Hero.SlideSpeed = 0f;
+            SlidHeadLine(in cfg, out float lineY, out float height, out float fromX);
+            var w = new SimulationWorld(25, cfg);
+            var p = w.PlayerAt(0);
+            p.Dir = BakedClips.CollectorForward;
+            w.SetPlayerForTest(0, p);
+            var idle = new SimInput[1];
+            w.TickAll(idle);                                                   // row 1: standing
+            p = w.PlayerAt(0); p.SlideTimer = cfg.Hero.SlideDuration; w.SetPlayerForTest(0, p);
+            w.TickAll(idle);                                                   // row 2: sliding -- the LAST row
+            int slidTick = w.CurrentTick;
+            p = w.PlayerAt(0); p.SlideTimer = 0f; w.SetPlayerForTest(0, p);    // standing now
+            int deep = w.CurrentTick + 1 - slidTick;
+            Assert.AreEqual(1, deep, "премисса: глубина ровно один тик — последняя строка");
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, (byte)deep);   // asks the sliding row
+            ShootAlongXRewound(w, in cfg, fromX, lineY, height, depth: 0);     // the live, standing body
+            w.TickAll(idle);
+            Assert.AreEqual(0f, w.PlayerAt(0).SlideTimer, "премисса: при судействе сборщик стоит");
+            Assert.AreEqual(1, TestEvents.CountOf(w, SimEventKind.PlayerDamaged),
+                "живой снаряд и снаряд глубины 1 получили одну позу — глубина мемо взята после декремента (M462)");
         }
 
         static ref readonly PoseTable ShippedTableOf(in SimConfig cfg, AnimatorCatalog.BodyKind kind)

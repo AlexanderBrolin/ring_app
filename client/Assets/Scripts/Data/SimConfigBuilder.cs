@@ -2513,10 +2513,14 @@ namespace Ring.Data
         ///       one gate the shipped game runs;
         ///   (c) a baking rate for every clip, positive: RowOf/TicksOf refuse
         ///       a missing one by name.
-        /// ⚠ WHAT IT DOES NOT BOUND: a key read back OUT OF THE REWIND HISTORY
-        /// (the reader spec §3.13 names). Rule 11 keeps the table such a key
-        /// indexes the same one it was written against; the bound on the key
-        /// itself arrives with that reader (T7, RewoundBody).
+        /// ⚠ A KEY READ BACK OUT OF THE REWIND HISTORY (the reader spec §3.13
+        /// names, RewoundBody since app-94sk T7) is the key its row's TENANT
+        /// was packed with at the time of writing -- by this world's producer,
+        /// by the spawn seed (a slot's new tenant, SimulationWorld.SpawnMob)
+        /// or by RestoreState's re-derivation, always off that body's own
+        /// table -- and copied into the row (PositionHistory.Write), so the
+        /// same three checks cover it; rule 11 keeps the table such a key
+        /// indexes the one it was written against.
         /// ⚠ NOT CHECKED, AND WHY: the aim mask's length against the table's
         /// words -- Sample refuses a short one, but on every rig of 64 bones or
         /// fewer the word is one and an empty mask means "no layer", so a

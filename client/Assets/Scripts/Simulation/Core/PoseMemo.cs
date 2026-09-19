@@ -13,10 +13,10 @@ namespace Ring.Simulation.Core
     /// ⛔ THE KEY IS THE PAIR (HistorySlot, depth), NOT THE BODY: `depth` is
     /// the round's own `RewindLeft` at the moment of judgement, and two rounds
     /// with different depths ask about two different moments of one body
-    /// (spec §3.7, fixture 25 in T7). In T6b every depth reads the LIVE key
-    /// (the history record carries no key until T7), so all depths of one slot
-    /// sample the same pose this task -- the layout is T7's so that T7 changes
-    /// no caller.
+    /// (spec §3.7; fixture 25, mutant M352). Since app-94sk T7 the history
+    /// record carries the key, so two depths of one slot are two different
+    /// keys and two different poses -- the layout was T6b's so that T7 changed
+    /// no caller, and it did not.
     ///
     /// ⛔ A GENERATION, NOT THE TICK, AND THE DIFFERENCE IS ONE CATCH-UP STEP:
     /// a round born this tick is stepped inside the weapon phase (WeaponSystem

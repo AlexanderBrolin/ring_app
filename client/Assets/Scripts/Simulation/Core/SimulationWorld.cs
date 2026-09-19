@@ -225,6 +225,30 @@ namespace Ring.Simulation.Core
         // to the arena's caps and the widest body of the configuration, never
         // grown -- see PoseMemo's own doc.
         readonly PoseMemo _poseMemo;
+        // app-94sk T7 (spec §3.6/§3.7): THE KEY EACH BODY WAS JUDGED BY THIS
+        // TICK, by history slot -- packed by the producer at judgement time
+        // (PoseSystem.Update for the mobs, the tail of TickMovement for the
+        // collector: after the movement and before the rounds, so its tilt is
+        // the one the rounds are judged against, not the one TiltSystem leaves
+        // at the end of the tick -- fixture 23a), copied into the history's
+        // row by PositionHistory.Write on the last line, and read back by
+        // RewoundBody as the LIVE key. RECOMPUTED FROM SCRATCH EVERY TICK,
+        // i.e. NOT canonical state, and DELIBERATELY EXCLUDED FROM SaveState/
+        // RestoreState AND StateHash, exactly as _sepForces and _projCandidates
+        // above (the exclusion is stated per field, spec §3.7 B-M1). A slot's
+        // key is SEEDED at SpawnMob (a wave spawn lands after the producer's
+        // pass) and CLEARED with the slot (ReturnHistorySlot), so a free slot
+        // holds nothing; RestoreState clears every slot and re-derives the
+        // live bodies so that a catch-up step before the next producer pass
+        // reads a key of the state that is, not of the state that was. ⚠ THE
+        // RE-DERIVED KEY IS THE END-OF-TICK POSE: its TiltX/TiltZ sit one
+        // spring step past the producer's (fixture 23a's own one-tick
+        // disagreement), and that is harmless today because nothing on the
+        // live path reads them -- Sample reads the clips, phase, blend and aim
+        // fields, and the lean comes off the struct. A reader of the key's
+        // tilt on the live path would have to re-derive at the producer's
+        // instant instead (review B-4).
+        readonly PoseKey[] _judgedPose;
         // Stage 3 Task 3 (spec §3.6): ground pickups — same capped-array/
         // swap-remove shape as _mobs/_projectiles above (rule 4). Sized to
         // Arena.MaxPickups at construction; ArenaTopologyMatches rejects a
@@ -385,6 +409,8 @@ namespace Ring.Simulation.Core
             // by, plus the tick it is rewound FROM.
             _history = new PositionHistory(config.Arena.RewindCapTicks + 1,
                 config.Arena.MaxMobs + config.Arena.MaxPlayers);
+            // app-94sk T7: one judged key per history slot (see the field).
+            _judgedPose = new PoseKey[config.Arena.MaxMobs + config.Arena.MaxPlayers];
             for (int i = 0; i < playerCount; i++)
             {
                 _inventories[i] = new Inventory(config.Hero.MaxInventoryItems);
@@ -700,6 +726,11 @@ namespace Ring.Simulation.Core
             {
                 PlayerMovementSystem.UpdateDead(ref p, in _config);
             }
+            // app-94sk T7: the collector's key of this tick, packed HERE -- after
+            // the producer (PoseSystem.StepCollector, inside both calls above)
+            // and before the weapon phase judges anything, so its course and
+            // tilt are the ones the rounds meet (the field's own doc).
+            _judgedPose[p.HistorySlot] = PoseKey.FromPlayer(in p);
         }
 
         /// Hot-tweak migration (spec §3.9): atomically replaces the balance config on
@@ -1475,6 +1506,27 @@ namespace Ring.Simulation.Core
         /// it is.
         internal PoseMemo PoseMemo => _poseMemo;
 
+        /// app-94sk T7: the key body `slot` was judged by this tick (the
+        /// field's own doc) -- what RewoundBody hands back as the LIVE key,
+        /// and what PositionHistory.Write records for the tick.
+        internal PoseKey JudgedKeyOf(int slot) => _judgedPose[slot];
+
+        /// The producer's seam: PoseSystem.Update writes every mob's key here
+        /// once its pose for the tick is final.
+        internal void SetJudgedKey(int slot, in PoseKey key) => _judgedPose[slot] = key;
+
+        /// app-94sk T7: a slot goes back with its judged key CLEARED -- the
+        /// same instant-wise invariant PositionHistory.ReturnSlot keeps for
+        /// the rows ("a free slot holds nothing"). The next tenant is seeded
+        /// at its spawn, so the clear decides no outcome; it is what makes a
+        /// straight run and a restored save hold the same thing for a free
+        /// slot (fixture 25a, mutant M461).
+        void ReturnHistorySlot(int slot)
+        {
+            _history.ReturnSlot(slot);
+            _judgedPose[slot] = default;
+        }
+
         /// WaveSystem's seam into ONE RING's wave director state (Task 22) —
         /// same ref-return pattern as SpreadRng/WaveRng, so the system
         /// mutates it in place instead of round-tripping copies every tick.
@@ -2168,7 +2220,7 @@ namespace Ring.Simulation.Core
                 // this index holds the body that used to be at the tail, and
                 // returning ITS slot would free a live mob's row while leaking
                 // the dead one's.
-                _history.ReturnSlot(_mobs[index].HistorySlot);
+                ReturnHistorySlot(_mobs[index].HistorySlot);
                 _mobs[index] = _mobs[--_mobCount];
             }
         }
@@ -2740,6 +2792,13 @@ namespace Ring.Simulation.Core
                 // _nextEntityId is touched (its own comment above).
                 HistorySlot = _history.RentSlot()
             };
+            // app-94sk T7: THE JUDGED KEY IS SEEDED WITH THE SLOT. A mob born
+            // after PoseSystem.Update -- every wave and match-flow spawn --
+            // would otherwise have this tick's row written with whatever key
+            // the slot's PREVIOUS tenant left (another archetype's take, off
+            // another table), and the next tick's catch-up rounds would read
+            // that as its live key (review A-1/B-2; fixture 25a, mutant M460).
+            _judgedPose[_mobs[_mobCount - 1].HistorySlot] = PoseKey.FromMob(in _mobs[_mobCount - 1]);
             Emit(SimEventKind.MobSpawned, pos, id, type, 0f);
             return id;
         }
@@ -3237,6 +3296,16 @@ namespace Ring.Simulation.Core
             // brings back WHAT THOSE SLOTS RECORDED. Neither is derivable from
             // the other, which is why the ring needed both.
             _history.RestoreFrom(save);
+            // app-94sk T7: the judged keys are derived, not restored -- every
+            // slot cleared (a free slot holds nothing, as after a return), the
+            // live bodies packed afresh (the field's own doc, and its residue:
+            // this key is the END-of-tick pose, one spring step after the
+            // producer's in TiltX/TiltZ, which nothing on the live path reads).
+            System.Array.Clear(_judgedPose, 0, _judgedPose.Length);
+            for (int i = 0; i < _players.Length; i++)
+                _judgedPose[_players[i].HistorySlot] = PoseKey.FromPlayer(in _players[i]);
+            for (int i = 0; i < _mobCount; i++)
+                _judgedPose[_mobs[i].HistorySlot] = PoseKey.FromMob(in _mobs[i]);
             // The other half of SaveState's own no-aliasing contract: the
             // live array is FILLED from the save, never replaced by it — a
             // `_waves = save.Waves` would leave the world writing into the
@@ -3332,7 +3401,7 @@ namespace Ring.Simulation.Core
         /// something the battle path is careful about is a seam that lies.
         internal void ClearMobsForTest()
         {
-            for (int i = 0; i < _mobCount; i++) _history.ReturnSlot(_mobs[i].HistorySlot);
+            for (int i = 0; i < _mobCount; i++) ReturnHistorySlot(_mobs[i].HistorySlot);
             _mobCount = 0;
         }
 

@@ -396,7 +396,7 @@ namespace Ring.Simulation.Core
         /// IN THE DIGEST, as a trailing group in declaration order
         /// (HashPlayer, RULING 129: a new subsystem with no neighbor to sit
         /// beside). The packed copy, PoseKey, joins the digest a second time
-        /// through PositionHistory in T7, when the record grows.
+        /// through PositionHistory's fold (app-94sk T7: the record carries it).
         public int LowerPhase, ReactionPhase;
         public float LowerBlend;
         public byte LowerClipA, LowerClipB, LowerShare;

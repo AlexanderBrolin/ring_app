@@ -3,7 +3,7 @@ using Unity.Mathematics;
 namespace Ring.Simulation.Core
 {
     /// app-94sk T6a (spec §3.6/§3.7): THE POSE, PACKED -- one body's pose in
-    /// 14 bytes, for the rows of the rewind history (T7) and for the hit
+    /// 14 bytes, for the rows of the rewind history (app-94sk T7) and for the hit
     /// volumes that read a pose back out of them. The LIVE pose is the ten
     /// flat fields of PlayerState (seven of MobState); this is their
     /// compressed copy, and the relationship is a rule rather than a second
@@ -12,8 +12,9 @@ namespace Ring.Simulation.Core
     /// ⛔ FIELD ORDER IS PART OF THE CONTRACT: both `ushort` first, then the
     /// bytes, is what makes the struct exactly 14 bytes with no padding
     /// (2*2 + 7*1 + 1 + 2*1 = 14). Four numbers hang on it -- the key 14 B,
-    /// the reaction 4 B of it, a history record 8 + 1 + pad + 14 = 24 B (T7)
-    /// and the history 24 x 6 x 1353 = 190.3 KiB against 95.1 today.
+    /// the reaction 4 B of it, a history record 8 + 1 + pad + 14 = 24 B
+    /// (since app-94sk T7) and the history 24 x 6 x 1353 = 190.3 KiB (95.1
+    /// before it).
     ///
     /// ⛔ `ushort`/`sbyte` LIVE HERE AND NOWHERE IN THE STATE (spec §3.6,
     /// findings B-I1/D-C6): the reflective guards that sweep PlayerState
@@ -21,8 +22,11 @@ namespace Ring.Simulation.Core
     /// PoseKeyTests carries its own three-type Bump for the same reason.
     ///
     /// ⛔ THE PACKER LIVES IN ONE PLACE. Building the key out of the flat
-    /// fields is needed three times -- twice in PositionHistory.Write (T7,
-    /// player and mob) and once in RewoundBody for the live key -- and three
+    /// fields is needed at the producer (PoseSystem.Update for a mob,
+    /// SimulationWorld.TickMovement for the collector -- app-94sk T7: packed
+    /// ONCE at judgement time, copied into the history's row by
+    /// PositionHistory.Write and handed to the resolver by RewoundBody), in
+    /// RestoreState's re-derivation, and in AimLine for the present -- and
     /// copies of one layout drift by a byte each (finding B-I1b). Inside this
     /// file the layout is spelled ONCE too (`Pack`); the two public packers
     /// only pick the fields their struct carries.
@@ -93,6 +97,23 @@ namespace Ring.Simulation.Core
             => Pack(m.LowerPhase, m.ReactionPhase, m.LowerClipA, m.LowerClipB, 0,
                 0, 0, m.ReactionClip, m.ReactionDir, m.Dir, m.Tilt);
 
+        /// app-94sk T7: THE LEAN BACK OUT OF THE KEY, as the plan-frame vector
+        /// PlayerState.Tilt carries (length = angle, direction = the side the
+        /// body goes down towards) -- `TiltX`/`TiltZ` times the step, the
+        /// exact inverse of QuantizeTilt's rounding. Read by RewoundBody for a
+        /// body answered out of the history: the volumes of that tick lean by
+        /// THIS, not by the live lean (fixture 22b, mutant M459). ⚠ Not for
+        /// the live path: a live body's lean is read off its struct exactly,
+        /// and a round-trip through 0.01 rad codes would move every live
+        /// outcome by a hundredth.
+        public float2 TiltVector => new float2(TiltX * TiltQuantStep, TiltZ * TiltQuantStep);
+
+        /// app-94sk T7: THE COURSE BACK OUT OF THE KEY, a unit vector through
+        /// the wire's own codec (ByteCodecs.DirBack, 256 steps) -- what turns a
+        /// rewound body's volumes the way it faced THEN (fixture 22a, mutant
+        /// M458). The same "not for the live path" note as TiltVector's.
+        public float2 DirVector => ByteCodecs.DirBack(Facing);
+
         /// The ONE spelling of the layout. Eleven arguments rather than two
         /// structs because the two structs carry different subsets, and a
         /// packer per struct is the duplicated layout the class doc refuses.
@@ -145,10 +166,10 @@ namespace Ring.Simulation.Core
         /// ⚠ NAMING: the simulation's plan is `.xy` and the key's pair is
         /// named X/Z after the body frame the spec writes in (§3.6), so the
         /// plan's second component travels as `TiltZ`. One mapping, here.
-        /// ⚠ NO INVERSE YET, ON PURPOSE: the first reader of a packed tilt is
-        /// RewoundBody (T7), and the dequantizer lands with that reader --
-        /// `TiltQuantStep` is the one scale it must use, and a second one
-        /// invented there would be the drift the constant exists to prevent.
+        /// The inverse is `TiltVector` above, on the same scale -- it landed
+        /// with its first reader (RewoundBody, app-94sk T7), and a second
+        /// scale invented there would be the drift the constant exists to
+        /// prevent.
         static void QuantizeTilt(float2 tilt, out sbyte x, out sbyte z)
         {
             float len = math.length(tilt);
@@ -165,8 +186,9 @@ namespace Ring.Simulation.Core
         /// widens Flags (StateHash64 has no byte overload). Same shape as that
         /// method and every Hash* helper of SimulationWorld: takes the running
         /// hash, returns it. It reaches the state digest through
-        /// PositionHistory's fold in T7, when the record grows by a key;
-        /// until then PoseKeyTests is what keeps every field in it.
+        /// PositionHistory.FoldRecord (app-94sk T7); PoseKeyTests keeps every
+        /// field in it, and fixture 23 (PoseTableTests) asks the same of the
+        /// history's fold.
         public static ulong Fold(ulong h, in PoseKey k)
         {
             h = StateHash64.Add(h, (int)k.LowerPhase);

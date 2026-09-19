@@ -147,8 +147,8 @@ namespace Ring.Simulation.Tests
         {
             // The digest side of the layout, field by field: bumping any ONE
             // field of the key has to move Fold's answer. Spec §3.7 asks the
-            // same of the HISTORY's fold in T7 (fixture 23); this asks it of
-            // the key's own, which is what that fold will call.
+            // same of the HISTORY's fold (fixture 23, PoseTableTests); this
+            // asks it of the key's own, which is what that fold calls.
             FieldInfo[] fields = typeof(PoseKey).GetFields(BindingFlags.Public | BindingFlags.Instance);
             // A SENTINEL, not a premise: the loop below covers whatever it
             // finds. The number is here so that a grown struct sends its
